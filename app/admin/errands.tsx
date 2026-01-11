@@ -154,6 +154,9 @@ export default function AdminErrands() {
     const [loadingErrands, setLoadingErrands] = useState(true);
     const { width: screenWidth } = useWindowDimensions();
 
+    // Query limits for performance (conservative limit to reduce load time)
+    const PAGE_SIZE = 200;
+
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
 
@@ -240,7 +243,8 @@ export default function AdminErrands() {
                     .from('errand')
                     .select('id, title, category, status, created_at, buddycaller_id, runner_id, amount_price, description')
                     .eq('status', 'completed')
-                    .order('created_at', { ascending: false });
+                    .order('created_at', { ascending: false })
+                    .limit(PAGE_SIZE);
                 
                 if (errandsError) throw errandsError;
                 

@@ -113,9 +113,11 @@ export default function AdminSettlements() {
     const [loadingSettlements, setLoadingSettlements] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<"pending" | "paid" | "overdue">("pending");
+    const [currentPage, setCurrentPage] = useState(0);
 
-    // Query limits for performance (conservative limit to reduce load time)
-    const PAGE_SIZE = 200;
+    // Query limits for performance
+    const QUERY_LIMIT = 200; // Limit for users query (reasonable scope)
+    const PAGE_SIZE = 50; // UI pagination page size
 
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
@@ -159,7 +161,7 @@ export default function AdminSettlements() {
                     .from('users')
                     .select('id, first_name, last_name, email, student_id_number, role')
                     .order('created_at', { ascending: false })
-                    .limit(PAGE_SIZE);
+                    .limit(QUERY_LIMIT);
                 
                 if (usersError) throw usersError;
                 
@@ -175,14 +177,13 @@ export default function AdminSettlements() {
 
                 const runnerIds = runners.map(r => r.id);
 
-                // Fetch all completed commissions with invoices
+                // Fetch all completed commissions with invoices (no limit - needed for settlement computation)
                 const { data: commissions, error: commissionsError } = await supabase
                     .from('commission')
                     .select('id, runner_id, created_at, status')
                     .in('runner_id', runnerIds)
                     .eq('status', 'completed')
-                    .order('created_at', { ascending: false })
-                    .limit(PAGE_SIZE);
+                    .order('created_at', { ascending: false });
                 
                 if (commissionsError) throw commissionsError;
 
@@ -191,12 +192,12 @@ export default function AdminSettlements() {
                 const invoicesMap = new Map<number, number>(); // commission_id -> amount
 
                 if (commissionIds.length > 0) {
+                    // Fetch all invoices (no limit - needed for settlement computation)
                     const { data: allInvoices, error: invoicesError } = await supabase
                         .from('invoices')
                         .select('id, commission_id, amount, status, created_at, accepted_at')
                         .in('commission_id', commissionIds)
-                        .order('created_at', { ascending: false })
-                        .limit(PAGE_SIZE);
+                        .order('created_at', { ascending: false });
 
                     if (invoicesError) throw invoicesError;
 
@@ -223,26 +224,24 @@ export default function AdminSettlements() {
                     });
                 }
 
-                // Fetch all completed errands
+                // Fetch all completed errands (no limit - needed for settlement computation)
                 const { data: errands, error: errandsError } = await supabase
                     .from('errand')
                     .select('id, runner_id, created_at, status, amount_price')
                     .in('runner_id', runnerIds)
                     .eq('status', 'completed')
-                    .order('created_at', { ascending: false })
-                    .limit(PAGE_SIZE);
+                    .order('created_at', { ascending: false });
                 
                 if (errandsError) throw errandsError;
 
                 // CRITICAL: Fetch existing settlements BEFORE processing transactions
                 // This allows us to check if commission/errand IDs are already tracked
-                // and prevent duplicates across settlements
+                // and prevent duplicates across settlements (no limit - needed for computation)
                 const { data: existingSettlements, error: settlementsDbError } = await supabase
                     .from('settlements')
                     .select('id, user_id, period_start_date, period_end_date, status, paid_at, created_at, updated_at, total_earnings, total_transactions, system_fees, commission_ids, errand_ids')
                     .in('user_id', runnerIds)
-                    .order('updated_at', { ascending: false })
-                    .limit(PAGE_SIZE);
+                    .order('updated_at', { ascending: false });
 
                 if (settlementsDbError) {
                     console.warn('Error fetching existing settlements:', settlementsDbError);
@@ -1383,6 +1382,11 @@ export default function AdminSettlements() {
 
         fetchSettlements();
     }, []);
+    
+    // Reset to page 0 when filters change
+    React.useEffect(() => {
+        setCurrentPage(0);
+    }, [statusFilter, searchQuery]);
 
     const filteredSettlements = settlements.filter((settlement) => {
         // Filter by status - use actual status from database
@@ -1406,6 +1410,14 @@ export default function AdminSettlements() {
         return firstName.includes(query) || lastName.includes(query) || 
                email.includes(query) || studentId.includes(query);
     });
+    
+    // Paginate filtered settlements (newest first - page 0 shows most recent)
+    const startIndex = currentPage * PAGE_SIZE;
+    const endIndex = startIndex + PAGE_SIZE;
+    const paginatedSettlements = filteredSettlements.slice(startIndex, endIndex);
+    const totalPages = Math.max(1, Math.ceil(filteredSettlements.length / PAGE_SIZE));
+    const hasNextPage = currentPage < totalPages - 1;
+    const hasPrevPage = currentPage > 0;
 
     const handleLogout = async () => {
         setConfirmLogout(false);
@@ -2069,7 +2081,7 @@ export default function AdminSettlements() {
                                                 <Text style={[styles.tableHeaderText, styles.tableCellPaidAt, styles.headerCenter]}>Paid at</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellActions]} numberOfLines={1} ellipsizeMode="tail">Actions</Text>
                                             </View>
-                                            {filteredSettlements.map((settlement, index) => (
+                                            {paginatedSettlements.map((settlement, index) => (
                                                 <SettlementRow 
                                                     key={`${settlement.user_id}-${settlement.period_start_date}`} 
                                                     settlement={settlement} 
@@ -2080,6 +2092,39 @@ export default function AdminSettlements() {
                                             ))}
                                         </View>
                                     </ScrollView>
+                                    
+                                    {/* Pagination Controls */}
+                                    {totalPages > 1 && (
+                                        <View style={styles.paginationContainer}>
+                                            <TouchableOpacity
+                                                style={[styles.paginationButton, !hasPrevPage && styles.paginationButtonDisabled]}
+                                                onPress={() => hasPrevPage && setCurrentPage(prev => prev - 1)}
+                                                disabled={!hasPrevPage}
+                                                activeOpacity={0.7}
+                                            >
+                                                <Ionicons name="chevron-back" size={16} color={hasPrevPage ? colors.text : colors.border} />
+                                                <Text style={[styles.paginationButtonText, !hasPrevPage && styles.paginationButtonTextDisabled]}>
+                                                    Previous
+                                                </Text>
+                                            </TouchableOpacity>
+                                            
+                                            <Text style={styles.paginationInfo}>
+                                                Page {currentPage + 1} of {totalPages}
+                                            </Text>
+                                            
+                                            <TouchableOpacity
+                                                style={[styles.paginationButton, !hasNextPage && styles.paginationButtonDisabled]}
+                                                onPress={() => hasNextPage && setCurrentPage(prev => prev + 1)}
+                                                disabled={!hasNextPage}
+                                                activeOpacity={0.7}
+                                            >
+                                                <Text style={[styles.paginationButtonText, !hasNextPage && styles.paginationButtonTextDisabled]}>
+                                                    Next
+                                                </Text>
+                                                <Ionicons name="chevron-forward" size={16} color={hasNextPage ? colors.text : colors.border} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    )}
                                 </>
                             )}
                         </View>
@@ -2747,6 +2792,42 @@ const styles = StyleSheet.create({
     filterButtonTextActive: {
         color: "#fff",
         fontWeight: "700",
+    },
+    paginationContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 16,
+        marginTop: 24,
+        paddingVertical: 12,
+    },
+    paginationButton: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: "#fff",
+    },
+    paginationButtonDisabled: {
+        opacity: 0.5,
+        backgroundColor: colors.faint,
+    },
+    paginationButtonText: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
+    },
+    paginationButtonTextDisabled: {
+        color: colors.border,
+    },
+    paginationInfo: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
     },
     emptyState: {
         alignItems: "center",

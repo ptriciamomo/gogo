@@ -1,0 +1,1870 @@
+﻿import React, { useState, useEffect } from 'react';
+import {
+  SafeAreaView,
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  TextInput,
+  Image,
+  Alert,
+  Modal,
+  Keyboard,
+  ActionSheetIOS,
+  Platform,
+} from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { supabase } from '../../lib/supabase';
+import { responsive, rw, rh, rf, rp, rb, webResponsive } from '../../utils/responsive';
+import { uploadAndSaveProfilePicture, getProfilePictureUrl } from '../../utils/profilePictureHelpers';
+import { uploadPostImage, createPost, getUserPosts, Post } from '../../utils/postHelpers';
+import SettingsModal from './settings_modal.web';
+
+// Colors
+const colors = {
+  maroon: '#8B0000',
+  white: '#FFFFFF',
+  lightGray: '#E0E0E0',
+  darkGray: '#666666',
+  text: '#531010',
+  gray: '#666666',
+  light: '#FAF6F5',
+  border: '#E5C8C5',
+  black: '#000000',
+};
+
+// Types
+interface Review {
+  id: string;
+  reviewerName: string;
+  reviewerInitials: string;
+  rating: number;
+  comment: string;
+  date: string;
+}
+
+interface Work {
+  id: string;
+  title: string;
+  image: string;
+  text?: string;
+  images?: string[]; // Store all images for this post
+}
+
+type ProfileRow = {
+  id: string;
+  role: string | null;
+  first_name: string | null;
+  middle_name?: string | null;
+  last_name: string | null;
+  email?: string | null;
+  student_id_number?: string | null;
+  course?: string | null;
+  phone?: string | null;
+  profile_picture_url?: string | null;
+};
+
+/* ===================== AUTH PROFILE HOOK ===================== */
+function titleCase(s?: string | null) {
+  if (!s) return "";
+  return s
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => (w[0] ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+function useAuthProfile() {
+  const [loading, setLoading] = useState(true);
+  const [firstName, setFirstName] = useState<string>("");
+  const [lastName, setLastName] = useState<string>("");
+  const [fullName, setFullName] = useState<string>("");
+  const [roleLabel, setRoleLabel] = useState<string>("");
+  const [course, setCourse] = useState<string>("");
+  const [phoneNumber, setPhoneNumber] = useState<string>("");
+  const [studentIdNumber, setStudentIdNumber] = useState<string>("");
+  const [profilePictureUrl, setProfilePictureUrl] = useState<string>("");
+  const [userId, setUserId] = useState<string>("");
+
+  async function fetchProfile() {
+    try {
+      const { data: userRes } = await supabase.auth.getUser();
+      const user = userRes?.user;
+      if (!user) { 
+        setLoading(false); 
+        return; 
+      }
+
+      const { data: row, error } = await supabase
+        .from("users")
+        .select("id, role, first_name, middle_name, last_name, email, student_id_number, course, phone, profile_picture_url")
+        .eq("id", user.id)
+        .single<ProfileRow>();
+      
+      if (error) throw error;
+
+      const f = titleCase(row?.first_name || "");
+      const m = titleCase(row?.middle_name || "");
+      const l = titleCase(row?.last_name || "");
+      
+      // Construct full name with middle name if available
+      const fullName = [f, m, l].filter(Boolean).join(" ").trim() || 
+        titleCase(
+          (user.user_metadata?.full_name as string) ||
+          (user.user_metadata?.name as string) ||
+          ""
+        ) ||
+        titleCase((user.email?.split("@")[0] || "").replace(/[._-]+/g, " ")) ||
+        "User";
+
+      const firstName = f || fullName.split(" ")[0] || "User";
+      const lastName = l || fullName.split(" ").slice(-1)[0] || "";
+      
+      setFirstName(firstName);
+      setLastName(lastName);
+      setFullName(fullName);
+      setCourse(row?.course || "");
+      setPhoneNumber(row?.phone || "");
+      setStudentIdNumber(row?.student_id_number || "");
+      setProfilePictureUrl(row?.profile_picture_url || "");
+      setUserId(user.id);
+
+      // Use the role directly from database since it's already properly formatted
+      const roleLabel = row?.role || "";
+      
+      setRoleLabel(roleLabel);
+    } catch (error) {
+      setFirstName("User");
+      setLastName("");
+      setFullName("User");
+      setRoleLabel("");
+      setCourse("");
+      setPhoneNumber("");
+      setStudentIdNumber("");
+      setProfilePictureUrl("");
+      setUserId("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchProfile();
+    const { data: sub } = supabase.auth.onAuthStateChange(() => fetchProfile());
+    return () => sub?.subscription?.unsubscribe?.();
+  }, []);
+
+  // Refresh profile data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchProfile();
+    }, [])
+  );
+
+  return { loading, firstName, lastName, fullName, roleLabel, course, phoneNumber, studentIdNumber, profilePictureUrl, userId, setCourse, setPhoneNumber, setProfilePictureUrl };
+}
+
+// Mock data
+const mockReviews: Review[] = [
+  {
+    id: '1',
+    reviewerName: 'Aeri Uchinaga',
+    reviewerInitials: 'AU',
+    rating: 5,
+    comment: "She's so kind and great BuddyCaller.",
+    date: 'Aug 2, 2025',
+  },
+  {
+    id: '2',
+    reviewerName: 'Ning Yizhuo',
+    reviewerInitials: 'NY',
+    rating: 5,
+    comment: "I have a great experience doing errands for her.",
+    date: 'Aug 2, 2025',
+  },
+  {
+    id: '3',
+    reviewerName: 'Emily Rodriguez',
+    reviewerInitials: 'ER',
+    rating: 4,
+    comment: "Very reliable and punctual. Great communication throughout the task.",
+    date: 'Aug 1, 2025',
+  },
+  {
+    id: '4',
+    reviewerName: 'David Kim',
+    reviewerInitials: 'DK',
+    rating: 5,
+    comment: "Excellent service! Went above and beyond expectations.",
+    date: 'Jul 30, 2025',
+  },
+  {
+    id: '5',
+    reviewerName: 'Lisa Thompson',
+    reviewerInitials: 'LT',
+    rating: 4,
+    comment: "Professional and efficient. Highly recommended for any errands.",
+    date: 'Jul 28, 2025',
+  },
+];
+
+const initialWorks: Work[] = [
+  // Start with empty works array - only show user's actual posts
+];
+
+export default function BuddyrunnerProfile() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const targetUserId = params.userId as string;
+  const isViewingOtherUser = params.isViewingOtherUser === 'true';
+  const returnTo = params.returnTo as string;
+  const conversationId = params.conversationId as string;
+  
+    console.log('=== BUDDYRUNNER PROFILE DEBUG ===');
+    console.log('Profile params:', { targetUserId, isViewingOtherUser, returnTo, conversationId });
+    console.log('isViewingOtherUser type:', typeof isViewingOtherUser, 'value:', isViewingOtherUser);
+    console.log('All params received:', params);
+  
+  const { loading, firstName, lastName, fullName, roleLabel, course, phoneNumber, studentIdNumber, profilePictureUrl, userId, setProfilePictureUrl } = useAuthProfile();
+  
+  // State for other user's profile data
+  const [otherUserProfile, setOtherUserProfile] = useState<any>(null);
+  const [otherUserLoading, setOtherUserLoading] = useState(false);
+  
+  // Fetch other user's profile when targetUserId is provided
+  useEffect(() => {
+    const fetchOtherUserProfile = async () => {
+      console.log('fetchOtherUserProfile called with:', { targetUserId, isViewingOtherUser });
+      if (targetUserId && isViewingOtherUser) {
+        console.log('Fetching other user profile for ID:', targetUserId);
+        setOtherUserLoading(true);
+        try {
+          const { data, error } = await supabase
+            .from('users')
+            .select('id, first_name, last_name, role, profile_picture_url, course, phone, student_id_number')
+            .eq('id', targetUserId)
+            .single();
+          
+          if (error) {
+            console.error('Error fetching other user profile:', error);
+            Alert.alert('Error', 'Failed to load user profile');
+            router.back();
+          } else {
+            console.log('Fetched other user profile:', data);
+            setOtherUserProfile(data);
+            console.log('Set otherUserProfile to:', data);
+          }
+        } catch (error) {
+          console.error('Error fetching other user profile:', error);
+          Alert.alert('Error', 'Failed to load user profile');
+          router.back();
+        } finally {
+          setOtherUserLoading(false);
+        }
+      }
+    };
+    
+    fetchOtherUserProfile();
+  }, [targetUserId, isViewingOtherUser]);
+  
+  // Determine which profile data to display
+  const displayProfile = isViewingOtherUser ? otherUserProfile : null;
+  const displayLoading = isViewingOtherUser ? otherUserLoading : loading;
+  const displayFirstName = isViewingOtherUser ? (displayProfile?.first_name || '') : firstName;
+  const displayLastName = isViewingOtherUser ? (displayProfile?.last_name || '') : lastName;
+  const displayFullName = isViewingOtherUser ? 
+    `${displayProfile?.first_name || ''} ${displayProfile?.last_name || ''}`.trim() || 'User' : 
+    fullName || 'User';
+  const displayRoleLabel = isViewingOtherUser ? (displayProfile?.role || 'User') : roleLabel;
+  const displayProfilePictureUrl = isViewingOtherUser ? (displayProfile?.profile_picture_url || '') : profilePictureUrl;
+  const displayCourse = isViewingOtherUser ? (displayProfile?.course || '') : course;
+  const displayPhoneNumber = isViewingOtherUser ? (displayProfile?.phone || '') : phoneNumber;
+  const displayStudentIdNumber = isViewingOtherUser ? (displayProfile?.student_id_number || '') : studentIdNumber;
+  
+  console.log('Display variables:', {
+    isViewingOtherUser,
+    otherUserProfile,
+    displayProfile,
+    displayFirstName,
+    displayLastName,
+    displayFullName,
+    displayRoleLabel,
+    displayProfilePictureUrl
+  });
+  
+  // Log when otherUserProfile changes
+  useEffect(() => {
+    console.log('otherUserProfile changed:', otherUserProfile);
+  }, [otherUserProfile]);
+  const [postText, setPostText] = useState('');
+  
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalPostText, setModalPostText] = useState('');
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  const [works, setWorks] = useState<Work[]>(initialWorks);
+  const [showAllWorks, setShowAllWorks] = useState(false);
+  const [showAllReviews, setShowAllReviews] = useState(false);
+  const [allWorksModalVisible, setAllWorksModalVisible] = useState(false);
+  const [allReviewsModalVisible, setAllReviewsModalVisible] = useState(false);
+  const [selectedPostModalVisible, setSelectedPostModalVisible] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<Work | null>(null);
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+
+  const handlePostWork = () => {
+    if (!postText.trim()) {
+      Alert.alert('Error', 'Please enter some content for your post.');
+      return;
+    }
+    
+    Alert.alert('Success', 'Work posted successfully!');
+    setPostText('');
+  };
+
+  const handleModalPostWork = async () => {
+    if (selectedImages.length === 0) {
+      Alert.alert('Error', 'Please add at least one image to your post.');
+      return;
+    }
+    
+    if (!modalPostText.trim()) {
+      Alert.alert('Error', 'Please enter some text for your post.');
+      return;
+    }
+    
+    try {
+      // Upload images to storage
+      const imageUrls: string[] = [];
+      for (const imageUri of selectedImages) {
+        const uploadedUrl = await uploadPostImage(imageUri, userId);
+        imageUrls.push(uploadedUrl);
+      }
+      
+      // Save post to database
+      const newPost = await createPost(
+        userId,
+        modalPostText.trim() || 'New Post',
+        modalPostText.trim(),
+        imageUrls
+      );
+      
+      // Add to local works array for immediate UI update
+      const newWork: Work = {
+        id: newPost.id,
+        title: newPost.title,
+        image: imageUrls[0] || '',
+        text: newPost.content || '',
+        images: imageUrls
+      };
+      
+      setWorks(prevWorks => [newWork, ...prevWorks]);
+      
+      Alert.alert('Success', 'Work posted successfully!');
+      setModalPostText('');
+      setSelectedImages([]);
+      setModalVisible(false);
+    } catch (error) {
+      console.error('Error posting work:', error);
+      Alert.alert('Error', 'Failed to post work. Please try again.');
+    }
+  };
+
+  const openModal = () => {
+    setModalPostText(postText); // Copy current text to modal
+    setSelectedImages([]); // Clear any previous images
+    setModalVisible(true);
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setModalPostText('');
+    setSelectedImages([]);
+    Keyboard.dismiss(); // Dismiss keyboard when closing modal
+  };
+
+  const pickImage = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Take Photo', 'Choose from Library'],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            takePhoto();
+          } else if (buttonIndex === 2) {
+            chooseFromLibrary();
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Select Image',
+        'Choose an option',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Take Photo', onPress: takePhoto },
+          { text: 'Choose from Library', onPress: chooseFromLibrary },
+        ]
+      );
+    }
+  };
+
+  const takePhoto = async () => {
+    try {
+      // Request camera permissions
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Camera permission is needed to take photos');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setSelectedImages(prev => [...prev, result.assets[0].uri]);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to take photo');
+    }
+  };
+
+  const chooseFromLibrary = async () => {
+    try {
+      // Request media library permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Photo library permission is needed to select photos');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setSelectedImages(prev => [...prev, result.assets[0].uri]);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick image');
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleShowAllWorks = () => {
+    setAllWorksModalVisible(true);
+  };
+
+  const handleShowAllReviews = () => {
+    setAllReviewsModalVisible(true);
+  };
+
+  const closeAllWorksModal = () => {
+    setAllWorksModalVisible(false);
+  };
+
+  const closeAllReviewsModal = () => {
+    setAllReviewsModalVisible(false);
+  };
+
+  const handlePostPress = (work: Work) => {
+    // Close the All Works modal first
+    setAllWorksModalVisible(false);
+    // Then open the post detail modal
+    setSelectedPost(work);
+    setSelectedPostModalVisible(true);
+  };
+
+  const closeSelectedPostModal = () => {
+    setSelectedPostModalVisible(false);
+    setSelectedPost(null);
+  };
+
+  const handleLikePost = (postId: string) => {
+    setLikedPosts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(postId)) {
+        newSet.delete(postId);
+      } else {
+        newSet.add(postId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSharePost = (post: Work) => {
+    const shareContent = {
+      title: 'Check out this post!',
+      message: `${post.text}\n\nShared from GoBuddy`,
+      url: '', // You can add a URL if you have one
+    };
+    
+    Alert.alert(
+      'Share Post',
+      'Post shared successfully!',
+      [{ text: 'OK' }]
+    );
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: () => {
+            // Handle logout logic here
+            router.replace('/login');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditProfile = () => {
+    router.push('/buddyrunner/edit_profile');
+  };
+
+  const openSettingsModal = () => {
+    setSettingsModalVisible(true);
+  };
+
+  const closeSettingsModal = () => {
+    setSettingsModalVisible(false);
+  };
+
+  const handleSettingsEditProfile = () => {
+    setSettingsModalVisible(false);
+    router.push('/buddyrunner/edit_profile');
+  };
+
+  const handleChangePassword = () => {
+    setSettingsModalVisible(false);
+    router.push('/buddyrunner/change_password');
+  };
+
+  const handleProfileImagePicker = async () => {
+    // Request permissions
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please grant camera roll permissions to select an image.');
+      return;
+    }
+
+    Alert.alert(
+      'Select Profile Picture',
+      'Choose how you want to add a profile picture',
+      [
+        {
+          text: 'Camera',
+          onPress: () => openCamera(),
+        },
+        {
+          text: 'Photo Library',
+          onPress: () => openImageLibrary(),
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
+  };
+
+  const openCamera = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please grant camera permissions to take a photo.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0] && userId) {
+      try {
+        Alert.alert('Uploading...', 'Please wait while we upload your profile picture.');
+        const imageUrl = await uploadAndSaveProfilePicture(result.assets[0].uri, userId);
+        setProfilePictureUrl(imageUrl);
+        Alert.alert('Success', 'Profile picture updated successfully!');
+      } catch (error) {
+        console.error('Error uploading profile picture:', error);
+        Alert.alert('Error', 'Failed to upload profile picture. Please try again.');
+      }
+    }
+  };
+
+  const openImageLibrary = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0] && userId) {
+      try {
+        Alert.alert('Uploading...', 'Please wait while we upload your profile picture.');
+        const imageUrl = await uploadAndSaveProfilePicture(result.assets[0].uri, userId);
+        setProfilePictureUrl(imageUrl);
+        Alert.alert('Success', 'Profile picture updated successfully!');
+      } catch (error) {
+        console.error('Error uploading profile picture:', error);
+        Alert.alert('Error', 'Failed to upload profile picture. Please try again.');
+      }
+    }
+  };
+
+  const renderStars = (rating: number) => {
+    return Array.from({ length: 5 }, (_, index) => (
+      <Ionicons
+        key={index}
+        name="star"
+        size={16}
+        color={index < rating ? '#FFD700' : '#E0E0E0'}
+      />
+    ));
+  };
+
+  const renderReview = (review: Review) => (
+    <View key={review.id} style={styles.reviewCard}>
+      <View style={styles.reviewHeader}>
+        <View style={styles.reviewerInfo}>
+          <View style={styles.reviewerAvatar}>
+            <Text style={styles.reviewerInitials}>{review.reviewerInitials}</Text>
+          </View>
+          <Text style={styles.reviewerName}>{review.reviewerName}</Text>
+        </View>
+        <Text style={styles.reviewDate}>{review.date}</Text>
+      </View>
+      
+      <View style={styles.ratingContainer}>
+        {renderStars(review.rating)}
+      </View>
+      
+      <Text style={styles.reviewComment}>"{review.comment}"</Text>
+        </View>
+    );
+
+  const renderWork = (work: Work) => (
+    <TouchableOpacity key={work.id} style={styles.workCard} onPress={() => handlePostPress(work)}>
+      {work.image && (
+        <Image source={{ uri: work.image }} style={styles.workCardImage} />
+      )}
+      {work.text && (
+        <View style={styles.workCardContent}>
+          <Text style={styles.workCardText} numberOfLines={3}>
+            {work.text}
+          </Text>
+        </View>
+      )}
+      <View style={styles.workCardFooter}>
+        <Text style={styles.workCardDate}>
+          {new Date().toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric',
+            year: 'numeric'
+          })}
+        </Text>
+        <View style={styles.workCardActions}>
+          {work.images && work.images.length > 1 && (
+            <View style={styles.multipleImagesIndicator}>
+              <Ionicons name="images" size={14} color={colors.maroon} />
+              <Text style={styles.multipleImagesText}>{work.images.length}</Text>
+            </View>
+          )}
+          <TouchableOpacity style={styles.workCardLike}>
+            <Ionicons name="heart-outline" size={16} color={colors.darkGray} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+
+    return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Header with smaller dark red background */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => {
+            if (returnTo === 'ChatScreenRunner' && conversationId) {
+              router.push({
+                pathname: '/buddyrunner/ChatScreenRunner',
+                params: {
+                  conversationId: conversationId,
+                  otherUserId: targetUserId,
+                  contactName: otherUserProfile ? `${otherUserProfile.first_name} ${otherUserProfile.last_name}` : 'Contact',
+                }
+              });
+            } else if (returnTo === 'ChatScreenCaller' && conversationId) {
+              router.push({
+                pathname: '/buddycaller/ChatScreenCaller',
+                params: {
+                  conversationId: conversationId,
+                  otherUserId: targetUserId,
+                  contactName: otherUserProfile ? `${otherUserProfile.first_name} ${otherUserProfile.last_name}` : 'Contact',
+                }
+              });
+            } else {
+              router.push('/buddyrunner/home');
+            }
+          }} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color={colors.white} />
+          </TouchableOpacity>
+          
+          {!isViewingOtherUser && (
+            <TouchableOpacity style={styles.settingsButton} onPress={openSettingsModal}>
+              <Ionicons name="settings-outline" size={24} color={colors.white} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Profile Picture and Info - keeping same size */}
+        <View style={styles.profileSection}>
+          <View style={styles.profilePictureContainer}>
+            <View style={styles.profilePicture}>
+              {displayProfilePictureUrl ? (
+                <Image source={{ uri: displayProfilePictureUrl }} style={styles.profileImage} />
+              ) : (
+                <Ionicons name="person" size={60} color={colors.lightGray} />
+              )}
+            </View>
+            {!isViewingOtherUser && (
+              <TouchableOpacity style={styles.cameraButton} onPress={handleProfileImagePicker}>
+                <Ionicons name="camera" size={16} color={colors.white} />
+              </TouchableOpacity>
+            )}
+          </View>
+          
+          <Text style={styles.userName}>
+            {displayLoading ? "Loading..." : (displayFullName && displayFullName.trim() ? displayFullName : "User")}
+          </Text>
+          <Text style={styles.userRole}>
+            {displayLoading ? "Loading..." : (displayRoleLabel && displayRoleLabel.trim() ? displayRoleLabel : "BuddyRunner")}
+          </Text>
+        </View>
+
+        {/* Main Content */}
+        <View style={styles.content}>
+          {/* Post Section - Only show for own profile */}
+          {!isViewingOtherUser && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Post</Text>
+              <TouchableOpacity style={styles.postContainer} onPress={openModal}>
+                <TextInput
+                  style={styles.postInput}
+                  placeholder="Post your works"
+                  placeholderTextColor={colors.darkGray}
+                  value={postText}
+                  onChangeText={setPostText}
+                  multiline
+                  numberOfLines={2}
+                  editable={false}
+                  pointerEvents="none"
+                />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Works Section */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Works</Text>
+              {works.length >= 3 && (
+                <TouchableOpacity onPress={handleShowAllWorks}>
+                  <Text style={styles.allLink}>All</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            
+            {works.length > 0 ? (
+              <View style={styles.worksContainer}>
+                {works.slice(0, 2).map(renderWork)}
+              </View>
+            ) : (
+              <View style={styles.emptyWorksContainer}>
+                <Ionicons name="images-outline" size={48} color={colors.lightGray} />
+                <Text style={styles.emptyWorksText}>No works yet</Text>
+                <Text style={styles.emptyWorksSubtext}>Create your first post to see it here</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Reviews Section */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Reviews</Text>
+              {mockReviews.length >= 3 && (
+                <TouchableOpacity onPress={handleShowAllReviews}>
+                  <Text style={styles.allLink}>All</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            
+            <View style={styles.reviewsContainer}>
+              {mockReviews.slice(0, 2).map(renderReview)}
+            </View>
+          </View>
+
+          {/* Bottom Logout Button - Only show for own profile */}
+          {!isViewingOtherUser && (
+            <View style={styles.bottomSection}>
+              <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+                <Ionicons name="log-out-outline" size={20} color={colors.white} />
+                <Text style={styles.logoutButtonText}>Log Out</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Modal for Post Input */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={closeModal}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity 
+            style={styles.modalContent}
+            activeOpacity={1}
+            onPress={Keyboard.dismiss}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Create Post</Text>
+              <TouchableOpacity onPress={closeModal}>
+                <Ionicons name="close" size={24} color={colors.darkGray} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.modalTextInputContainer}>
+              <TextInput
+                style={styles.modalTextInput}
+                placeholder="Post your works"
+                placeholderTextColor={colors.darkGray}
+                value={modalPostText}
+                onChangeText={setModalPostText}
+                multiline
+                numberOfLines={8}
+                autoFocus={true}
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
+              <View style={styles.imageControlsContainer}>
+                {selectedImages.length > 0 && (
+                  <View style={styles.imagesPreviewContainer}>
+                    {selectedImages.map((image, index) => (
+                      <View key={index} style={styles.selectedImageInTextbox}>
+                        <Image source={{ uri: image }} style={styles.textboxImagePreview} />
+                        <TouchableOpacity 
+                          style={styles.removeImageButton}
+                          onPress={() => removeImage(index)}
+                        >
+                          <Ionicons name="close-circle" size={16} color={colors.maroon} />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                <TouchableOpacity style={styles.modalImageIconButton} onPress={pickImage}>
+                  <Ionicons name="add" size={24} color={colors.maroon} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity onPress={closeModal} style={styles.modalCancelButton}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                onPress={handleModalPostWork} 
+                style={[
+                  styles.modalPostButton,
+                  selectedImages.length === 0 && styles.modalPostButtonDisabled
+                ]}
+                disabled={selectedImages.length === 0}
+              >
+                <Text style={[
+                  styles.modalPostText,
+                  selectedImages.length === 0 && styles.modalPostTextDisabled
+                ]}>
+                  Post
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* All Works Modal */}
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={allWorksModalVisible}
+        onRequestClose={closeAllWorksModal}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.allModalHeader}>
+            <TouchableOpacity onPress={closeAllWorksModal} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.allModalTitle}>All Works</Text>
+            <View style={styles.placeholder} />
+          </View>
+          
+          <ScrollView style={styles.allModalContent} showsVerticalScrollIndicator={false}>
+            {works.length > 0 ? (
+              <View style={styles.allWorksContainer}>
+                {works.map(renderWork)}
+              </View>
+            ) : (
+              <View style={styles.emptyAllWorksContainer}>
+                <Ionicons name="images-outline" size={64} color={colors.lightGray} />
+                <Text style={styles.emptyAllWorksText}>No works yet</Text>
+                <Text style={styles.emptyAllWorksSubtext}>Create your first post to see it here</Text>
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* All Reviews Modal */}
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={allReviewsModalVisible}
+        onRequestClose={closeAllReviewsModal}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.allModalHeader}>
+            <TouchableOpacity onPress={closeAllReviewsModal} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.allModalTitle}>All Reviews</Text>
+            <View style={styles.placeholder} />
+          </View>
+          
+          <ScrollView style={styles.allModalContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.allReviewsContainer}>
+              {mockReviews.map(renderReview)}
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Selected Post Detail Modal */}
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={selectedPostModalVisible}
+        onRequestClose={closeSelectedPostModal}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.allModalHeader}>
+            <TouchableOpacity onPress={closeSelectedPostModal} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.allModalTitle}>Post</Text>
+            <TouchableOpacity 
+              style={styles.shareButton}
+              onPress={() => selectedPost && handleSharePost(selectedPost)}
+            >
+              <Ionicons name="share-outline" size={24} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={styles.selectedPostContent} showsVerticalScrollIndicator={false}>
+            {selectedPost && (
+              <>
+                {/* Post Text */}
+                {selectedPost.text && (
+                  <View style={styles.selectedPostTextContainer}>
+                    <Text style={styles.selectedPostText}>{selectedPost.text}</Text>
+                  </View>
+                )}
+                
+                {/* Post Images */}
+                {selectedPost.images && selectedPost.images.length > 0 && (
+                  <View style={styles.selectedPostImagesContainer}>
+                    {selectedPost.images.map((imageUri, index) => (
+                      <View key={index} style={styles.selectedPostImageWrapper}>
+                        <Image source={{ uri: imageUri }} style={styles.selectedPostImage} />
+                      </View>
+                    ))}
+                  </View>
+                )}
+                
+                {/* Post Footer */}
+                <View style={styles.selectedPostFooter}>
+                  <View style={styles.selectedPostStats}>
+                    <Text style={styles.selectedPostDate}>
+                      {new Date().toLocaleDateString('en-US', { 
+                        weekday: 'long',
+                        month: 'long', 
+                        day: 'numeric',
+                        year: 'numeric'
+                      })}
+                    </Text>
+                  </View>
+                  
+                  <View style={styles.selectedPostActions}>
+                    <TouchableOpacity 
+                      style={styles.selectedPostAction}
+                      onPress={() => selectedPost && handleLikePost(selectedPost.id)}
+                    >
+                      <Ionicons 
+                        name={selectedPost && likedPosts.has(selectedPost.id) ? "heart" : "heart-outline"} 
+                        size={24} 
+                        color={selectedPost && likedPosts.has(selectedPost.id) ? colors.maroon : colors.darkGray} 
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.selectedPostAction}
+                      onPress={() => selectedPost && handleSharePost(selectedPost)}
+                    >
+                      <Ionicons name="share-outline" size={24} color={colors.darkGray} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Settings Modal */}
+      <Modal
+        visible={settingsModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={closeSettingsModal}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={closeSettingsModal}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.settingsModalContent}>
+            <View style={styles.settingsModalHeader}>
+              <Text style={styles.settingsModalTitle}>Profile Settings</Text>
+              <TouchableOpacity onPress={closeSettingsModal} style={styles.closeButton}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.settingsModalBody} showsVerticalScrollIndicator={false}>
+              {/* User Information Section */}
+              <View style={styles.userInfoSection}>
+                <Text style={styles.sectionTitle}>User Information</Text>
+                
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Name:</Text>
+                  <Text style={styles.infoValue}>{displayLoading ? "Loading..." : displayFullName || "Not specified"}</Text>
+                </View>
+                
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Role:</Text>
+                  <Text style={styles.infoValue}>{displayLoading ? "Loading..." : (displayRoleLabel || "Not specified")}</Text>
+                </View>
+                
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Student ID:</Text>
+                  <Text style={styles.infoValue}>{displayLoading ? "Loading..." : (displayStudentIdNumber || "Not specified")}</Text>
+                </View>
+                
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Course:</Text>
+                  <Text style={styles.infoValue}>{displayLoading ? "Loading..." : (displayCourse || "Not specified")}</Text>
+                </View>
+                
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Phone:</Text>
+                  <Text style={styles.infoValue}>{displayLoading ? "Loading..." : (displayPhoneNumber || "Not specified")}</Text>
+                </View>
+              </View>
+              
+              {/* Action Buttons */}
+              <View style={styles.settingsActions}>
+                <TouchableOpacity 
+                  style={styles.editProfileButton}
+                  onPress={handleSettingsEditProfile}
+                >
+                  <Ionicons name="create-outline" size={20} color={colors.maroon} />
+                  <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.changePasswordButton}
+                  onPress={handleChangePassword}
+                >
+                  <Ionicons name="key-outline" size={20} color={colors.maroon} />
+                  <Text style={styles.changePasswordButtonText}>Change Password</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.settingsLogoutButton}
+                  onPress={() => {
+                    closeSettingsModal();
+                    handleLogout();
+                  }}
+                >
+                  <Ionicons name="log-out-outline" size={20} color={colors.white} />
+                  <Text style={styles.settingsLogoutButtonText}>Log Out</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.white,
+  },
+  
+  scrollView: {
+    flex: 1,
+  },
+  
+  // Header styles - smaller height
+  header: {
+    backgroundColor: colors.maroon,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: rp(16),
+    paddingVertical: rp(12),
+  },
+  
+  backButton: {
+    padding: rp(8),
+  },
+  
+  settingsButton: {
+    padding: rp(8),
+  },
+  
+  // Profile section styles - smaller padding
+  profileSection: {
+    backgroundColor: colors.maroon,
+    alignItems: 'center',
+    paddingVertical: rp(20),
+    paddingBottom: rp(30),
+  },
+  
+  profilePictureContainer: {
+    position: 'relative',
+    marginBottom: rp(16),
+  },
+  
+  profilePicture: {
+    width: rw(30),
+    height: rw(30),
+    borderRadius: rb(60),
+    backgroundColor: colors.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 4,
+    borderColor: colors.white,
+  },
+  
+  profileImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: rb(60),
+  },
+  
+  cameraButton: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: rw(8),
+    height: rw(8),
+    borderRadius: rb(16),
+    backgroundColor: '#666666',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.white,
+  },
+  
+  userName: {
+    fontSize: rf(24),
+    fontWeight: 'bold',
+    color: colors.white,
+    marginBottom: rp(4),
+  },
+  
+  userRole: {
+    fontSize: rf(16),
+    color: colors.white,
+    opacity: 0.9,
+  },
+  
+  // Content styles
+  content: {
+    paddingHorizontal: 16,
+  },
+  
+  section: {
+    marginVertical: 20,
+  },
+  
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.text,
+    marginBottom: 12,
+  },
+  
+  allLink: {
+    fontSize: 14,
+    color: colors.maroon,
+  },
+  
+  // Post section styles
+  postContainer: {
+    backgroundColor: colors.white,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.lightGray,
+    padding: 16,
+  },
+  
+  postInput: {
+    fontSize: 16,
+    color: colors.text,
+    minHeight: 50,
+    textAlignVertical: 'top',
+  },
+  
+  // Works section styles
+  worksContainer: {
+    gap: 16,
+  },
+  
+  workCard: {
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.lightGray,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  
+  workCardImage: {
+    width: '100%',
+    height: 200,
+    resizeMode: 'cover',
+  },
+  
+  workCardContent: {
+    padding: 16,
+  },
+  
+  workCardText: {
+    fontSize: 16,
+    color: colors.text,
+    lineHeight: 22,
+  },
+  
+  workCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    paddingTop: 8,
+  },
+  
+  workCardDate: {
+    fontSize: 12,
+    color: colors.darkGray,
+  },
+  
+  workCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  
+  multipleImagesIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.lightGray,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    gap: 2,
+  },
+  
+  multipleImagesText: {
+    fontSize: 10,
+    color: colors.maroon,
+    fontWeight: '600',
+  },
+  
+  workCardLike: {
+    padding: 4,
+  },
+  
+  emptyWorksContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  
+  emptyWorksText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.darkGray,
+    marginTop: 12,
+  },
+  
+  emptyWorksSubtext: {
+    fontSize: 14,
+    color: colors.lightGray,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  
+  // Reviews section styles
+  reviewsContainer: {
+    gap: 16,
+  },
+  
+  reviewCard: {
+    backgroundColor: colors.white,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.lightGray,
+  },
+  
+  reviewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  
+  reviewerInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  
+  reviewerAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.maroon,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  
+  reviewerInitials: {
+    color: colors.white,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  
+  reviewerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  
+  reviewDate: {
+    fontSize: 12,
+    color: colors.darkGray,
+  },
+  
+  ratingContainer: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+  
+  reviewComment: {
+    fontSize: 14,
+    color: colors.text,
+    fontStyle: 'italic',
+    lineHeight: 20,
+  },
+  
+  // Bottom section styles
+  bottomSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+    paddingBottom: 30,
+  },
+  
+  logoutButton: {
+    backgroundColor: colors.maroon,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  
+  logoutButtonText: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+  modalContent: {
+    backgroundColor: colors.white,
+    borderRadius: 20,
+    padding: 20,
+    width: '90%',
+    maxHeight: '70%',
+  },
+  
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: colors.text,
+  },
+  
+  modalTextInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    borderWidth: 1,
+    borderColor: colors.lightGray,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    backgroundColor: colors.white,
+  },
+  
+  modalTextInput: {
+    fontSize: 16,
+    color: colors.text,
+    minHeight: 150,
+    textAlignVertical: 'top',
+    flex: 1,
+  },
+  
+  modalImageIconButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  
+  imageControlsContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    flexWrap: 'wrap',
+    marginLeft: 8,
+  },
+  
+  imagesPreviewContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginRight: 8,
+  },
+  
+  selectedImageInTextbox: {
+    position: 'relative',
+    marginRight: 8,
+    marginBottom: 4,
+  },
+  
+  textboxImagePreview: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    resizeMode: 'cover',
+  },
+  
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  
+  modalCancelButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.lightGray,
+  },
+  
+  modalCancelText: {
+    color: colors.darkGray,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  
+  modalPostButton: {
+    backgroundColor: colors.maroon,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  
+  modalPostText: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  modalPostButtonDisabled: {
+    backgroundColor: colors.lightGray,
+  },
+  
+  modalPostTextDisabled: {
+    color: colors.darkGray,
+  },
+  
+  // Image picker styles
+  imagePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.lightGray,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.lightGray,
+    borderStyle: 'dashed',
+  },
+  
+  imagePickerText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: colors.maroon,
+    fontWeight: '500',
+  },
+  
+  imagePreviewContainer: {
+    position: 'relative',
+    marginBottom: 16,
+  },
+  
+  selectedImagePreview: {
+    width: '100%',
+    height: 200,
+    borderRadius: 12,
+    resizeMode: 'cover',
+  },
+  
+  removeImageButton: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: colors.white,
+    borderRadius: 12,
+  },
+  
+  // All modals styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: colors.white,
+  },
+  
+  allModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.lightGray,
+  },
+  
+  allModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: colors.text,
+  },
+  
+  placeholder: {
+    width: 24,
+  },
+  
+  allModalContent: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  
+  allWorksContainer: {
+    paddingVertical: 16,
+    gap: 16,
+  },
+  
+  allReviewsContainer: {
+    paddingVertical: 16,
+    gap: 16,
+  },
+  
+  emptyAllWorksContainer: {
+    alignItems: 'center',
+    paddingVertical: 80,
+  },
+  
+  emptyAllWorksText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.darkGray,
+    marginTop: 16,
+  },
+  
+  emptyAllWorksSubtext: {
+    fontSize: 16,
+    color: colors.lightGray,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  
+  // Selected post modal styles
+  shareButton: {
+    width: 24,
+    alignItems: 'center',
+  },
+  
+  selectedPostContent: {
+    flex: 1,
+  },
+  
+  selectedPostTextContainer: {
+    padding: 16,
+  },
+  
+  selectedPostText: {
+    fontSize: 18,
+    color: colors.text,
+    lineHeight: 26,
+  },
+  
+  selectedPostImagesContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  
+  selectedPostImageWrapper: {
+    marginBottom: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  
+  selectedPostImage: {
+    width: '100%',
+    height: 300,
+    resizeMode: 'cover',
+  },
+  
+  selectedPostFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.lightGray,
+  },
+  
+  selectedPostStats: {
+    marginBottom: 16,
+  },
+  
+  selectedPostDate: {
+    fontSize: 14,
+    color: colors.darkGray,
+    fontWeight: '500',
+  },
+  
+  selectedPostActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
+    alignItems: 'center',
+  },
+  
+  selectedPostAction: {
+    padding: 12,
+  },
+
+  // Settings Modal Styles
+  settingsModalContent: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    width: '100%',
+    maxHeight: '80%',
+    marginTop: 'auto',
+    shadowColor: colors.black,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  
+  settingsModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  
+  settingsModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.maroon,
+  },
+  
+  closeButton: {
+    padding: 4,
+  },
+  
+  settingsModalBody: {
+    padding: 20,
+  },
+  
+  userInfoSection: {
+    marginBottom: 30,
+  },
+  
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.lightGray,
+  },
+  
+  infoLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    flex: 1,
+  },
+  
+  infoValue: {
+    fontSize: 16,
+    color: colors.gray,
+    flex: 2,
+    textAlign: 'right',
+  },
+  
+  settingsActions: {
+    gap: 16,
+  },
+  
+  editProfileButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.light,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.maroon,
+    gap: 8,
+  },
+  
+  editProfileButtonText: {
+    color: colors.maroon,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  changePasswordButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.light,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.maroon,
+    gap: 8,
+    marginTop: 12,
+  },
+  
+  changePasswordButtonText: {
+    color: colors.maroon,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  settingsLogoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.maroon,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    gap: 8,
+  },
+  
+  settingsLogoutButtonText: {
+    color: colors.white,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});
+
+
+
+

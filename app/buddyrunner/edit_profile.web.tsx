@@ -12,6 +12,7 @@ import {
     Modal,
     TouchableWithoutFeedback,
     Image,
+    Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -190,21 +191,26 @@ export default function EditProfileWeb() {
     };
 
     const handleImagePicker = async () => {
-        // For web, we'll use a simple file input approach
-        Alert.alert(
-            'Select Image',
-            'Choose how you want to add a profile picture',
-            [
-                {
-                    text: 'Photo Library',
-                    onPress: () => openImageLibrary(),
-                },
-                {
-                    text: 'Cancel',
-                    style: 'cancel',
-                },
-            ]
-        );
+        // For web, directly open image library (no alert needed)
+        if (Platform.OS === 'web') {
+            openImageLibrary();
+        } else {
+            // For mobile, show options
+            Alert.alert(
+                'Select Image',
+                'Choose how you want to add a profile picture',
+                [
+                    {
+                        text: 'Photo Library',
+                        onPress: () => openImageLibrary(),
+                    },
+                    {
+                        text: 'Cancel',
+                        style: 'cancel',
+                    },
+                ]
+            );
+        }
     };
 
     const openImageLibrary = async () => {
@@ -297,7 +303,7 @@ export default function EditProfileWeb() {
                 <View style={styles.formSection}>
                     {/* Course Field */}
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Course:</Text>
+                        <Text style={styles.label}>Department:</Text>
                         <TouchableOpacity 
                             style={styles.inputContainer}
                             onPress={() => setShowCourseDropdown(true)}
@@ -374,7 +380,7 @@ export default function EditProfileWeb() {
                         <TouchableWithoutFeedback>
                             <View style={styles.modalContent}>
                                 <View style={styles.modalHeader}>
-                                    <Text style={styles.modalTitle}>Select Course</Text>
+                                    <Text style={styles.modalTitle}>Select Department</Text>
                                     <TouchableOpacity 
                                         onPress={() => setShowCourseDropdown(false)}
                                         style={styles.closeButton}

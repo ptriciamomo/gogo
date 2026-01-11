@@ -24,7 +24,7 @@ export default function BuddyrunnerLayout() {
 
                 const { data: userData, error: userError } = await supabase
                     .from('users')
-                    .select('is_blocked')
+                    .select('is_blocked, is_settlement_blocked')
                     .eq('id', user.id)
                     .maybeSingle();
 
@@ -41,8 +41,8 @@ export default function BuddyrunnerLayout() {
                     return;
                 }
 
-                // Only redirect if user is actually blocked
-                if (userData?.is_blocked) {
+                // Only redirect if user is blocked (disciplinary or settlement-based)
+                if (userData?.is_blocked || userData?.is_settlement_blocked) {
                     console.log('Layout: User is blocked, logging out...');
                     await supabase.auth.signOut();
                     router.replace('/login');

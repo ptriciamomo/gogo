@@ -98,13 +98,13 @@ function useAuthProfile() {
 
             const { data: row, error } = await supabase
                 .from("users")
-                .select("id, role, first_name, last_name, is_blocked, profile_picture_url")
+                .select("id, role, first_name, last_name, is_blocked, is_settlement_blocked, profile_picture_url")
                 .eq("id", user.id)
                 .single();
             if (error) throw error;
 
-            // Check if user is blocked
-            if (row?.is_blocked) {
+            // Check if user is blocked (disciplinary or settlement-based)
+            if (row?.is_blocked || row?.is_settlement_blocked) {
                 console.log('User is blocked, logging out...');
                 await supabase.auth.signOut();
                 router.replace('/login');

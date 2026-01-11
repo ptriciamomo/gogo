@@ -210,20 +210,21 @@ function useAuthProfile() {
 
             const { data: row } = await supabase
                 .from("users")
-                .select("id, role, first_name, last_name, average_rating, is_blocked, warning_count, created_at, profile_picture_url")
+                .select("id, role, first_name, last_name, average_rating, is_blocked, is_settlement_blocked, warning_count, created_at, profile_picture_url")
                 .eq("id", user.id)
-                .single<ProfileRow & { average_rating: number; is_blocked: boolean; warning_count: number; created_at: string; profile_picture_url: string | null }>();
+                .single<ProfileRow & { average_rating: number; is_blocked: boolean; is_settlement_blocked?: boolean | null; warning_count: number; created_at: string; profile_picture_url: string | null }>();
 
             if (__DEV__) console.log('🔍 User profile data:', {
                 userId: user.id,
                 isBlocked: row?.is_blocked,
+                isSettlementBlocked: row?.is_settlement_blocked,
                 warningCount: row?.warning_count,
                 userName: `${row?.first_name} ${row?.last_name}`,
                 timestamp: new Date().toISOString()
             });
 
-            // Check if user is blocked
-            if (row?.is_blocked) {
+            // Check if user is blocked (disciplinary or settlement-based)
+            if (row?.is_blocked || row?.is_settlement_blocked) {
                 if (__DEV__) console.log('🚨 BLOCKED USER DETECTED:', {
                     userId: user.id,
                     isBlocked: row.is_blocked,

@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
     ActivityIndicator,
     Alert,
+    FlatList,
     Image,
     Platform,
     SafeAreaView,
@@ -1388,36 +1389,47 @@ export default function AdminSettlements() {
         setCurrentPage(0);
     }, [statusFilter, searchQuery]);
 
-    const filteredSettlements = settlements.filter((settlement) => {
-        // Filter by status - use actual status from database
-        if (statusFilter === "paid" && settlement.status !== "paid") {
-            return false;
-        }
-        if (statusFilter === "pending" && settlement.status !== "pending") {
-            return false;
-        }
-        if (statusFilter === "overdue" && settlement.status !== "overdue") {
-            return false;
-        }
-        
-        // Filter by search query
-        if (!searchQuery) return true;
-        const query = searchQuery.toLowerCase();
-        const firstName = (settlement.user?.first_name || '').toLowerCase();
-        const lastName = (settlement.user?.last_name || '').toLowerCase();
-        const email = (settlement.user?.email || '').toLowerCase();
-        const studentId = (settlement.user?.student_id_number || '').toLowerCase();
-        return firstName.includes(query) || lastName.includes(query) || 
-               email.includes(query) || studentId.includes(query);
-    });
+    // Memoize filtered settlements to avoid re-computation on every render
+    const filteredSettlements = useMemo(() => {
+        return settlements.filter((settlement) => {
+            // Filter by status - use actual status from database
+            if (statusFilter === "paid" && settlement.status !== "paid") {
+                return false;
+            }
+            if (statusFilter === "pending" && settlement.status !== "pending") {
+                return false;
+            }
+            if (statusFilter === "overdue" && settlement.status !== "overdue") {
+                return false;
+            }
+            
+            // Filter by search query
+            if (!searchQuery) return true;
+            const query = searchQuery.toLowerCase();
+            const firstName = (settlement.user?.first_name || '').toLowerCase();
+            const lastName = (settlement.user?.last_name || '').toLowerCase();
+            const email = (settlement.user?.email || '').toLowerCase();
+            const studentId = (settlement.user?.student_id_number || '').toLowerCase();
+            return firstName.includes(query) || lastName.includes(query) || 
+                   email.includes(query) || studentId.includes(query);
+        });
+    }, [settlements, statusFilter, searchQuery]);
     
-    // Paginate filtered settlements (newest first - page 0 shows most recent)
-    const startIndex = currentPage * PAGE_SIZE;
-    const endIndex = startIndex + PAGE_SIZE;
-    const paginatedSettlements = filteredSettlements.slice(startIndex, endIndex);
-    const totalPages = Math.max(1, Math.ceil(filteredSettlements.length / PAGE_SIZE));
-    const hasNextPage = currentPage < totalPages - 1;
-    const hasPrevPage = currentPage > 0;
+    // Memoize pagination calculations to avoid re-computation on every render
+    const { paginatedSettlements, totalPages, hasNextPage, hasPrevPage } = useMemo(() => {
+        const startIndex = currentPage * PAGE_SIZE;
+        const endIndex = startIndex + PAGE_SIZE;
+        const paginated = filteredSettlements.slice(startIndex, endIndex);
+        const total = Math.max(1, Math.ceil(filteredSettlements.length / PAGE_SIZE));
+        const hasNext = currentPage < total - 1;
+        const hasPrev = currentPage > 0;
+        return {
+            paginatedSettlements: paginated,
+            totalPages: total,
+            hasNextPage: hasNext,
+            hasPrevPage: hasPrev
+        };
+    }, [filteredSettlements, currentPage, PAGE_SIZE]);
 
     const handleLogout = async () => {
         setConfirmLogout(false);
@@ -2081,15 +2093,22 @@ export default function AdminSettlements() {
                                                 <Text style={[styles.tableHeaderText, styles.tableCellPaidAt, styles.headerCenter]}>Paid at</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellActions]} numberOfLines={1} ellipsizeMode="tail">Actions</Text>
                                             </View>
-                                            {paginatedSettlements.map((settlement, index) => (
-                                                <SettlementRow 
-                                                    key={`${settlement.user_id}-${settlement.period_start_date}`} 
-                                                    settlement={settlement} 
-                                                    index={index}
-                                                    onMarkAsPaid={handleMarkAsPaid}
-                                                    processingSettlementId={processingSettlementId}
-                                                />
-                                            ))}
+                                            <FlatList
+                                                data={paginatedSettlements}
+                                                renderItem={({ item: settlement, index }) => (
+                                                    <SettlementRow 
+                                                        settlement={settlement} 
+                                                        index={index}
+                                                        onMarkAsPaid={handleMarkAsPaid}
+                                                        processingSettlementId={processingSettlementId}
+                                                    />
+                                                )}
+                                                keyExtractor={(settlement) => `${settlement.user_id}-${settlement.period_start_date}`}
+                                                initialNumToRender={10}
+                                                windowSize={5}
+                                                removeClippedSubviews={true}
+                                                scrollEnabled={false}
+                                            />
                                         </View>
                                     </ScrollView>
                                     

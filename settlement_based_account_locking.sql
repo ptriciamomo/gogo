@@ -30,15 +30,15 @@ BEGIN
           )
           -- Settlement has been overdue for 5+ full days (period_end_date was 6+ days ago)
           AND s.period_end_date < (CURRENT_DATE - INTERVAL '5 days')
-          -- Only lock if not already locked
-          AND (u.is_blocked IS NULL OR u.is_blocked = false)
+          -- Only lock if not already settlement-locked
+          AND (u.is_settlement_blocked IS NULL OR u.is_settlement_blocked = false)
         GROUP BY s.user_id
         HAVING COUNT(*) > 0
     LOOP
-        -- Lock the runner's account
+        -- Lock the runner's account for settlement reasons
         UPDATE users
         SET 
-            is_blocked = true,
+            is_settlement_blocked = true,
             updated_at = NOW()
         WHERE id = runner_record.user_id;
         
@@ -63,12 +63,12 @@ DECLARE
 BEGIN
     unlocked_count := 0;
     
-    -- Find all locked runners (BuddyRunners only)
+    -- Find all settlement-locked runners (BuddyRunners only)
     FOR runner_record IN
         SELECT u.id as user_id
         FROM users u
         WHERE LOWER(TRIM(u.role)) = 'buddyrunner'
-          AND u.is_blocked = true
+          AND u.is_settlement_blocked = true
     LOOP
         -- Check if this runner has any overdue settlements
         SELECT COUNT(*)
@@ -81,11 +81,11 @@ BEGIN
             OR (s.status = 'pending' AND s.period_end_date < CURRENT_DATE)
           );
         
-        -- If no overdue settlements, unlock the account
+        -- If no overdue settlements, unlock the account (settlement blocking only)
         IF overdue_count = 0 THEN
             UPDATE users
             SET 
-                is_blocked = false,
+                is_settlement_blocked = false,
                 updated_at = NOW()
             WHERE id = runner_record.user_id;
             
@@ -143,14 +143,14 @@ BEGIN
             OR (s.status = 'pending' AND s.period_end_date < CURRENT_DATE)
           );
         
-        -- If no other overdue settlements, unlock the account
+        -- If no other overdue settlements, unlock the account (settlement blocking only)
         IF overdue_count = 0 THEN
             UPDATE users
             SET 
-                is_blocked = false,
+                is_settlement_blocked = false,
                 updated_at = NOW()
             WHERE id = NEW.user_id
-              AND is_blocked = true;
+              AND is_settlement_blocked = true;
         END IF;
     END IF;
     

@@ -84,6 +84,7 @@ type ProfileRow = {
   phone?: string | null;
   profile_picture_url?: string | null;
   is_blocked?: boolean | null;
+  is_settlement_blocked?: boolean | null;
 };
 
 /* ===================== AUTH PROFILE HOOK ===================== */
@@ -128,14 +129,14 @@ function useAuthProfile() {
 
       const { data: row, error } = await supabase
         .from("users")
-        .select("id, role, first_name, middle_name, last_name, email, student_id_number, course, phone, profile_picture_url, is_blocked")
+        .select("id, role, first_name, middle_name, last_name, email, student_id_number, course, phone, profile_picture_url, is_blocked, is_settlement_blocked")
         .eq("id", user.id)
         .single<ProfileRow>();
       
       if (error) throw error;
 
-      // Check if user is blocked
-      if (row?.is_blocked) {
+      // Check if user is blocked (disciplinary or settlement-based)
+      if (row?.is_blocked || row?.is_settlement_blocked) {
         console.log('🚨 BLOCKED USER DETECTED:', {
           userId: user.id,
           isBlocked: row.is_blocked,

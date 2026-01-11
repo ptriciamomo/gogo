@@ -114,7 +114,7 @@ function useAuthProfile() {
 
       const { data: profile, error } = await supabase
         .from('users')
-        .select('id, role, first_name, middle_name, last_name, email, student_id_number, course, phone, profile_picture_url, is_blocked')
+        .select('id, role, first_name, middle_name, last_name, email, student_id_number, course, phone, profile_picture_url, is_blocked, is_settlement_blocked')
         .eq('id', authenticatedUserId)
         .single();
 
@@ -131,8 +131,8 @@ function useAuthProfile() {
         return;
       }
 
-      // Check if user is blocked
-      if (profile?.is_blocked) {
+      // Check if user is blocked (disciplinary or settlement-based)
+      if (profile?.is_blocked || profile?.is_settlement_blocked) {
         console.log('🚨 BLOCKED USER DETECTED:', {
           userId: user.id,
           isBlocked: profile.is_blocked,

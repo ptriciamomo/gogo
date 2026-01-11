@@ -169,14 +169,14 @@ export default function LoginScreen() {
             // 2) Read role, blocked status, and registration date from your app profile table
             const { data: profile, error: pErr } = await supabase
                 .from('users')
-                .select('role, is_blocked, created_at')
+                .select('role, is_blocked, is_settlement_blocked, created_at')
                 .eq('id', uid)
                 .single();
 
             if (pErr) throw pErr;
 
-            // Check if user is blocked (locked due to unpaid settlements)
-            if (profile?.is_blocked) {
+            // Check if user is blocked (disciplinary or settlement-based)
+            if (profile?.is_blocked || profile?.is_settlement_blocked) {
                 setLoading(false);
                 
                 // Dismiss keyboard before showing modal

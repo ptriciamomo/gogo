@@ -66,7 +66,7 @@ function titleCase(s?: string | null) {
 		.join(" ");
 }
 
-type ProfileRow = { id: string; role: string | null; first_name: string | null; last_name: string | null; is_blocked?: boolean | null };
+type ProfileRow = { id: string; role: string | null; first_name: string | null; last_name: string | null; is_blocked?: boolean | null; is_settlement_blocked?: boolean | null };
 
 function useAuthProfile() {
 	const router = useRouter();
@@ -82,12 +82,12 @@ function useAuthProfile() {
 			if (!user) { setLoading(false); return; }
 			const { data: row } = await supabase
 				.from("users")
-				.select("id, role, first_name, last_name, is_blocked, created_at, profile_picture_url")
+				.select("id, role, first_name, last_name, is_blocked, is_settlement_blocked, created_at, profile_picture_url")
 				.eq("id", user.id)
-				.single<ProfileRow & { created_at: string; profile_picture_url: string | null; is_blocked?: boolean | null }>();
+				.single<ProfileRow & { created_at: string; profile_picture_url: string | null; is_blocked?: boolean | null; is_settlement_blocked?: boolean | null }>();
 
-			// Check if user is blocked
-			if (row?.is_blocked) {
+			// Check if user is blocked (disciplinary or settlement-based)
+			if (row?.is_blocked || row?.is_settlement_blocked) {
 				console.log('User is blocked, logging out...');
 				await supabase.auth.signOut();
 				router.replace('/login');

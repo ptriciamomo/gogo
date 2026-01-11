@@ -117,6 +117,9 @@ export default function StudentIdImages() {
     const [filterType, setFilterType] = useState<'all' | 'approved' | 'disapproved'>('all');
     const { width: screenWidth } = useWindowDimensions();
 
+    // Query limits for performance (conservative limit to reduce load time)
+    const PAGE_SIZE = 200;
+
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
     const isMedium = screenWidth >= 768 && screenWidth < 1024;
@@ -138,7 +141,8 @@ export default function StudentIdImages() {
                     .from('users')
                     .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, id_image_approved, created_at')
                     .neq('role', 'admin')
-                    .order('created_at', { ascending: false });
+                    .order('created_at', { ascending: false })
+                    .limit(PAGE_SIZE);
 
                 let dataToUse = dataWithApproval;
                 let hasApprovalColumn = true;
@@ -151,7 +155,8 @@ export default function StudentIdImages() {
                         .from('users')
                         .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, created_at')
                         .neq('role', 'admin')
-                        .order('created_at', { ascending: false });
+                        .order('created_at', { ascending: false })
+                        .limit(PAGE_SIZE);
 
                     if (errorWithoutApproval) throw errorWithoutApproval;
                     dataToUse = dataWithoutApproval as any;
@@ -270,7 +275,8 @@ export default function StudentIdImages() {
                         .from('users')
                         .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, id_image_approved, created_at')
                         .neq('role', 'admin')
-                        .order('created_at', { ascending: false });
+                        .order('created_at', { ascending: false })
+                        .limit(PAGE_SIZE);
 
                     if (!refreshError && refreshData) {
                         const usersWithImages = refreshData
@@ -362,7 +368,8 @@ export default function StudentIdImages() {
                         .from('users')
                         .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, id_image_approved, created_at')
                         .neq('role', 'admin')
-                        .order('created_at', { ascending: false });
+                        .order('created_at', { ascending: false })
+                        .limit(PAGE_SIZE);
 
                     if (!refreshError && refreshData) {
                         const usersWithImages = refreshData

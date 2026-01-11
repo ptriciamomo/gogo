@@ -152,6 +152,9 @@ export default function AdminStudents() {
     const [settlementTransactions, setSettlementTransactions] = useState<SettlementTransaction[]>([]);
     const [loadingSettlements, setLoadingSettlements] = useState(false);
 
+    // Query limits for performance (conservative limit to reduce load time)
+    const PAGE_SIZE = 200;
+
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
     const isMedium = screenWidth >= 768 && screenWidth < 1024;
@@ -180,7 +183,8 @@ export default function AdminStudents() {
                     .from('users')
                     .select('id, first_name, last_name, middle_name, email, phone, role, course, student_id_number, profile_picture_url, created_at')
                     .neq('role', 'admin')
-                    .order('created_at', { ascending: false });
+                    .order('created_at', { ascending: false })
+                    .limit(PAGE_SIZE);
                 
                 if (error) throw error;
                 setStudents(data || []);

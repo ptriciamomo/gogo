@@ -151,6 +151,9 @@ export default function AdminCommissions() {
     const [commissions, setCommissions] = useState<CommissionWithUsers[]>([]);
     const { width: screenWidth } = useWindowDimensions();
 
+    // Query limits for performance (conservative limit to reduce load time)
+    const PAGE_SIZE = 200;
+
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
 
@@ -235,7 +238,8 @@ export default function AdminCommissions() {
                     .from('commission')
                     .select('id, title, commission_type, status, created_at, buddycaller_id, runner_id, meetup_location, due_at, description')
                     .eq('status', 'completed')
-                    .order('created_at', { ascending: false });
+                    .order('created_at', { ascending: false })
+                    .limit(PAGE_SIZE);
                 
                 if (commissionsError) throw commissionsError;
                 

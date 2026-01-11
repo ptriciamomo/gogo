@@ -4,3 +4,17 @@
 
 expo-env.d.ts
 # @end expo-cli
+
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+.expo-shared/
+
+# Builds
+dist/
+build/
+
+# Environment variables
+.env

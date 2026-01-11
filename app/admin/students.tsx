@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import {
     ActivityIndicator,
     Alert,
+    FlatList,
     Image,
     Platform,
     SafeAreaView,
@@ -151,6 +152,9 @@ export default function AdminStudents() {
     const [loadingTransactions, setLoadingTransactions] = useState(false);
     const [settlementTransactions, setSettlementTransactions] = useState<SettlementTransaction[]>([]);
     const [loadingSettlements, setLoadingSettlements] = useState(false);
+    
+    // Track initial mount to defer heavy logic until user interaction
+    const isInitialMount = useRef(true);
 
     // Query limits for performance (conservative limit to reduce load time)
     const PAGE_SIZE = 200;
@@ -198,43 +202,52 @@ export default function AdminStudents() {
         fetchStudents();
     }, []);
 
+    // Memoize filtered students to avoid re-computation on every render
+    const filteredStudents = useMemo(() => {
+        return students.filter((student) => {
+            // Role filter
+            if (roleFilter !== "all") {
+                const studentRole = (student.role || "").toLowerCase();
+                if (roleFilter === "buddyrunner" && studentRole !== "buddyrunner") {
+                    return false;
+                }
+                if (roleFilter === "buddycaller" && studentRole !== "buddycaller") {
+                    return false;
+                }
+            }
+            
+            // Search filter
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                const fullName = `${student.first_name || ''} ${student.last_name || ''}`.toLowerCase();
+                const email = (student.email || '').toLowerCase();
+                const course = (student.course || '').toLowerCase();
+                const studentId = (student.student_id_number || '').toLowerCase();
+                return fullName.includes(query) || email.includes(query) || course.includes(query) || studentId.includes(query);
+            }
+            
+            return true;
+        });
+    }, [students, roleFilter, searchQuery]);
+
     // Fetch transactions when exactly one student matches
     React.useEffect(() => {
+        // Defer heavy logic until after initial mount (only run when user interacts)
+        if (isInitialMount.current) {
+            isInitialMount.current = false;
+            return;
+        }
+        
         const fetchStudentTransactions = async () => {
-            // Calculate filtered students
-            const filtered = students.filter((student) => {
-                // Role filter
-                if (roleFilter !== "all") {
-                    const studentRole = (student.role || "").toLowerCase();
-                    if (roleFilter === "buddyrunner" && studentRole !== "buddyrunner") {
-                        return false;
-                    }
-                    if (roleFilter === "buddycaller" && studentRole !== "buddycaller") {
-                        return false;
-                    }
-                }
-                
-                // Search filter
-                if (searchQuery) {
-                    const query = searchQuery.toLowerCase();
-                    const fullName = `${student.first_name || ''} ${student.last_name || ''}`.toLowerCase();
-                    const email = (student.email || '').toLowerCase();
-                    const course = (student.course || '').toLowerCase();
-                    const studentId = (student.student_id_number || '').toLowerCase();
-                    return fullName.includes(query) || email.includes(query) || course.includes(query) || studentId.includes(query);
-                }
-                
-                return true;
-            });
-
-            if (filtered.length !== 1) {
+            // Use memoized filtered students to avoid duplicate computation
+            if (filteredStudents.length !== 1) {
                 setSelectedStudent(null);
                 setTransactions([]);
                 setSettlementTransactions([]);
                 return;
             }
 
-            const student = filtered[0];
+            const student = filteredStudents[0];
             setSelectedStudent(student);
             setLoadingTransactions(true);
             setLoadingSettlements(true);
@@ -553,7 +566,7 @@ export default function AdminStudents() {
         };
 
         fetchStudentTransactions();
-    }, [students, searchQuery, roleFilter]);
+    }, [filteredStudents]);
 
     const handleLogout = async () => {
         setConfirmLogout(false);
@@ -579,31 +592,6 @@ export default function AdminStudents() {
             router.replace('/login');
         }
     };
-
-    const filteredStudents = students.filter((student) => {
-        // Role filter
-        if (roleFilter !== "all") {
-            const studentRole = (student.role || "").toLowerCase();
-            if (roleFilter === "buddyrunner" && studentRole !== "buddyrunner") {
-                return false;
-            }
-            if (roleFilter === "buddycaller" && studentRole !== "buddycaller") {
-                return false;
-            }
-        }
-        
-        // Search filter
-        if (searchQuery) {
-            const query = searchQuery.toLowerCase();
-            const fullName = `${student.first_name || ''} ${student.last_name || ''}`.toLowerCase();
-            const email = (student.email || '').toLowerCase();
-            const course = (student.course || '').toLowerCase();
-            const studentId = (student.student_id_number || '').toLowerCase();
-            return fullName.includes(query) || email.includes(query) || course.includes(query) || studentId.includes(query);
-        }
-        
-        return true;
-    });
 
     if (loading) {
         return (
@@ -846,9 +834,17 @@ export default function AdminStudents() {
                                                 <Text style={[styles.tableHeaderText, styles.tableCellPhone]}>Phone</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellJoined]}>Created At</Text>
                                             </View>
-                                            {filteredStudents.map((student, index) => (
-                                                <StudentTableRow key={student.id} student={student} index={index} />
-                                            ))}
+                                            <FlatList
+                                                data={filteredStudents}
+                                                renderItem={({ item: student, index }) => (
+                                                    <StudentTableRow student={student} index={index} />
+                                                )}
+                                                keyExtractor={(student) => student.id}
+                                                initialNumToRender={15}
+                                                windowSize={5}
+                                                removeClippedSubviews={true}
+                                                scrollEnabled={false}
+                                            />
                                         </View>
                                     </ScrollView>
                                 </>

@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
     ActivityIndicator,
     Alert,
+    FlatList,
     Image,
     Modal,
     Platform,
@@ -425,30 +426,33 @@ export default function AdminCommissions() {
         }
     };
 
-    const filteredCommissions = commissions.filter((commission) => {
-        // Date filter
-        if (selectedDate) {
-            const commissionDate = new Date(commission.created_at);
-            const selectedDateObj = new Date(selectedDate);
-            const commissionDateOnly = new Date(commissionDate.getFullYear(), commissionDate.getMonth(), commissionDate.getDate());
-            const selectedDateOnly = new Date(selectedDateObj.getFullYear(), selectedDateObj.getMonth(), selectedDateObj.getDate());
-            if (commissionDateOnly.getTime() !== selectedDateOnly.getTime()) {
-                return false;
+    // Memoize filtered commissions to avoid re-computation on every render
+    const filteredCommissions = useMemo(() => {
+        return commissions.filter((commission) => {
+            // Date filter
+            if (selectedDate) {
+                const commissionDate = new Date(commission.created_at);
+                const selectedDateObj = new Date(selectedDate);
+                const commissionDateOnly = new Date(commissionDate.getFullYear(), commissionDate.getMonth(), commissionDate.getDate());
+                const selectedDateOnly = new Date(selectedDateObj.getFullYear(), selectedDateObj.getMonth(), selectedDateObj.getDate());
+                if (commissionDateOnly.getTime() !== selectedDateOnly.getTime()) {
+                    return false;
+                }
             }
-        }
 
-        // Search filter
-        if (searchQuery) {
-            const query = searchQuery.toLowerCase();
-            const title = (commission.title || '').toLowerCase();
-            const callerName = commission.caller ? `${commission.caller.first_name || ''} ${commission.caller.last_name || ''}`.toLowerCase() : '';
-            const runnerName = commission.runner ? `${commission.runner.first_name || ''} ${commission.runner.last_name || ''}`.toLowerCase() : '';
-            const commissionType = (commission.commission_type || '').toLowerCase();
-            return title.includes(query) || callerName.includes(query) || runnerName.includes(query) || commissionType.includes(query);
-        }
-        
-        return true;
-    });
+            // Search filter
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                const title = (commission.title || '').toLowerCase();
+                const callerName = commission.caller ? `${commission.caller.first_name || ''} ${commission.caller.last_name || ''}`.toLowerCase() : '';
+                const runnerName = commission.runner ? `${commission.runner.first_name || ''} ${commission.runner.last_name || ''}`.toLowerCase() : '';
+                const commissionType = (commission.commission_type || '').toLowerCase();
+                return title.includes(query) || callerName.includes(query) || runnerName.includes(query) || commissionType.includes(query);
+            }
+            
+            return true;
+        });
+    }, [commissions, selectedDate, searchQuery]);
 
     if (loading) {
         return (
@@ -587,9 +591,17 @@ export default function AdminCommissions() {
                                                 <Text style={[styles.tableHeaderText, styles.tableCellDueDate]}>Due At</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellPrice]}>Total Price</Text>
                                             </View>
-                                            {filteredCommissions.map((commission, index) => (
-                                                <CommissionTableRow key={commission.id} commission={commission} index={index} />
-                                            ))}
+                                            <FlatList
+                                                data={filteredCommissions}
+                                                renderItem={({ item: commission, index }) => (
+                                                    <CommissionTableRow commission={commission} index={index} />
+                                                )}
+                                                keyExtractor={(commission) => String(commission.id)}
+                                                initialNumToRender={10}
+                                                windowSize={5}
+                                                removeClippedSubviews={true}
+                                                scrollEnabled={false}
+                                            />
                                         </View>
                                     </ScrollView>
                                 </>

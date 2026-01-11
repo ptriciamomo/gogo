@@ -114,6 +114,9 @@ export default function AdminSettlements() {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<"pending" | "paid" | "overdue">("pending");
 
+    // Query limits for performance (conservative limit to reduce load time)
+    const PAGE_SIZE = 200;
+
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
     const isMedium = screenWidth >= 768 && screenWidth < 1024;
@@ -154,7 +157,9 @@ export default function AdminSettlements() {
                 // Fetch all users who are runners (they earn money)
                 const { data: allUsers, error: usersError } = await supabase
                     .from('users')
-                    .select('id, first_name, last_name, email, student_id_number, role');
+                    .select('id, first_name, last_name, email, student_id_number, role')
+                    .order('created_at', { ascending: false })
+                    .limit(PAGE_SIZE);
                 
                 if (usersError) throw usersError;
                 
@@ -175,7 +180,9 @@ export default function AdminSettlements() {
                     .from('commission')
                     .select('id, runner_id, created_at, status')
                     .in('runner_id', runnerIds)
-                    .eq('status', 'completed');
+                    .eq('status', 'completed')
+                    .order('created_at', { ascending: false })
+                    .limit(PAGE_SIZE);
                 
                 if (commissionsError) throw commissionsError;
 
@@ -188,7 +195,8 @@ export default function AdminSettlements() {
                         .from('invoices')
                         .select('id, commission_id, amount, status, created_at, accepted_at')
                         .in('commission_id', commissionIds)
-                        .order('created_at', { ascending: false });
+                        .order('created_at', { ascending: false })
+                        .limit(PAGE_SIZE);
 
                     if (invoicesError) throw invoicesError;
 
@@ -220,7 +228,9 @@ export default function AdminSettlements() {
                     .from('errand')
                     .select('id, runner_id, created_at, status, amount_price')
                     .in('runner_id', runnerIds)
-                    .eq('status', 'completed');
+                    .eq('status', 'completed')
+                    .order('created_at', { ascending: false })
+                    .limit(PAGE_SIZE);
                 
                 if (errandsError) throw errandsError;
 
@@ -230,7 +240,9 @@ export default function AdminSettlements() {
                 const { data: existingSettlements, error: settlementsDbError } = await supabase
                     .from('settlements')
                     .select('id, user_id, period_start_date, period_end_date, status, paid_at, created_at, updated_at, total_earnings, total_transactions, system_fees, commission_ids, errand_ids')
-                    .in('user_id', runnerIds);
+                    .in('user_id', runnerIds)
+                    .order('updated_at', { ascending: false })
+                    .limit(PAGE_SIZE);
 
                 if (settlementsDbError) {
                     console.warn('Error fetching existing settlements:', settlementsDbError);

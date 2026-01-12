@@ -2360,6 +2360,14 @@ function Sidebar({
                         onPress={() => router.push("/admin/commissions")}
                     />
                     <Separator />
+                    <SideItem
+                        label="Category List"
+                        icon="list-outline"
+                        open={open}
+                        active={activeRoute === 'categories'}
+                        onPress={() => router.push("/admin/categories")}
+                    />
+                    <Separator />
                 </View>
 
                 <View style={styles.sidebarFooter}>

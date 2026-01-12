@@ -412,7 +412,7 @@ export default function StudentIdImages() {
 
         // Apply filter type
         if (filterType === 'all') {
-            return true;
+            return user.id_image_approved === null;
         } else if (filterType === 'approved') {
             return user.id_image_approved === true;
         } else if (filterType === 'disapproved') {
@@ -489,7 +489,7 @@ export default function StudentIdImages() {
                                     activeOpacity={0.7}
                                 >
                                     <Text style={[styles.filterButtonText, isSmall && styles.filterButtonTextSmall, filterType === 'all' && styles.filterButtonTextActive]}>
-                                        All
+                                        Pending
                                     </Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
@@ -806,6 +806,14 @@ function Sidebar({
                         open={open}
                         active={activeRoute === 'commissions'}
                         onPress={() => router.push("/admin/commissions")}
+                    />
+                    <Separator />
+                    <SideItem
+                        label="Category List"
+                        icon="list-outline"
+                        open={open}
+                        active={activeRoute === 'categories'}
+                        onPress={() => router.push("/admin/categories")}
                     />
                     <Separator />
                 </View>

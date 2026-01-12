@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -10,10 +10,12 @@ import {
     ScrollView,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     View,
     useWindowDimensions,
 } from "react-native";
+import { supabase } from "../../lib/supabase";
 
 /* ================= COLORS ================= */
 const colors = {
@@ -58,12 +60,34 @@ function useAuthProfile() {
     return { loading, fullName };
 }
 
+type Category = {
+    id: string;
+    code: string;
+    name: string;
+    is_active: boolean;
+    order: number;
+    isNew?: boolean; // Track newly added categories
+};
+
 export default function AdminCategories() {
     const router = useRouter();
     const { loading, fullName } = useAuthProfile();
     const { width: screenWidth } = useWindowDimensions();
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [confirmLogout, setConfirmLogout] = useState(false);
+    const [categories, setCategories] = useState<Category[]>([]);
+    const [categoriesLoading, setCategoriesLoading] = useState(true);
+    const [categoriesError, setCategoriesError] = useState<string | null>(null);
+    const [localCategories, setLocalCategories] = useState<Category[]>([]);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [saveSuccess, setSaveSuccess] = useState(false);
+    const [showAddModal, setShowAddModal] = useState(false);
+    const [showEditModal, setShowEditModal] = useState(false);
+    const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+    const [newCategoryName, setNewCategoryName] = useState("");
+    const [editCategoryName, setEditCategoryName] = useState("");
 
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
@@ -83,10 +107,249 @@ export default function AdminCategories() {
         }
     }, [isSmall]);
 
+    // Fetch categories from database
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                setCategoriesLoading(true);
+                setCategoriesError(null);
+
+                // Fetch all categories (active and inactive) for admin view
+                const { data, error } = await supabase
+                    .from('errand_categories')
+                    .select('id, code, name, is_active, order')
+                    .order('order', { ascending: true });
+
+                if (error) {
+                    console.error('Error fetching categories:', error);
+                    setCategoriesError(error.message || 'Failed to load categories');
+                    setCategories([]);
+                    return;
+                }
+
+                const fetchedCategories = data || [];
+                setCategories(fetchedCategories);
+                // Initialize local editable copy
+                setLocalCategories(fetchedCategories);
+                setHasUnsavedChanges(false);
+            } catch (err) {
+                console.error('Unexpected error fetching categories:', err);
+                setCategoriesError(err instanceof Error ? err.message : 'An unexpected error occurred');
+                setCategories([]);
+                setLocalCategories([]);
+            } finally {
+                setCategoriesLoading(false);
+            }
+        };
+
+        fetchCategories();
+    }, []);
+
     const handleLogout = async () => {
         setConfirmLogout(false);
         // UI only - no actual logout
         router.replace('/login');
+    };
+
+    // UI-only handlers for local state manipulation
+    const handleMoveUp = (categoryId: string) => {
+        setLocalCategories((prev) => {
+            const index = prev.findIndex((c) => c.id === categoryId);
+            if (index <= 0) return prev; // Can't move first item up
+
+            const newCategories = [...prev];
+            [newCategories[index - 1], newCategories[index]] = [newCategories[index], newCategories[index - 1]];
+            setHasUnsavedChanges(true);
+            return newCategories;
+        });
+    };
+
+    const handleMoveDown = (categoryId: string) => {
+        setLocalCategories((prev) => {
+            const index = prev.findIndex((c) => c.id === categoryId);
+            if (index < 0 || index >= prev.length - 1) return prev; // Can't move last item down
+
+            const newCategories = [...prev];
+            [newCategories[index], newCategories[index + 1]] = [newCategories[index + 1], newCategories[index]];
+            setHasUnsavedChanges(true);
+            return newCategories;
+        });
+    };
+
+    const handleToggleActive = (categoryId: string) => {
+        setLocalCategories((prev) => {
+            const newCategories = prev.map((c) =>
+                c.id === categoryId ? { ...c, is_active: !c.is_active } : c
+            );
+            setHasUnsavedChanges(true);
+            return newCategories;
+        });
+    };
+
+    // Add new category to local state
+    const handleAddCategory = () => {
+        if (!newCategoryName.trim()) {
+            Alert.alert('Error', 'Category name cannot be empty');
+            return;
+        }
+
+        const maxOrder = localCategories.length > 0 
+            ? Math.max(...localCategories.map(c => c.order))
+            : 0;
+
+        const newCategory: Category = {
+            id: `temp-${Date.now()}-${Math.random()}`, // Temporary ID for new categories
+            code: newCategoryName.trim().toLowerCase().replace(/\s+/g, '_'),
+            name: newCategoryName.trim(),
+            is_active: true,
+            order: maxOrder + 1,
+            isNew: true,
+        };
+
+        setLocalCategories((prev) => [...prev, newCategory]);
+        setHasUnsavedChanges(true);
+        setNewCategoryName("");
+        setShowAddModal(false);
+    };
+
+    // Open edit modal
+    const handleEditClick = (categoryId: string) => {
+        const category = localCategories.find(c => c.id === categoryId);
+        if (category) {
+            setEditingCategory(category);
+            setEditCategoryName(category.name);
+            setShowEditModal(true);
+        }
+    };
+
+    // Save edited category name
+    const handleSaveEdit = () => {
+        if (!editCategoryName.trim()) {
+            Alert.alert('Error', 'Category name cannot be empty');
+            return;
+        }
+
+        if (!editingCategory) return;
+
+        setLocalCategories((prev) =>
+            prev.map((c) =>
+                c.id === editingCategory.id
+                    ? { ...c, name: editCategoryName.trim() }
+                    : c
+            )
+        );
+        setHasUnsavedChanges(true);
+        setShowEditModal(false);
+        setEditingCategory(null);
+        setEditCategoryName("");
+    };
+
+    // Check if local categories differ from fetched categories
+    const hasActualChanges = () => {
+        // Check for new categories
+        const hasNewCategories = localCategories.some(c => c.isNew || !categories.find(f => f.id === c.id));
+        if (hasNewCategories) return true;
+
+        if (localCategories.length !== categories.length) return true;
+        
+        for (let i = 0; i < localCategories.length; i++) {
+            const local = localCategories[i];
+            const localOrder = i + 1; // Current position in array
+            const fetched = categories.find(c => c.id === local.id);
+            
+            if (!fetched) return true;
+            // Compare name
+            if (local.name !== fetched.name) return true;
+            // Compare is_active status
+            if (local.is_active !== fetched.is_active) return true;
+            // Compare current array position with fetched order
+            if (localOrder !== fetched.order) return true;
+        }
+        
+        return false;
+    };
+
+    // Save changes to database
+    const handleSaveChanges = async () => {
+        if (!hasUnsavedChanges || saving || !hasActualChanges()) return;
+
+        try {
+            setSaving(true);
+            setSaveError(null);
+            setSaveSuccess(false);
+
+            // Process each category: insert new ones, update existing ones
+            for (let i = 0; i < localCategories.length; i++) {
+                const category = localCategories[i];
+                const newOrder = i + 1;
+
+                if (category.isNew) {
+                    // Insert new category
+                    const { error } = await supabase
+                        .from('errand_categories')
+                        .insert({
+                            code: category.code,
+                            name: category.name,
+                            is_active: category.is_active,
+                            order: newOrder,
+                        });
+
+                    if (error) {
+                        console.error('Error inserting category:', error);
+                        setSaveError(`Failed to add category "${category.name}": ${error.message}`);
+                        setSaving(false);
+                        return;
+                    }
+                } else {
+                    // Update existing category
+                    const { error } = await supabase
+                        .from('errand_categories')
+                        .update({
+                            name: category.name,
+                            order: newOrder,
+                            is_active: category.is_active,
+                        })
+                        .eq('id', category.id);
+
+                    if (error) {
+                        console.error('Error updating category:', error);
+                        setSaveError(`Failed to update category "${category.name}": ${error.message}`);
+                        setSaving(false);
+                        return;
+                    }
+                }
+            }
+
+            // All updates succeeded - re-fetch all categories (active and inactive for admin view)
+            setSaveSuccess(true);
+            const { data, error } = await supabase
+                .from('errand_categories')
+                .select('id, code, name, is_active, order')
+                .order('order', { ascending: true });
+
+            if (error) {
+                console.error('Error re-fetching categories after save:', error);
+                setSaveError(`Changes saved, but failed to refresh: ${error.message}`);
+                setSaving(false);
+                return;
+            }
+
+            const fetchedCategories = data || [];
+            setCategories(fetchedCategories);
+            // Update localCategories to match fetched (only active categories)
+            setLocalCategories(fetchedCategories);
+            setHasUnsavedChanges(false);
+            setSaving(false);
+
+            // Clear success message after 3 seconds
+            setTimeout(() => {
+                setSaveSuccess(false);
+            }, 3000);
+        } catch (err) {
+            console.error('Unexpected error saving changes:', err);
+            setSaveError(err instanceof Error ? err.message : 'An unexpected error occurred');
+            setSaving(false);
+        }
     };
 
     if (loading) {
@@ -131,7 +394,52 @@ export default function AdminCategories() {
                         <View style={styles.content}>
                             {/* Section 1: Errands */}
                             <View style={styles.section}>
-                                <Text style={styles.sectionHeader}>Errands</Text>
+                                <View style={styles.sectionHeaderRow}>
+                                    <Text style={styles.sectionHeader}>Errands</Text>
+                                    <View style={styles.headerButtons}>
+                                        <TouchableOpacity
+                                            style={styles.addButton}
+                                            onPress={() => {
+                                                setNewCategoryName("");
+                                                setShowAddModal(true);
+                                            }}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="add-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
+                                            <Text style={styles.addButtonText}>Add Category</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.saveButton,
+                                                (!hasUnsavedChanges || saving || !hasActualChanges()) ? styles.saveButtonDisabled : null,
+                                            ]}
+                                            onPress={handleSaveChanges}
+                                            disabled={!hasUnsavedChanges || saving || !hasActualChanges()}
+                                            activeOpacity={0.7}
+                                        >
+                                            {saving ? (
+                                                <View style={styles.saveButtonContent}>
+                                                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+                                                    <Text style={styles.saveButtonText}>Saving...</Text>
+                                                </View>
+                                            ) : (
+                                                <Text style={styles.saveButtonText}>Save Changes</Text>
+                                            )}
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                                {saveError && (
+                                    <View style={styles.saveErrorContainer}>
+                                        <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                        <Text style={styles.saveErrorText}>{saveError}</Text>
+                                    </View>
+                                )}
+                                {saveSuccess && (
+                                    <View style={styles.saveSuccessContainer}>
+                                        <Ionicons name="checkmark-circle-outline" size={16} color="#10B981" />
+                                        <Text style={styles.saveSuccessText}>Changes saved successfully!</Text>
+                                    </View>
+                                )}
                                 <ScrollView horizontal showsHorizontalScrollIndicator={true}>
                                     <View style={styles.tableContainer}>
                                         <View style={styles.tableHeader}>
@@ -140,10 +448,43 @@ export default function AdminCategories() {
                                             <Text style={[styles.tableHeaderText, styles.tableCellActive]}>Active</Text>
                                             <Text style={[styles.tableHeaderText, styles.tableCellActions]}>Actions</Text>
                                         </View>
-                                        <CategoryTableRow order={1} category="Deliver Items" active={true} index={0} />
-                                        <CategoryTableRow order={2} category="Food Delivery" active={true} index={1} />
-                                        <CategoryTableRow order={3} category="School Materials" active={true} index={2} />
-                                        <CategoryTableRow order={4} category="Printing" active={true} index={3} />
+                                        {categoriesLoading ? (
+                                            <View style={styles.tableRow}>
+                                                <View style={[styles.tableCellOrder, { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 }]}>
+                                                    <ActivityIndicator size="small" color={colors.maroon} />
+                                                    <Text style={[styles.tableCellText, { marginTop: 8, opacity: 0.6 }]}>Loading categories...</Text>
+                                                </View>
+                                            </View>
+                                        ) : categoriesError ? (
+                                            <View style={styles.tableRow}>
+                                                <View style={[styles.tableCellOrder, { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 }]}>
+                                                    <Ionicons name="alert-circle-outline" size={20} color="#EF4444" />
+                                                    <Text style={[styles.tableCellText, { marginTop: 8, color: "#EF4444" }]}>Error: {categoriesError}</Text>
+                                                </View>
+                                            </View>
+                                        ) : categories.length === 0 ? (
+                                            <View style={styles.tableRow}>
+                                                <View style={[styles.tableCellOrder, { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 }]}>
+                                                    <Text style={[styles.tableCellText, { opacity: 0.6 }]}>No categories found</Text>
+                                                </View>
+                                            </View>
+                                        ) : (
+                                            localCategories.map((category, index) => (
+                                                <CategoryTableRow
+                                                    key={category.id}
+                                                    categoryId={category.id}
+                                                    order={index + 1}
+                                                    category={category.name}
+                                                    active={category.is_active}
+                                                    index={index}
+                                                    totalItems={localCategories.length}
+                                                    onMoveUp={handleMoveUp}
+                                                    onMoveDown={handleMoveDown}
+                                                    onToggleActive={handleToggleActive}
+                                                    onEdit={handleEditClick}
+                                                />
+                                            ))
+                                        )}
                                     </View>
                                 </ScrollView>
                             </View>
@@ -178,6 +519,77 @@ export default function AdminCategories() {
                                 onPress={handleLogout}
                             >
                                 <Text style={styles.modalButtonConfirmText}>Logout</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Add Category Modal */}
+            {showAddModal && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Add Category</Text>
+                        <Text style={styles.modalMessage}>Enter the category name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCategoryName}
+                            onChangeText={setNewCategoryName}
+                            placeholder="Category name"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowAddModal(false);
+                                    setNewCategoryName("");
+                                }}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm]}
+                                onPress={handleAddCategory}
+                            >
+                                <Text style={styles.modalButtonConfirmText}>Add</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Edit Category Modal */}
+            {showEditModal && editingCategory && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Edit Category</Text>
+                        <Text style={styles.modalMessage}>Enter the new category name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCategoryName}
+                            onChangeText={setEditCategoryName}
+                            placeholder="Category name"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowEditModal(false);
+                                    setEditingCategory(null);
+                                    setEditCategoryName("");
+                                }}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm]}
+                                onPress={handleSaveEdit}
+                            >
+                                <Text style={styles.modalButtonConfirmText}>Save</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -326,26 +738,67 @@ function Separator() {
     return <View style={styles.separator} />;
 }
 
-function CategoryTableRow({ order, category, active, index }: { order: number; category: string; active: boolean; index: number }) {
+function CategoryTableRow({
+    categoryId,
+    order,
+    category,
+    active,
+    index,
+    totalItems,
+    onMoveUp,
+    onMoveDown,
+    onToggleActive,
+    onEdit,
+}: {
+    categoryId: string;
+    order: number;
+    category: string;
+    active: boolean;
+    index: number;
+    totalItems: number;
+    onMoveUp: (id: string) => void;
+    onMoveDown: (id: string) => void;
+    onToggleActive: (id: string) => void;
+    onEdit: (id: string) => void;
+}) {
     const rowStyle = index % 2 === 0 ? styles.tableRow : styles.tableRowAlternate;
+    const canMoveUp = index > 0;
+    const canMoveDown = index < totalItems - 1;
     
     return (
         <View style={rowStyle}>
             <Text style={[styles.tableCellText, styles.tableCellOrder]}>{order}</Text>
             <Text style={[styles.tableCellText, styles.tableCellCategory]}>{category}</Text>
             <View style={styles.tableCellActive}>
-                <View style={styles.activeBadge}>
-                    <Text style={styles.activeBadgeText}>Active</Text>
-                </View>
+                <TouchableOpacity
+                    onPress={() => onToggleActive(categoryId)}
+                    activeOpacity={0.7}
+                >
+                    <View style={[styles.activeBadge, !active && styles.activeBadgeInactive]}>
+                        <Text style={styles.activeBadgeText}>{active ? 'Active' : 'Inactive'}</Text>
+                    </View>
+                </TouchableOpacity>
             </View>
             <View style={styles.tableCellActions}>
-                <TouchableOpacity style={styles.actionButton} disabled>
-                    <Ionicons name="chevron-up-outline" size={16} color={colors.text} />
+                <TouchableOpacity
+                    style={[styles.actionButton, !canMoveUp && styles.actionButtonDisabled]}
+                    onPress={() => canMoveUp && onMoveUp(categoryId)}
+                    disabled={!canMoveUp}
+                >
+                    <Ionicons name="chevron-up-outline" size={16} color={canMoveUp ? colors.text : colors.border} />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} disabled>
-                    <Ionicons name="chevron-down-outline" size={16} color={colors.text} />
+                <TouchableOpacity
+                    style={[styles.actionButton, !canMoveDown && styles.actionButtonDisabled]}
+                    onPress={() => canMoveDown && onMoveDown(categoryId)}
+                    disabled={!canMoveDown}
+                >
+                    <Ionicons name="chevron-down-outline" size={16} color={canMoveDown ? colors.text : colors.border} />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} disabled>
+                <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => onEdit(categoryId)}
+                    activeOpacity={0.7}
+                >
                     <Ionicons name="create-outline" size={16} color={colors.text} />
                 </TouchableOpacity>
             </View>
@@ -528,11 +981,87 @@ const styles = StyleSheet.create({
     section: {
         marginBottom: 40,
     },
+    sectionHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 16,
+    },
     sectionHeader: {
         color: colors.text,
         fontSize: 20,
         fontWeight: "700",
-        marginBottom: 16,
+    },
+    headerButtons: {
+        flexDirection: "row",
+        gap: 12,
+        alignItems: "center",
+    },
+    addButton: {
+        backgroundColor: "#10B981",
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 8,
+        flexDirection: "row",
+        alignItems: "center",
+    },
+    addButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "600",
+    },
+    saveButton: {
+        backgroundColor: colors.maroon,
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 8,
+    },
+    saveButtonDisabled: {
+        backgroundColor: colors.border,
+        opacity: 0.6,
+    },
+    saveButtonContent: {
+        flexDirection: "row",
+        alignItems: "center",
+    },
+    saveButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "600",
+    },
+    saveErrorContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        backgroundColor: "#FEE2E2",
+        borderWidth: 1,
+        borderColor: "#FCA5A5",
+        borderRadius: 6,
+        padding: 12,
+        marginBottom: 12,
+    },
+    saveErrorText: {
+        color: "#DC2626",
+        fontSize: 13,
+        fontWeight: "500",
+        flex: 1,
+    },
+    saveSuccessContainer: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        backgroundColor: "#D1FAE5",
+        borderWidth: 1,
+        borderColor: "#6EE7B7",
+        borderRadius: 6,
+        padding: 12,
+        marginBottom: 12,
+    },
+    saveSuccessText: {
+        color: "#059669",
+        fontSize: 13,
+        fontWeight: "500",
+        flex: 1,
     },
     tableContainer: {
         borderWidth: 1,
@@ -604,6 +1133,9 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         alignSelf: "flex-start",
     },
+    activeBadgeInactive: {
+        backgroundColor: "#6B7280",
+    },
     activeBadgeText: {
         color: "#fff",
         fontSize: 12,
@@ -613,7 +1145,9 @@ const styles = StyleSheet.create({
         padding: 6,
         borderRadius: 4,
         backgroundColor: colors.faint,
-        opacity: 0.6,
+    },
+    actionButtonDisabled: {
+        opacity: 0.4,
     },
     comingSoonContainer: {
         backgroundColor: "#fff",
@@ -667,6 +1201,17 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: colors.text,
         opacity: 0.8,
+        marginBottom: 12,
+    },
+    modalInput: {
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 14,
+        color: colors.text,
+        backgroundColor: "#fff",
         marginBottom: 24,
     },
     modalActions: {

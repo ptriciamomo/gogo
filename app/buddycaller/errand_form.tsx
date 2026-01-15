@@ -230,6 +230,7 @@ function CategoryDropdown({
     onPrintingSizeSelect,
     onPrintingColorSelect,
     placeholder = "Select Category",
+    categoryOptions,
 }: {
     value?: string;
     printingSize?: string;
@@ -238,12 +239,16 @@ function CategoryDropdown({
     onPrintingSizeSelect: (size: string) => void;
     onPrintingColorSelect: (color: string) => void;
     placeholder?: string;
+    categoryOptions?: readonly string[];
 }) {
     const [open, setOpen] = useState(false);
     const [printingExpanded, setPrintingExpanded] = useState(false);
     const isWeb = Platform.OS === "web";
     const controlRef = useRef<View | null>(null);
     const [anchor, setAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+    // Fallback to CATEGORY_OPTIONS if categoryOptions is not provided
+    const options = categoryOptions ?? CATEGORY_OPTIONS;
 
     const openDropdown = () => {
         if (isWeb) {
@@ -308,7 +313,7 @@ function CategoryDropdown({
                 {/* WEB: inline panel */}
                 {isWeb && open && (
                     <View style={s.categoryContainer}>
-                        {CATEGORY_OPTIONS.map((opt) => (
+                        {options.map((opt) => (
                             <View key={opt} style={s.categorySection}>
                                 <TouchableOpacity
                                     style={s.categoryHeader}
@@ -409,7 +414,7 @@ function CategoryDropdown({
                         <View style={s.dropdownPanelNative}>
                             <ScrollView style={{ maxHeight: 260 }}>
                                 <View style={s.categoryContainer}>
-                                    {CATEGORY_OPTIONS.map((opt) => (
+                                    {options.map((opt) => (
                                         <View key={opt} style={s.categorySection}>
                                             <TouchableOpacity
                                                 style={s.categoryHeader}
@@ -932,6 +937,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
     const [printingSize, setPrintingSize] = useState<string>(""); // A3 or A4
     const [printingColor, setPrintingColor] = useState<string>(""); // Colored or Not Colored
     const [campusLocations, setCampusLocations] = useState<CampusLocation[]>([]);
+    const [categoryOptions, setCategoryOptions] = useState<readonly string[]>(CATEGORY_OPTIONS);
     const [deliveryLocationName, setDeliveryLocationName] = useState<string>("");
     const [items, setItems] = useState<ItemRow[]>([{ id: String(Date.now() + Math.random()), name: "", qty: "", files: [] }]);
     const [estPrice, setEstPrice] = useState("");
@@ -976,6 +982,29 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             `[data-errandscroll="1"]{ scrollbar-width:none !important; -ms-overflow-style:none !important;}
        [data-errandscroll="1"]::-webkit-scrollbar{ width:0 !important; height:0 !important;}`;
         document.head.appendChild(style);
+    }, []);
+
+    // fetch errand categories from backend
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const { data, error } = await supabase.functions.invoke('errand-categories');
+                
+                if (error) {
+                    throw error;
+                }
+                
+                if (data && data.categories && Array.isArray(data.categories)) {
+                    // Map API response to string[] using category.name
+                    const categoryNames = data.categories.map((cat: { code: string; name: string }) => cat.name);
+                    setCategoryOptions(categoryNames);
+                }
+            } catch (err) {
+                console.error("Error fetching errand categories, using fallback:", err);
+                // Fallback to hardcoded array on error - already set as initial state
+            }
+        };
+        fetchCategories();
     }, []);
 
     // fetch campus delivery locations once
@@ -2074,7 +2103,8 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                     onSelect={setCategory} 
                                     onPrintingSizeSelect={setPrintingSize}
                                     onPrintingColorSelect={setPrintingColor}
-                                    placeholder="Select Category" 
+                                    placeholder="Select Category"
+                                    categoryOptions={categoryOptions}
                                 />
                             </View>
 

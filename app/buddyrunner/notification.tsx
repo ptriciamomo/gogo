@@ -361,18 +361,8 @@ function NotificationMobile() {
                         }
                     });
 
-                    // Calculate effective distance limit based on GPS accuracy
-                    // If GPS accuracy is poor, increase the limit to account for uncertainty
-                    let effectiveDistanceLimit = 500;
-                    if (gpsAccuracy > 500) {
-                        const accuracyBuffer = Math.min(gpsAccuracy / 2, 2000);
-                        effectiveDistanceLimit = Math.min(500 + accuracyBuffer, 3000);
-                        console.log(`⚠️ [Notification] Adjusting distance limit due to GPS accuracy:`);
-                        console.log(`   Base limit: 500m`);
-                        console.log(`   GPS accuracy: ${gpsAccuracy.toFixed(2)}m`);
-                        console.log(`   Accuracy buffer: ${accuracyBuffer.toFixed(2)}m`);
-                        console.log(`   Effective limit: ${effectiveDistanceLimit.toFixed(2)}m`);
-                    }
+                    // Strict distance limit: 500 meters (no GPS accuracy expansion)
+                    const distanceLimit = 500;
 
                     // Filter out commissions based on distance (500 meters = 0.5 km) and declined status
                     // Need to use async filter pattern since ranking logic requires async operations
@@ -401,18 +391,14 @@ function NotificationMobile() {
                             }
                             console.log(`   Caller location: (${callerLocation.latitude}, ${callerLocation.longitude})`);
                             console.log(`   Calculated distance: ${distanceMeters.toFixed(2)}m (${distanceKm.toFixed(4)} km)`);
-                            console.log(`   Distance limit: ${effectiveDistanceLimit.toFixed(2)}m${gpsAccuracy > 500 ? ` (adjusted from 500m due to GPS accuracy: ${gpsAccuracy.toFixed(2)}m)` : ''}`);
-                            console.log(`   ${distanceMeters <= effectiveDistanceLimit ? '✅ WITHIN RANGE' : '❌ EXCEEDS LIMIT'}`);
+                            console.log(`   Distance limit: 500m`);
+                            console.log(`   ${distanceMeters <= 500 ? '✅ WITHIN RANGE' : '❌ EXCEEDS LIMIT'}`);
                             
-                            if (distanceMeters > effectiveDistanceLimit) {
-                                console.log(`❌ Filtering out commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m exceeds ${effectiveDistanceLimit.toFixed(2)}m limit`);
+                            if (distanceMeters > 500) {
+                                console.log(`❌ Filtering out commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m exceeds 500m limit`);
                                 return false;
-                            } else {
-                                if (gpsAccuracy > 500 && distanceMeters <= effectiveDistanceLimit) {
-                                    console.log(`✅ Commission ${commission.id} is within adjusted range: ${distanceMeters.toFixed(2)}m <= ${effectiveDistanceLimit.toFixed(2)}m (GPS accuracy: ${gpsAccuracy.toFixed(2)}m)`);
                                 } else {
                                     console.log(`✅ Commission ${commission.id} is within range: ${distanceMeters.toFixed(2)}m <= 500m`);
-                                }
                             }
                         } else {
                             // If caller doesn't have location, exclude the commission
@@ -500,7 +486,7 @@ function NotificationMobile() {
                                 );
                                 const distanceMeters = distanceKm * 1000;
                                 
-                                if (distanceMeters > effectiveDistanceLimit) continue;
+                                if (distanceMeters > 500) continue;
                                 
                                 const count = await getRunnerCompletedCount(runner.id, commissionTypes);
                                 eligibleRunners.push({ id: runner.id, count, distance: distanceMeters });
@@ -1285,18 +1271,8 @@ function NotificationWebInstant() {
                         }
                     });
 
-                    // Calculate effective distance limit based on GPS accuracy
-                    // If GPS accuracy is poor, increase the limit to account for uncertainty
-                    let effectiveDistanceLimit = 500;
-                    if (gpsAccuracy > 500) {
-                        const accuracyBuffer = Math.min(gpsAccuracy / 2, 2000);
-                        effectiveDistanceLimit = Math.min(500 + accuracyBuffer, 3000);
-                        console.log(`⚠️ [Notification] Adjusting distance limit due to GPS accuracy:`);
-                        console.log(`   Base limit: 500m`);
-                        console.log(`   GPS accuracy: ${gpsAccuracy.toFixed(2)}m`);
-                        console.log(`   Accuracy buffer: ${accuracyBuffer.toFixed(2)}m`);
-                        console.log(`   Effective limit: ${effectiveDistanceLimit.toFixed(2)}m`);
-                    }
+                    // Strict distance limit: 500 meters (no GPS accuracy expansion)
+                    const distanceLimit = 500;
 
                     // Filter out commissions based on distance (500 meters = 0.5 km) and declined status
                     // Need to use async filter pattern since ranking logic requires async operations
@@ -1325,18 +1301,14 @@ function NotificationWebInstant() {
                             }
                             console.log(`   Caller location: (${callerLocation.latitude}, ${callerLocation.longitude})`);
                             console.log(`   Calculated distance: ${distanceMeters.toFixed(2)}m (${distanceKm.toFixed(4)} km)`);
-                            console.log(`   Distance limit: ${effectiveDistanceLimit.toFixed(2)}m${gpsAccuracy > 500 ? ` (adjusted from 500m due to GPS accuracy: ${gpsAccuracy.toFixed(2)}m)` : ''}`);
-                            console.log(`   ${distanceMeters <= effectiveDistanceLimit ? '✅ WITHIN RANGE' : '❌ EXCEEDS LIMIT'}`);
+                            console.log(`   Distance limit: 500m`);
+                            console.log(`   ${distanceMeters <= 500 ? '✅ WITHIN RANGE' : '❌ EXCEEDS LIMIT'}`);
                             
-                            if (distanceMeters > effectiveDistanceLimit) {
-                                console.log(`❌ Filtering out commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m exceeds ${effectiveDistanceLimit.toFixed(2)}m limit`);
+                            if (distanceMeters > 500) {
+                                console.log(`❌ Filtering out commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m exceeds 500m limit`);
                                 return false;
-                            } else {
-                                if (gpsAccuracy > 500 && distanceMeters <= effectiveDistanceLimit) {
-                                    console.log(`✅ Commission ${commission.id} is within adjusted range: ${distanceMeters.toFixed(2)}m <= ${effectiveDistanceLimit.toFixed(2)}m (GPS accuracy: ${gpsAccuracy.toFixed(2)}m)`);
                                 } else {
                                     console.log(`✅ Commission ${commission.id} is within range: ${distanceMeters.toFixed(2)}m <= 500m`);
-                                }
                             }
                         } else {
                             // If caller doesn't have location, exclude the commission
@@ -1424,7 +1396,7 @@ function NotificationWebInstant() {
                                 );
                                 const distanceMeters = distanceKm * 1000;
                                 
-                                if (distanceMeters > effectiveDistanceLimit) continue;
+                                if (distanceMeters > 500) continue;
                                 
                                 const count = await getRunnerCompletedCount(runner.id, commissionTypes);
                                 eligibleRunners.push({ id: runner.id, count, distance: distanceMeters });

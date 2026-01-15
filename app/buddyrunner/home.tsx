@@ -98,6 +98,13 @@ function titleCase(s?: string | null) {
         .join(" ");
 }
 
+// Helper to format runner name with short ID for logging
+function formatRunnerName(firstName: string | null, lastName: string | null, id: string): string {
+    const name = `${titleCase(firstName || "")} ${titleCase(lastName || "")}`.trim() || "BuddyRunner";
+    const shortId = id.substring(0, 8);
+    return `${name} (id: ${shortId})`;
+}
+
 const prettyType = (s?: string | null) => {
     if (!s) return "General";
     return s
@@ -514,7 +521,6 @@ function useAuthProfile() {
                 .eq('id', stephanieId)
                 .single();
             
-            if (__DEV__) console.log('👤 Stephanie Delfin status:', userData);
             return userData;
         };
         (window as any).forceLogout = () => {
@@ -607,8 +613,6 @@ function useAuthProfile() {
         };
         // Global test function that works from any page
         (window as any).testStephanieStatus = async () => {
-            if (__DEV__) console.log('🧪 Testing Stephanie Delfin status...');
-            
             try {
                 const { data: userData } = await supabase
                     .from('users')
@@ -616,22 +620,9 @@ function useAuthProfile() {
                     .eq('email', 's.delfin.535754@umindanao.edu.ph')
                     .single();
                 
-                if (__DEV__) console.log('👤 Stephanie Delfin status:', userData);
-                
-                if (userData?.is_blocked) {
-                    if (__DEV__) console.log('✅ Stephanie is correctly blocked!');
-                    if (__DEV__) console.log('🎯 Blocked user system is working!');
-                } else {
-                    if (__DEV__) console.log('❌ Stephanie is NOT blocked - this is a problem!');
-                }
-                
                 return userData;
             } catch (error: unknown) {
-                if (error instanceof Error) {
-                    if (__DEV__) console.log('❌ Error checking Stephanie status:', error.message);
-                } else {
-                    if (__DEV__) console.log('❌ Error checking Stephanie status:', error);
-                }
+                // Error handling without logging
             }
         };
     }
@@ -649,13 +640,25 @@ function toUiStatus(s: ErrandRowDB["status"]): UiStatus {
 }
 
 /* ===================== TF-IDF + COSINE SIMILARITY UTILITIES ===================== */
-/**
- * Calculate Term Frequency (TF) for a term in a document
- */
+
 function calculateTF(term: string, document: string[]): number {
     if (document.length === 0) return 0;
     const termCount = document.filter(word => word === term).length;
     return termCount / document.length;
+}
+
+/**
+ * Calculate Term Frequency (TF) based on task count
+ * NEW: TF(term) = (number of completed tasks in this category) / (total number of completed tasks)
+ * Each completed task counts as 1, even if it has multiple categories
+ */
+function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
+    if (totalTasks === 0) return 0;
+    // Count how many tasks contain this category
+    const tasksWithCategory = taskCategories.filter(taskCats => 
+        taskCats.some(cat => cat === term.toLowerCase())
+    ).length;
+    return tasksWithCategory / totalTasks;
 }
 
 /**
@@ -694,6 +697,28 @@ function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[]
     
     uniqueTerms.forEach(term => {
         const tf = calculateTF(term, document);
+        const idf = calculateIDFAdjusted(term, allDocuments);
+        tfidfMap.set(term, tf * idf);
+    });
+    
+    return tfidfMap;
+}
+
+/**
+ * Calculate TF-IDF vector with task-based TF calculation
+ * Uses task count instead of category token count for TF denominator
+ */
+function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
+    // Get all unique terms from all tasks
+    const allTerms = new Set<string>();
+    taskCategories.forEach(taskCats => {
+        taskCats.forEach(cat => allTerms.add(cat.toLowerCase()));
+    });
+    
+    const tfidfMap = new Map<string, number>();
+    
+    allTerms.forEach(term => {
+        const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks);
         const idf = calculateIDFAdjusted(term, allDocuments);
         tfidfMap.set(term, tf * idf);
     });
@@ -744,8 +769,13 @@ function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, num
 /**
  * Calculate TF-IDF + Cosine Similarity score between commission category and runner history
  */
-function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHistory: string[]): number {
+function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHistory: string[], runnerTaskCategories: string[][] = [], runnerTotalTasks: number = 0): number {
+    // 1️⃣ Start of TF-IDF calculation
+    console.log(`[TFIDF] ===== TF-IDF CALCULATION START =====`);
+    
     if (commissionCategories.length === 0 || runnerHistory.length === 0) {
+        console.log(`[TFIDF] Empty input - returning 0`);
+        console.log(`[TFIDF] ===== TF-IDF CALCULATION END =====`);
         return 0;
     }
     
@@ -755,29 +785,169 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     // Convert runner history to document (lowercase for consistency)
     const runnerDoc = runnerHistory.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
     
+    // 2️⃣ Task categories
+    console.log(`[TFIDF] Task categories:`);
+    queryDoc.forEach(cat => {
+        console.log(`[TFIDF] - ${cat}`);
+    });
+    
     if (queryDoc.length === 0 || runnerDoc.length === 0) {
+        console.log(`[TFIDF] Empty document after normalization - returning 0`);
+        console.log(`[TFIDF] ===== TF-IDF CALCULATION END =====`);
         return 0;
+    }
+    
+    // 3️⃣ Runner history categories (with task counts)
+    // Count tasks per category (not category tokens)
+    const runnerCategoryTaskCounts = new Map<string, number>();
+    if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
+        // Use task-based counting
+        runnerTaskCategories.forEach(taskCats => {
+            const uniqueCatsInTask = Array.from(new Set(taskCats));
+            uniqueCatsInTask.forEach(cat => {
+                runnerCategoryTaskCounts.set(cat, (runnerCategoryTaskCounts.get(cat) || 0) + 1);
+            });
+        });
+    } else {
+        // Fallback to token-based counting (backward compatibility)
+        runnerDoc.forEach(cat => {
+            runnerCategoryTaskCounts.set(cat, (runnerCategoryTaskCounts.get(cat) || 0) + 1);
+        });
+    }
+    
+    console.log(`[TFIDF] Runner history categories:`);
+    runnerCategoryTaskCounts.forEach((taskCount, cat) => {
+        console.log(`[TFIDF] - ${cat} (${taskCount} task${taskCount !== 1 ? 's' : ''})`);
+    });
+    
+    // Log total completed tasks
+    if (runnerTotalTasks > 0) {
+        console.log(`[TFIDF] Total completed tasks: ${runnerTotalTasks}`);
     }
     
     // Build TF-IDF vectors
     // Instead of IDF, we'll use Term Frequency (TF) with a small smoothing factor for IDF
     const allDocuments = [queryDoc, runnerDoc];
     
+    // Calculate TF, IDF, and TF-IDF for logging
+    const uniqueRunnerTerms = Array.from(new Set(runnerDoc));
+    const uniqueQueryTerms = Array.from(new Set(queryDoc));
+    const allUniqueTerms = Array.from(new Set([...uniqueRunnerTerms, ...uniqueQueryTerms]));
+    
+    // 4️⃣ Term Frequency (TF) - Runner
+    console.log(`[TFIDF] Term Frequency (Runner):`);
+    const runnerTFMap = new Map<string, number>();
+    uniqueRunnerTerms.forEach(term => {
+        let tf: number;
+        let taskCount: number;
+        let denominator: number;
+        
+        if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
+            // NEW: Use task-based TF calculation
+            tf = calculateTFWithTaskCount(term, runnerTaskCategories, runnerTotalTasks);
+            taskCount = runnerCategoryTaskCounts.get(term) || 0;
+            denominator = runnerTotalTasks;
+        } else {
+            // OLD: Use token-based TF calculation (backward compatibility)
+            tf = calculateTF(term, runnerDoc);
+            taskCount = runnerDoc.filter(word => word === term).length;
+            denominator = runnerDoc.length;
+        }
+        
+        runnerTFMap.set(term, tf);
+        console.log(`[TFIDF] - ${term}: ${taskCount} / ${denominator} = ${tf.toFixed(4)}`);
+    });
+    
+    // 5️⃣ Inverse Document Frequency (IDF)
+    console.log(`[TFIDF] Inverse Document Frequency:`);
+    const idfMap = new Map<string, number>();
+    allUniqueTerms.forEach(term => {
+        const idf = calculateIDFAdjusted(term, allDocuments);
+        idfMap.set(term, idf);
+        console.log(`[TFIDF] - ${term}: ${idf.toFixed(4)}`);
+    });
+    
+    // 6️⃣ TF-IDF weights - Runner
+    console.log(`[TFIDF] TF-IDF weights (Runner):`);
+    const runnerTFIDFMap = new Map<string, number>();
+    uniqueRunnerTerms.forEach(term => {
+        const tf = runnerTFMap.get(term) || 0;
+        const idf = idfMap.get(term) || 0;
+        const tfidf = tf * idf;
+        runnerTFIDFMap.set(term, tfidf);
+        console.log(`[TFIDF] - ${term}: ${tf.toFixed(4)} × ${idf.toFixed(4)} = ${tfidf.toFixed(4)}`);
+    });
+    
+    // 7️⃣ TF-IDF weights - Task
+    console.log(`[TFIDF] TF-IDF weights (Task):`);
+    const queryTFIDFMap = new Map<string, number>();
+    uniqueQueryTerms.forEach(term => {
+        const tf = calculateTF(term, queryDoc);
+        const idf = idfMap.get(term) || 0;
+        const tfidf = tf * idf;
+        queryTFIDFMap.set(term, tfidf);
+        const termCount = queryDoc.filter(word => word === term).length;
+        console.log(`[TFIDF] - ${term}: ${termCount} / ${queryDoc.length} × ${idf.toFixed(4)} = ${tfidf.toFixed(4)}`);
+    });
+    
     // For terms that appear in all documents, we use a small positive IDF value instead of 0
+    // Use task-based TF calculation for runner if task data is available
     const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
-    const runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
+    let runnerVector: Map<string, number>;
+    if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
+        // NEW: Use task-based TF calculation
+        runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
+    } else {
+        // OLD: Use token-based TF calculation (backward compatibility)
+        runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
+    }
+    
+    // 8️⃣ Cosine similarity calculation summary
+    const allTerms = Array.from(new Set([...queryVector.keys(), ...runnerVector.keys()]));
+    let dotProduct = 0;
+    let magnitude1 = 0;
+    let magnitude2 = 0;
+    
+    allTerms.forEach(term => {
+        const val1 = queryVector.get(term) || 0;
+        const val2 = runnerVector.get(term) || 0;
+        dotProduct += val1 * val2;
+        magnitude1 += val1 * val1;
+        magnitude2 += val2 * val2;
+    });
+    
+    const taskMagnitude = Math.sqrt(magnitude1);
+    const runnerMagnitude = Math.sqrt(magnitude2);
+    const denominator = taskMagnitude * runnerMagnitude;
+    
+    console.log(`[TFIDF] Cosine similarity calculation:`);
+    console.log(`[TFIDF] - Dot product: ${dotProduct.toFixed(4)}`);
+    console.log(`[TFIDF] - Task magnitude: ${taskMagnitude.toFixed(4)}`);
+    console.log(`[TFIDF] - Runner magnitude: ${runnerMagnitude.toFixed(4)}`);
     
     // Calculate cosine similarity
     const similarity = cosineSimilarity(queryVector, runnerVector);
     
-    return isNaN(similarity) ? 0 : similarity;
+    // 9️⃣ Final TF-IDF similarity score
+    const finalScore = isNaN(similarity) ? 0 : similarity;
+    console.log(`[TFIDF] Final cosine similarity (tfidfScore):`);
+    console.log(`[TFIDF] → ${finalScore.toFixed(4)}`);
+    
+    // 🔟 End of calculation
+    console.log(`[TFIDF] ===== TF-IDF CALCULATION END =====`);
+    
+    return finalScore;
 }
 
 /* ===================== DATA: AVAILABLE ERRANDS ===================== */
-function useAvailableErrands() {
+function useAvailableErrands(options?: { availableMode?: boolean }) {
     const [loading, setLoading] = React.useState(true);
     const [rows, setRows] = React.useState<ErrandUI[]>([]);
     const isInitialLoadRef = React.useRef(true);
+    const availableMode = options?.availableMode ?? false;
+    
+    // useRef to store latest availableMode without recreating subscription
+    const availableModeRef = React.useRef(availableMode);
 
     const refetch = React.useCallback(async () => {
         const isInitialLoad = isInitialLoadRef.current;
@@ -896,12 +1066,8 @@ function useAvailableErrands() {
                 }
             }
 
-            // Base distance limit (500m) with accuracy buffer (same as commissions)
-            let effectiveDistanceLimit = 500;
-            if (gpsAccuracy > 500) {
-                const accuracyBuffer = Math.min(gpsAccuracy / 2, 2000);
-                effectiveDistanceLimit = Math.min(500 + accuracyBuffer, 3000);
-            }
+            // Strict distance limit: 500 meters (no GPS accuracy expansion)
+            const distanceLimit = 500;
 
             const { data: eData, error } = await supabase
                 .from("errand")
@@ -947,49 +1113,16 @@ function useAvailableErrands() {
                 );
                 const distanceMeters = distanceKm * 1000;
 
-                if (distanceMeters > effectiveDistanceLimit) {
+                if (distanceMeters > 500) {
                     return false;
                 }
 
                 return true;
             });
 
-            // Helper function to get runner's completed errands count for a given category
-            const getRunnerCompletedErrandsCount = async (runnerId: string, errandCategory: string | null): Promise<number> => {
-                if (!errandCategory) return 0;
-                
-                try {
-                    const { data, error } = await supabase
-                        .from("errand")
-                        .select("id, category")
-                        .eq("runner_id", runnerId)
-                        .eq("status", "completed");
-                    
-                    if (error) {
-                        if (__DEV__) console.error(`Error fetching completed errands for runner ${runnerId}:`, error);
-                        return 0;
-                    }
-                    
-                    if (!data || data.length === 0) return 0;
-                    
-                    // Count how many completed errands match the category
-                    let count = 0;
-                    data.forEach((completedErrand: any) => {
-                        if (!completedErrand.category) return;
-                        if (completedErrand.category.trim().toLowerCase() === errandCategory.trim().toLowerCase()) {
-                            count++;
-                        }
-                    });
-                    
-                    return count;
-                } catch (error) {
-                    if (__DEV__) console.error(`Error calculating completed errands count for runner ${runnerId}:`, error);
-                    return 0;
-                }
-            };
-
             // Helper function to get runner's category history from all completed errands
-            const getRunnerErrandCategoryHistory = async (runnerId: string): Promise<string[]> => {
+            // Returns array of arrays: each inner array represents one task's categories
+            const getRunnerErrandCategoryHistory = async (runnerId: string): Promise<{ taskCategories: string[][]; totalTasks: number }> => {
                 try {
                     const { data, error } = await supabase
                         .from("errand")
@@ -999,22 +1132,26 @@ function useAvailableErrands() {
                     
                     if (error) {
                         if (__DEV__) console.error(`Error fetching runner errand category history for ${runnerId}:`, error);
-                        return [];
+                        return { taskCategories: [], totalTasks: 0 };
                     }
                     
-                    if (!data || data.length === 0) return [];
+                    if (!data || data.length === 0) return { taskCategories: [], totalTasks: 0 };
                     
-                    // Flatten all categories from completed errands into a single array
-                    const allCategories: string[] = [];
+                    // Count total completed tasks (each errand is one task)
+                    const totalTasks = data.length;
+                    
+                    // Build array of arrays: each task is represented by an array of its categories
+                    const taskCategories: string[][] = [];
                     data.forEach((completedErrand: any) => {
                         if (!completedErrand.category) return;
-                        allCategories.push(completedErrand.category.trim().toLowerCase());
+                        // Each errand has one category, so each task is an array with one element
+                        taskCategories.push([completedErrand.category.trim().toLowerCase()]);
                     });
                     
-                    return allCategories;
+                    return { taskCategories, totalTasks };
                 } catch (error) {
                     if (__DEV__) console.error(`Error calculating errand category history for runner ${runnerId}:`, error);
-                    return [];
+                    return { taskCategories: [], totalTasks: 0 };
                 }
             };
 
@@ -1086,8 +1223,14 @@ function useAvailableErrands() {
                 
                 // If no runner has been notified yet, find and assign top-ranked runner
                 if (!errand.notified_runner_id) {
-                    console.log(`🔍 [ERRAND RANKING] Errand ${errand.id}: Finding top-ranked runner...`);
-                    console.log(`📊 [DEBUG] Current timeout_runner_ids:`, errand.timeout_runner_ids);
+                    // STEP 1: Task detected
+                    const callerName = namesById[errand.buddycaller_id || ""] || "BuddyCaller";
+                    const callerShortId = (errand.buddycaller_id || "").substring(0, 8);
+                    console.log(`[QUEUE] STEP 1 — Task detected`);
+                    console.log(`Type: Errand`);
+                    console.log(`Task ID: ${errand.id}`);
+                    console.log(`Caller: ${callerName} (id: ${callerShortId})`);
+                    console.log(`Status: pending`);
                     
                     // Get caller location for distance calculation
                     const callerLocation = callerLocations[errand.buddycaller_id || ""];
@@ -1097,11 +1240,35 @@ function useAvailableErrands() {
                     }
                     
                     // Get all available runners (is_available = true)
-                    let query = supabase
+                    // Calculate presence thresholds
+                    const presenceThreshold = new Date(now.getTime() - 90000); // 90 seconds for GPS
+                    const twoMinutesAgo = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    
+                    // First, get count of runners before presence filter (for logging)
+                    let countQuery = supabase
                         .from("users")
-                        .select("id, latitude, longitude, average_rating")
+                        .select("id", { count: "exact", head: true })
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true);
+                    
+                    // Exclude all timeout runners if exists
+                    if (errand.timeout_runner_ids && errand.timeout_runner_ids.length > 0) {
+                        for (const timeoutRunnerId of errand.timeout_runner_ids) {
+                            countQuery = countQuery.neq("id", timeoutRunnerId);
+                        }
+                    }
+                    
+                    const { count: runnersBeforePresence } = await countQuery;
+                    
+                    // Now fetch runners with presence filters applied
+                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    let query = supabase
+                        .from("users")
+                        .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
+                        .eq("role", "BuddyRunner")
+                        .eq("is_available", true)
+                        .gte("last_seen_at", twoMinutesAgo.toISOString())
+                        .or(`location_updated_at.gte.${presenceThreshold.toISOString()},location_updated_at.is.null`);
                     
                     // Exclude all timeout runners if exists
                     if (errand.timeout_runner_ids && errand.timeout_runner_ids.length > 0) {
@@ -1118,15 +1285,31 @@ function useAvailableErrands() {
                         return false;
                     }
                     
+                    // STEP 2: Availability check
+                    const totalRunners = availableRunners?.length || 0;
+                    const unavailableCount = 0; // We only fetch available runners, so unavailable is 0
+                    console.log(`[QUEUE] STEP 2 — Availability check`);
+                    console.log(`Total runners fetched: ${totalRunners}`);
+                    console.log(`Available runners: ${totalRunners}`);
+                    console.log(`Unavailable runners filtered out: ${unavailableCount}`);
+                    
+                    // STEP 2A: Presence filtering
+                    console.log(`[QUEUE] STEP 2A — Presence filtering`);
+                    console.log(`Presence threshold: ${presenceThreshold.toISOString()}`);
+                    console.log(`Runners before presence filter: ${runnersBeforePresence || 0}`);
+                    const runnersAfterPresence = availableRunners?.length || 0;
+                    console.log(`Runners after presence filter: ${runnersAfterPresence}`);
+                    
                     if (!availableRunners || availableRunners.length === 0) {
                         console.log(`📊 [ERRAND RANKING] No available runners found after excluding timeout runners`);
                         return false;
                     }
                     
-                    console.log(`📊 [ERRAND RANKING] Found ${availableRunners.length} available runners, checking distances and ranks...`);
-                    
-                    // Filter runners within 500m and calculate their ranks
-                    const eligibleRunners: Array<{ id: string; count: number; distance: number; rating: number; finalScore: number }> = [];
+                    // STEP 3: Distance filtering
+                    console.log(`[QUEUE] STEP 3 — Distance filtering (≤ 500m)`);
+                    const eligibleRunners: Array<{ id: string; firstName: string | null; lastName: string | null; distance: number; rating: number; finalScore: number; distanceScore: number; ratingScore: number; tfidfScore: number }> = [];
+                    let runnersWithin500m = 0;
+                    let runnersExcluded = 0;
                     
                     for (const runner of availableRunners) {
                         if (!runner.latitude || !runner.longitude) continue;
@@ -1145,40 +1328,65 @@ function useAvailableErrands() {
                         );
                         const distanceMeters = distanceKm * 1000;
                         
-                        // Only consider runners within effective distance limit
-                        if (distanceMeters > effectiveDistanceLimit) continue;
+                        const runnerName = formatRunnerName(runner.first_name, runner.last_name, runner.id);
                         
-                        // Get completed errands count for this runner
-                        const count = await getRunnerCompletedErrandsCount(runner.id, errandCategory);
+                        // Only consider runners within 500 meters
+                        if (distanceMeters > 500) {
+                            console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ❌ excluded`);
+                            runnersExcluded++;
+                            continue;
+                        }
+                        
+                        console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ✅`);
+                        runnersWithin500m++;
+                        
+                        // Calculate distance score (normalized 0-1, higher for closer runners)
+                        const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
                         
                         // Get runner's category history for TF-IDF calculation
-                        const runnerHistory = await getRunnerErrandCategoryHistory(runner.id);
+                        const runnerHistoryData = await getRunnerErrandCategoryHistory(runner.id);
+                        const runnerHistory = runnerHistoryData.taskCategories.flat();
                         
                         // Calculate TF-IDF + Cosine Similarity score (using single category for errands)
                         const errandCategories = [errandCategory.toLowerCase()];
-                        const tfidfScore = calculateTFIDFCosineSimilarity(errandCategories, runnerHistory);
+                        const tfidfScore = calculateTFIDFCosineSimilarity(errandCategories, runnerHistory, runnerHistoryData.taskCategories, runnerHistoryData.totalTasks);
                         
                         // Get runner's rating (normalize 0-5 to 0-1 scale)
-                        const rating = (runner.average_rating || 0) / 5;
+                        const ratingScore = (runner.average_rating || 0) / 5;
                         
                         // Calculate final score: weighted combination
-                        // Formula: FinalScore = (Category Task Count * 0.5) + (TF-IDF Score * 0.2) + (Rating * 0.3)
-                        const finalScore = (count * 0.5) + (tfidfScore * 0.2) + (rating * 0.3);
+                        // Formula: FinalScore = (DistanceScore * 0.40) + (RatingScore * 0.35) + (TF-IDF Score * 0.25)
+                        const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
                         
                         eligibleRunners.push({
                             id: runner.id,
-                            count: count,
+                            firstName: runner.first_name,
+                            lastName: runner.last_name,
                             distance: distanceMeters,
                             rating: runner.average_rating || 0,
-                            finalScore: finalScore
+                            finalScore: finalScore,
+                            distanceScore: distanceScore,
+                            ratingScore: ratingScore,
+                            tfidfScore: tfidfScore
                         });
-                        
-                        console.log(`📊 [ERRAND RANKING] Runner ${runner.id}: ${count} completed errands, ${distanceMeters.toFixed(2)}m away, Rating: ${(runner.average_rating || 0).toFixed(2)}, TF-IDF: ${tfidfScore.toFixed(4)}, Final Score: ${finalScore.toFixed(4)}`);
                     }
                     
+                    console.log(`Runners within 500m: ${runnersWithin500m}`);
+                    
                     if (eligibleRunners.length === 0) {
-                        console.log(`❌ [ERRAND RANKING] No eligible runners within ${effectiveDistanceLimit}m found`);
+                        console.log(`❌ [ERRAND RANKING] No eligible runners within 500m found`);
                         return false;
+                    }
+                    
+                    // STEP 4: Score calculation
+                    console.log(`[QUEUE] STEP 4 — Score calculation`);
+                    for (const runner of eligibleRunners) {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        console.log(`Runner: ${runnerName}`);
+                        console.log(`  distance = ${runner.distance.toFixed(2)}m → distanceScore = ${runner.distanceScore.toFixed(4)}`);
+                        console.log(`  rating = ${runner.rating.toFixed(2)} → ratingScore = ${runner.ratingScore.toFixed(4)}`);
+                        console.log(`  tfidfScore = ${runner.tfidfScore.toFixed(4)}`);
+                        console.log(`  FinalScore = ${runner.finalScore.toFixed(4)}`);
                     }
                     
                     // Sort by final score (descending), then by distance (ascending) as tiebreaker
@@ -1187,8 +1395,28 @@ function useAvailableErrands() {
                         return a.distance - b.distance;
                     });
                     
+                    // STEP 5: Ranking result
+                    console.log(`[QUEUE] STEP 5 — Runner ranking`);
+                    eligibleRunners.forEach((runner, index) => {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        const runnerShortId = runner.id.substring(0, 8);
+                        const rank = index + 1;
+                        console.log("");
+                        console.log(`Runner ${rank}: ${runnerName} (${runnerShortId})`);
+                        console.log(`distanceScore = ${runner.distanceScore.toFixed(2)}`);
+                        console.log(`ratingScore   = ${runner.ratingScore.toFixed(2)}`);
+                        console.log(`tfidfScore    = ${runner.tfidfScore.toFixed(2)}`);
+                        console.log(`FinalScore    = ${runner.finalScore.toFixed(2)}`);
+                    });
+                    
                     const topRunner = eligibleRunners[0];
-                    console.log(`🏆 [ERRAND RANKING] Top-ranked runner: ${topRunner.id} with final score ${topRunner.finalScore.toFixed(4)} (${topRunner.count} completed errands, Rating: ${topRunner.rating.toFixed(2)})`);
+                    const topRunnerName = formatRunnerName(topRunner.firstName, topRunner.lastName, topRunner.id);
+                    const topRunnerShortId = topRunner.id.substring(0, 8);
+                    
+                    // STEP 6: Assignment
+                    console.log(`[QUEUE] STEP 6 — Assignment`);
+                    console.log(`Assigned runner: ${topRunnerName}`);
+                    console.log(`Timeout window: 60 seconds`);
                     
                     // Assign to top-ranked runner
                     await updateErrandNotification(
@@ -1209,9 +1437,12 @@ function useAvailableErrands() {
                 
                 // Check if 60 seconds have passed and we need to reassign
                 if (notifiedAt && notifiedAt < sixtySecondsAgo) {
-                    console.log(`⏰ [ERRAND RANKING] Errand ${errand.id}: 60 seconds passed, finding next runner...`);
-                    console.log(`📊 [DEBUG] Current timeout_runner_ids:`, errand.timeout_runner_ids);
-                    console.log(`📊 [DEBUG] Current notified_runner_id:`, errand.notified_runner_id);
+                    // STEP 7: Timeout detected
+                    const previousRunnerId = errand.notified_runner_id || "";
+                    const previousRunnerShortId = previousRunnerId.substring(0, 8);
+                    console.log(`[QUEUE] STEP 7 — Timeout detected`);
+                    console.log(`Runner (id: ${previousRunnerShortId}) did not accept within 60s`);
+                    console.log(`Re-running queueing for remaining runners`);
                     
                     // Get caller location for distance calculation
                     const callerLocation = callerLocations[errand.buddycaller_id || ""];
@@ -1220,13 +1451,47 @@ function useAvailableErrands() {
                         return false;
                     }
                     
+                    // STEP 1: Task detected (reassignment)
+                    const callerName = namesById[errand.buddycaller_id || ""] || "BuddyCaller";
+                    const callerShortId = (errand.buddycaller_id || "").substring(0, 8);
+                    console.log(`[QUEUE] STEP 1 — Task detected`);
+                    console.log(`Type: Errand`);
+                    console.log(`Task ID: ${errand.id}`);
+                    console.log(`Caller: ${callerName} (id: ${callerShortId})`);
+                    console.log(`Status: pending`);
+                    
                     // Get all available runners except those who were already notified or timed out
-                    let query = supabase
+                    // Calculate presence thresholds
+                    const presenceThresholdReassign = new Date(now.getTime() - 90000); // 90 seconds for GPS
+                    const twoMinutesAgoReassign = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    
+                    // First, get count of runners before presence filter (for logging)
+                    let countQueryReassign = supabase
                         .from("users")
-                        .select("id, latitude, longitude, average_rating")
+                        .select("id", { count: "exact", head: true })
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true)
                         .neq("id", errand.notified_runner_id || "");
+                    
+                    // Also exclude all timeout runners if exists
+                    if (errand.timeout_runner_ids && errand.timeout_runner_ids.length > 0) {
+                        for (const timeoutRunnerId of errand.timeout_runner_ids) {
+                            countQueryReassign = countQueryReassign.neq("id", timeoutRunnerId);
+                        }
+                    }
+                    
+                    const { count: runnersBeforePresenceReassign } = await countQueryReassign;
+                    
+                    // Now fetch runners with presence filters applied
+                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    let query = supabase
+                        .from("users")
+                        .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
+                        .eq("role", "BuddyRunner")
+                        .eq("is_available", true)
+                        .neq("id", errand.notified_runner_id || "")
+                        .gte("last_seen_at", twoMinutesAgoReassign.toISOString())
+                        .or(`location_updated_at.gte.${presenceThresholdReassign.toISOString()},location_updated_at.is.null`);
                     
                     // Also exclude all timeout runners if exists
                     if (errand.timeout_runner_ids && errand.timeout_runner_ids.length > 0) {
@@ -1242,6 +1507,20 @@ function useAvailableErrands() {
                         return false;
                     }
                     
+                    // STEP 2: Availability check
+                    const totalRunners = availableRunners?.length || 0;
+                    console.log(`[QUEUE] STEP 2 — Availability check`);
+                    console.log(`Total runners fetched: ${totalRunners}`);
+                    console.log(`Available runners: ${totalRunners}`);
+                    console.log(`Unavailable runners filtered out: 0`);
+                    
+                    // STEP 2A: Presence filtering
+                    console.log(`[QUEUE] STEP 2A — Presence filtering`);
+                    console.log(`Presence threshold: ${presenceThresholdReassign.toISOString()}`);
+                    console.log(`Runners before presence filter: ${runnersBeforePresenceReassign || 0}`);
+                    const runnersAfterPresenceReassign = availableRunners?.length || 0;
+                    console.log(`Runners after presence filter: ${runnersAfterPresenceReassign}`);
+                    
                     if (!availableRunners || availableRunners.length === 0) {
                         console.log(`📊 [ERRAND RANKING] No other available runners found after excluding timeout runners`);
                         // No eligible runners left, clear notified_runner_id and notified_at
@@ -1249,10 +1528,11 @@ function useAvailableErrands() {
                         return false;
                     }
                     
-                    console.log(`📊 [ERRAND RANKING] Found ${availableRunners.length} available runners before distance filtering`);
-                    
-                    // Filter runners within 500m and calculate their ranks
-                    const eligibleRunners: Array<{ id: string; count: number; distance: number; rating: number; finalScore: number }> = [];
+                    // STEP 3: Distance filtering
+                    console.log(`[QUEUE] STEP 3 — Distance filtering (≤ 500m)`);
+                    const eligibleRunners: Array<{ id: string; firstName: string | null; lastName: string | null; distance: number; rating: number; finalScore: number; distanceScore: number; ratingScore: number; tfidfScore: number }> = [];
+                    let runnersWithin500m = 0;
+                    let runnersExcluded = 0;
                     
                     for (const runner of availableRunners) {
                         if (!runner.latitude || !runner.longitude) continue;
@@ -1271,41 +1551,67 @@ function useAvailableErrands() {
                         );
                         const distanceMeters = distanceKm * 1000;
                         
-                        // Only consider runners within effective distance limit
-                        if (distanceMeters > effectiveDistanceLimit) continue;
+                        const runnerName = formatRunnerName(runner.first_name, runner.last_name, runner.id);
                         
-                        // Get completed errands count for this runner
-                        const count = await getRunnerCompletedErrandsCount(runner.id, errandCategory);
+                        // Only consider runners within 500 meters
+                        if (distanceMeters > 500) {
+                            console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ❌ excluded`);
+                            runnersExcluded++;
+                            continue;
+                        }
+                        
+                        console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ✅`);
+                        runnersWithin500m++;
+                        
+                        // Calculate distance score (normalized 0-1, higher for closer runners)
+                        const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
                         
                         // Get runner's category history for TF-IDF calculation
-                        const runnerHistory = await getRunnerErrandCategoryHistory(runner.id);
+                        const runnerHistoryData = await getRunnerErrandCategoryHistory(runner.id);
+                        const runnerHistory = runnerHistoryData.taskCategories.flat();
                         
                         // Calculate TF-IDF + Cosine Similarity score
                         const errandCategories = [errandCategory.toLowerCase()];
-                        const tfidfScore = calculateTFIDFCosineSimilarity(errandCategories, runnerHistory);
+                        const tfidfScore = calculateTFIDFCosineSimilarity(errandCategories, runnerHistory, runnerHistoryData.taskCategories, runnerHistoryData.totalTasks);
                         
                         // Get runner's rating (normalize 0-5 to 0-1 scale)
-                        const rating = (runner.average_rating || 0) / 5;
+                        const ratingScore = (runner.average_rating || 0) / 5;
                         
                         // Calculate final score: weighted combination
-                        const finalScore = (count * 0.5) + (tfidfScore * 0.2) + (rating * 0.3);
+                        // Formula: FinalScore = (DistanceScore * 0.40) + (RatingScore * 0.35) + (TF-IDF Score * 0.25)
+                        const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
                         
                         eligibleRunners.push({
                             id: runner.id,
-                            count: count,
+                            firstName: runner.first_name,
+                            lastName: runner.last_name,
                             distance: distanceMeters,
                             rating: runner.average_rating || 0,
-                            finalScore: finalScore
+                            finalScore: finalScore,
+                            distanceScore: distanceScore,
+                            ratingScore: ratingScore,
+                            tfidfScore: tfidfScore
                         });
-                        
-                        console.log(`📊 [ERRAND RANKING] Runner ${runner.id}: ${count} completed errands, ${distanceMeters.toFixed(2)}m away, Rating: ${(runner.average_rating || 0).toFixed(2)}, TF-IDF: ${tfidfScore.toFixed(4)}, Final Score: ${finalScore.toFixed(4)}`);
                     }
                     
+                    console.log(`Runners within 500m: ${runnersWithin500m}`);
+                    
                     if (eligibleRunners.length === 0) {
-                        console.log(`❌ [ERRAND RANKING] No eligible runners within ${effectiveDistanceLimit}m found`);
+                        console.log(`❌ [ERRAND RANKING] No eligible runners within 500m found`);
                         // No eligible runners left, clear notified_runner_id and notified_at
                         await clearErrandNotification(errand.id);
                         return false;
+                    }
+                    
+                    // STEP 4: Score calculation
+                    console.log(`[QUEUE] STEP 4 — Score calculation`);
+                    for (const runner of eligibleRunners) {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        console.log(`Runner: ${runnerName}`);
+                        console.log(`  distance = ${runner.distance.toFixed(2)}m → distanceScore = ${runner.distanceScore.toFixed(4)}`);
+                        console.log(`  rating = ${runner.rating.toFixed(2)} → ratingScore = ${runner.ratingScore.toFixed(4)}`);
+                        console.log(`  tfidfScore = ${runner.tfidfScore.toFixed(4)}`);
+                        console.log(`  FinalScore = ${runner.finalScore.toFixed(4)}`);
                     }
                     
                     // Sort by final score (descending), then by distance (ascending) as tiebreaker
@@ -1314,8 +1620,27 @@ function useAvailableErrands() {
                         return a.distance - b.distance;
                     });
                     
+                    // STEP 5: Ranking result
+                    console.log(`[QUEUE] STEP 5 — Runner ranking`);
+                    eligibleRunners.forEach((runner, index) => {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        const runnerShortId = runner.id.substring(0, 8);
+                        const rank = index + 1;
+                        console.log("");
+                        console.log(`Runner ${rank}: ${runnerName} (${runnerShortId})`);
+                        console.log(`distanceScore = ${runner.distanceScore.toFixed(2)}`);
+                        console.log(`ratingScore   = ${runner.ratingScore.toFixed(2)}`);
+                        console.log(`tfidfScore    = ${runner.tfidfScore.toFixed(2)}`);
+                        console.log(`FinalScore    = ${runner.finalScore.toFixed(2)}`);
+                    });
+                    
                     const nextRunner = eligibleRunners[0];
-                    console.log(`🏆 [ERRAND RANKING] Next-ranked runner: ${nextRunner.id} with final score ${nextRunner.finalScore.toFixed(4)} (${nextRunner.count} completed errands, Rating: ${nextRunner.rating.toFixed(2)})`);
+                    const nextRunnerName = formatRunnerName(nextRunner.firstName, nextRunner.lastName, nextRunner.id);
+                    
+                    // STEP 6: Assignment
+                    console.log(`[QUEUE] STEP 6 — Assignment`);
+                    console.log(`Assigned runner: ${nextRunnerName}`);
+                    console.log(`Timeout window: 60 seconds`);
                     
                     // For timeout scenario: pass the previous notified runner ID to prevent re-notification loop
                     const previousNotifiedRunnerId = errand.notified_runner_id;
@@ -1386,50 +1711,90 @@ function useAvailableErrands() {
         }
     }, []);
 
+    // Update ref whenever availableMode changes (does not recreate subscription)
+    React.useEffect(() => {
+        availableModeRef.current = availableMode;
+        console.log('[REALTIME ERRAND] 🔄 availableModeRef updated to:', availableMode);
+    }, [availableMode]);
+
+    // Initial fetch effect - runs when availableMode changes to true
+    React.useEffect(() => {
+        if (availableMode) {
+            console.log('[REALTIME ERRAND] ✅ Runner became available, triggering initial refetch');
+            refetch();
+        }
+    }, [availableMode, refetch]);
+
+    // Realtime subscription - created once, long-lived
     React.useEffect(() => {
         let mounted = true;
-        // Defer initial fetch - will be triggered by availability change effects in HomeWeb/HomeMobile
-        // This prevents GPS from running on mount, improving initial load performance
 
+        console.log('[REALTIME ERRAND] 🔌 Creating realtime subscription (long-lived)');
+
+        // Realtime subscription for errand changes
         const channel = supabase
             .channel("rt-available-errands")
             .on("postgres_changes", { event: "*", schema: "public", table: "errand" }, () => {
-                if (mounted) {
-                    // Invalidate cache on realtime update (web only)
-                    if (Platform.OS === 'web') {
-                        (async () => {
-                            try {
-                                const { data: auth } = await supabase.auth.getUser();
-                                const uid = auth?.user?.id ?? null;
-                                if (uid) {
-                                    const { invalidateCache } = await import('../../utils/webCache');
-                                    invalidateCache(`runner_available_errands_${uid}`);
-                                }
-                            } catch {
-                                // Silent fail
-                            }
-                        })();
-                    }
-                    refetch();
+                if (!mounted) return;
+
+                console.log('[REALTIME ERRAND] 📨 Realtime event received for errand table');
+                
+                // Read from ref to get latest availableMode without recreating subscription
+                const isAvailable = availableModeRef.current;
+                console.log('[REALTIME ERRAND] Checking availability - availableModeRef.current:', isAvailable);
+
+                // Guard logic: Only block when explicitly false (OFF)
+                // Allow when true OR undefined (loading state)
+                if (isAvailable === undefined) {
+                    console.log('[REALTIME ERRAND] ⏳ Availability is undefined (loading), allowing refetch');
                 }
+                
+                if (isAvailable === false) {
+                    console.log('[REALTIME ERRAND] ❌ Runner is explicitly OFF, skipping refetch');
+                    return;
+                }
+
+                console.log('[REALTIME ERRAND] ✅ Availability guard passed, calling refetch()');
+
+                // Invalidate cache on realtime update (web only)
+                if (Platform.OS === 'web') {
+                    (async () => {
+                        try {
+                            const { data: auth } = await supabase.auth.getUser();
+                            const uid = auth?.user?.id ?? null;
+                            if (uid) {
+                                const { invalidateCache } = await import('../../utils/webCache');
+                                invalidateCache(`runner_available_errands_${uid}`);
+                            }
+                        } catch {
+                            // Silent fail
+                        }
+                    })();
+                }
+                refetch();
             })
             .subscribe();
 
         return () => {
+            console.log('[REALTIME ERRAND] 🔌 Cleaning up realtime subscription');
             mounted = false;
             supabase.removeChannel(channel);
         };
-    }, [refetch]);
+    }, [refetch]); // Only depends on refetch, NOT availableMode
 
     return { loading, rows, refetch };
 }
 
 /* ===================== DATA: COMMISSIONS ===================== */
-function useAvailableCommissions() {
+function useAvailableCommissions(options?: { availableMode?: boolean }) {
     const [loading, setLoading] = React.useState(true);
     const [rows, setRows] = React.useState<CommissionUI[]>([]);
     const [errorText, setErrorText] = React.useState<string | null>(null);
     const isInitialLoadRef = React.useRef(true);
+    const availableMode = options?.availableMode ?? false;
+    
+    // useRef to store latest availableMode without recreating subscription
+    const availableModeRef = React.useRef(availableMode);
 
     const refetch = React.useCallback(async () => {
         const isInitialLoad = isInitialLoadRef.current;
@@ -1581,22 +1946,27 @@ function useAvailableCommissions() {
 
             const raw = (data || []) as CommissionRowDB[];
 
-            // Get caller locations for distance calculation
+            // Get caller locations and names for distance calculation
             const callerIds = Array.from(
                 new Set(raw.map((r) => r.buddycaller_id).filter((v): v is string => !!v))
             );
             
             const callerLocations: Record<string, { latitude: number; longitude: number }> = {};
+            const commissionCallerNamesById: Record<string, string> = {};
             if (callerIds.length) {
                 const { data: callers, error: callerError } = await supabase
                     .from("users")
-                    .select("id, latitude, longitude")
+                    .select("id, first_name, last_name, latitude, longitude")
                     .in("id", callerIds);
                 
                 if (callerError) {
                     if (__DEV__) console.error('Error fetching caller locations:', callerError);
                 } else {
                     (callers || []).forEach((c: any) => {
+                        // Store caller name
+                        const full = `${titleCase(c.first_name || "")} ${titleCase(c.last_name || "")}`.trim();
+                        commissionCallerNamesById[c.id] = full || "BuddyCaller";
+                        
                         // Ensure latitude and longitude are numbers, not strings
                         const lat = typeof c.latitude === 'number' ? c.latitude : parseFloat(String(c.latitude || ''));
                         const lon = typeof c.longitude === 'number' ? c.longitude : parseFloat(String(c.longitude || ''));
@@ -1607,15 +1977,8 @@ function useAvailableCommissions() {
                 }
             }
             
-            // Calculate effective distance limit based on GPS accuracy
-            // If GPS accuracy is poor, increase the limit to account for uncertainty
-            // Example: If GPS accuracy is 4km, add 2km buffer (half the accuracy) to the 500m base
-            let effectiveDistanceLimit = 500;
-            if (gpsAccuracy > 500) {
-                // Add buffer: min of (half of GPS accuracy) or 2km, but don't exceed 3km total
-                const accuracyBuffer = Math.min(gpsAccuracy / 2, 2000);
-                effectiveDistanceLimit = Math.min(500 + accuracyBuffer, 3000);
-            }
+            // Strict distance limit: 500 meters (no GPS accuracy expansion)
+            const distanceLimit = 500;
 
             // Filter out commissions based on distance (500 meters = 0.5 km) and declined status
             const filteredRaw = raw.filter(commission => {
@@ -1635,7 +1998,7 @@ function useAvailableCommissions() {
                     );
                     const distanceMeters = distanceKm * 1000;
                     
-                    if (distanceMeters > effectiveDistanceLimit) {
+                    if (distanceMeters > 500) {
                         return false;
                     }
                 } else {
@@ -1647,45 +2010,9 @@ function useAvailableCommissions() {
             });
 
             // Apply ranking-based filtering: only top-ranked runner sees the commission first
-            // Helper function to get runner's completed commissions count for a given category/type
-            const getRunnerCompletedCount = async (runnerId: string, commissionTypes: string[]): Promise<number> => {
-                if (!commissionTypes || commissionTypes.length === 0) return 0;
-                
-                try {
-                    // Get all completed commissions for this runner that match any of the commission types
-                    const { data, error } = await supabase
-                        .from("commission")
-                        .select("id, commission_type")
-                        .eq("runner_id", runnerId)
-                        .eq("status", "completed");
-                    
-                    if (error) {
-                        if (__DEV__) console.error(`Error fetching completed commissions for runner ${runnerId}:`, error);
-                        return 0;
-                    }
-                    
-                    if (!data || data.length === 0) return 0;
-                    
-                    // Count how many completed commissions match the types
-                    let count = 0;
-                    data.forEach((completedCommission: any) => {
-                        if (!completedCommission.commission_type) return;
-                        // commission_type is stored as comma-separated string (e.g., "logos,posters")
-                        const completedTypes = completedCommission.commission_type.split(',').map((t: string) => t.trim());
-                        // Check if any of the commission types overlap with completed types
-                        const hasMatch = commissionTypes.some(type => completedTypes.includes(type));
-                        if (hasMatch) count++;
-                    });
-                    
-                    return count;
-                } catch (error) {
-                    if (__DEV__) console.error(`Error calculating completed count for runner ${runnerId}:`, error);
-                    return 0;
-                }
-            };
-
             // Helper function to get runner's category history from all completed commissions
-            const getRunnerCategoryHistory = async (runnerId: string): Promise<string[]> => {
+            // Returns array of arrays: each inner array represents one task's categories
+            const getRunnerCategoryHistory = async (runnerId: string): Promise<{ taskCategories: string[][]; totalTasks: number }> => {
                 try {
                     // Get all completed commissions for this runner
                     const { data, error } = await supabase
@@ -1696,24 +2023,29 @@ function useAvailableCommissions() {
                     
                     if (error) {
                         if (__DEV__) console.error(`Error fetching runner category history for ${runnerId}:`, error);
-                        return [];
+                        return { taskCategories: [], totalTasks: 0 };
                     }
                     
-                    if (!data || data.length === 0) return [];
+                    if (!data || data.length === 0) return { taskCategories: [], totalTasks: 0 };
                     
-                    // Flatten all categories from completed commissions into a single array
-                    const allCategories: string[] = [];
+                    // Count total completed tasks (each commission is one task, even if it has multiple categories)
+                    const totalTasks = data.length;
+                    
+                    // Build array of arrays: each task is represented by an array of its categories
+                    const taskCategories: string[][] = [];
                     data.forEach((completedCommission: any) => {
                         if (!completedCommission.commission_type) return;
                         // commission_type is stored as comma-separated string (e.g., "logos,posters")
-                        const categories = completedCommission.commission_type.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0);
-                        allCategories.push(...categories);
+                        const categories = completedCommission.commission_type.split(',').map((t: string) => t.trim().toLowerCase()).filter((t: string) => t.length > 0);
+                        if (categories.length > 0) {
+                            taskCategories.push(categories);
+                        }
                     });
                     
-                    return allCategories;
+                    return { taskCategories, totalTasks };
                 } catch (error) {
                     if (__DEV__) console.error(`Error calculating category history for runner ${runnerId}:`, error);
-                    return [];
+                    return { taskCategories: [], totalTasks: 0 };
                 }
             };
 
@@ -1748,8 +2080,14 @@ function useAvailableCommissions() {
                 
                 // If no runner has been notified yet, find and assign top-ranked runner
                 if (!commission.notified_runner_id) {
-                    console.log(`🔍 [RANKING] Commission ${commission.id}: Finding top-ranked runner...`);
-                    console.log(`📊 [DEBUG] Current timeout_runner_ids:`, commission.timeout_runner_ids);
+                    // STEP 1: Task detected
+                    const callerName = commissionCallerNamesById[commission.buddycaller_id || ""] || "BuddyCaller";
+                    const callerShortId = (commission.buddycaller_id || "").substring(0, 8);
+                    console.log(`[QUEUE] STEP 1 — Task detected`);
+                    console.log(`Type: Commission`);
+                    console.log(`Task ID: ${commission.id}`);
+                    console.log(`Caller: ${callerName} (id: ${callerShortId})`);
+                    console.log(`Status: pending`);
                     
                     // Get caller location for distance calculation
                     const callerLocation = callerLocations[commission.buddycaller_id || ""];
@@ -1759,11 +2097,40 @@ function useAvailableCommissions() {
                     }
                     
                     // Get all available runners (is_available = true)
-                    let query = supabase
+                    // Calculate presence thresholds
+                    const presenceThresholdCommission = new Date(now.getTime() - 90000); // 90 seconds for GPS
+                    const twoMinutesAgoCommission = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    
+                    // First, get count of runners before presence filter (for logging)
+                    let countQueryCommission = supabase
                         .from("users")
-                        .select("id, latitude, longitude, average_rating")
+                        .select("id", { count: "exact", head: true })
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true);
+                    
+                    // Exclude declined runner if exists (when caller declines)
+                    if (commission.declined_runner_id) {
+                        countQueryCommission = countQueryCommission.neq("id", commission.declined_runner_id);
+                    }
+                    
+                    // Also exclude all timeout runners if exists (to prevent re-notifying)
+                    if (commission.timeout_runner_ids && commission.timeout_runner_ids.length > 0) {
+                        for (const timeoutRunnerId of commission.timeout_runner_ids) {
+                            countQueryCommission = countQueryCommission.neq("id", timeoutRunnerId);
+                        }
+                    }
+                    
+                    const { count: runnersBeforePresenceCommission } = await countQueryCommission;
+                    
+                    // Now fetch runners with presence filters applied
+                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    let query = supabase
+                        .from("users")
+                        .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
+                        .eq("role", "BuddyRunner")
+                        .eq("is_available", true)
+                        .gte("last_seen_at", twoMinutesAgoCommission.toISOString())
+                        .or(`location_updated_at.gte.${presenceThresholdCommission.toISOString()},location_updated_at.is.null`);
                     
                     // Exclude declined runner if exists (when caller declines)
                     if (commission.declined_runner_id) {
@@ -1785,16 +2152,31 @@ function useAvailableCommissions() {
                         return false;
                     }
                     
+                    // STEP 2: Availability check
+                    const totalRunners = availableRunners?.length || 0;
+                    console.log(`[QUEUE] STEP 2 — Availability check`);
+                    console.log(`Total runners fetched: ${totalRunners}`);
+                    console.log(`Available runners: ${totalRunners}`);
+                    console.log(`Unavailable runners filtered out: 0`);
+                    
+                    // STEP 2A: Presence filtering
+                    console.log(`[QUEUE] STEP 2A — Presence filtering`);
+                    console.log(`Presence threshold: ${presenceThresholdCommission.toISOString()}`);
+                    console.log(`Runners before presence filter: ${runnersBeforePresenceCommission || 0}`);
+                    const runnersAfterPresenceCommission = availableRunners?.length || 0;
+                    console.log(`Runners after presence filter: ${runnersAfterPresenceCommission}`);
+                    
                     if (!availableRunners || availableRunners.length === 0) {
                         console.log(`📊 [RANKING] No available runners found after excluding timeout runners`);
                         // No runners left, commission stays in pending state waiting for new runner
                         return false;
                     }
                     
-                    console.log(`📊 [RANKING] Found ${availableRunners.length} available runners, checking distances and ranks...`);
-                    
-                    // Filter runners within 500m and calculate their ranks
-                    const eligibleRunners: Array<{ id: string; count: number; distance: number; rating: number; finalScore: number }> = [];
+                    // STEP 3: Distance filtering
+                    console.log(`[QUEUE] STEP 3 — Distance filtering (≤ 500m)`);
+                    const eligibleRunners: Array<{ id: string; firstName: string | null; lastName: string | null; distance: number; rating: number; finalScore: number; distanceScore: number; ratingScore: number; tfidfScore: number }> = [];
+                    let runnersWithin500m = 0;
+                    let runnersExcluded = 0;
                     
                     for (const runner of availableRunners) {
                         if (!runner.latitude || !runner.longitude) continue;
@@ -1813,39 +2195,64 @@ function useAvailableCommissions() {
                         );
                         const distanceMeters = distanceKm * 1000;
                         
-                        // Only consider runners within 500m
-                        if (distanceMeters > effectiveDistanceLimit) continue;
+                        const runnerName = formatRunnerName(runner.first_name, runner.last_name, runner.id);
                         
-                        // Get completed commissions count for this runner
-                        const count = await getRunnerCompletedCount(runner.id, commissionTypes);
+                        // Only consider runners within 500m
+                        if (distanceMeters > 500) {
+                            console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ❌ excluded`);
+                            runnersExcluded++;
+                            continue;
+                        }
+                        
+                        console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ✅`);
+                        runnersWithin500m++;
+                        
+                        // Calculate distance score (normalized 0-1, higher for closer runners)
+                        const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
                         
                         // Get runner's category history for TF-IDF calculation
-                        const runnerHistory = await getRunnerCategoryHistory(runner.id);
+                        const runnerHistoryData = await getRunnerCategoryHistory(runner.id);
+                        const runnerHistory = runnerHistoryData.taskCategories.flat();
                         
                         // Calculate TF-IDF + Cosine Similarity score
-                        const tfidfScore = calculateTFIDFCosineSimilarity(commissionTypes, runnerHistory);
+                        const tfidfScore = calculateTFIDFCosineSimilarity(commissionTypes, runnerHistory, runnerHistoryData.taskCategories, runnerHistoryData.totalTasks);
                         
                         // Get runner's rating (normalize 0-5 to 0-1 scale)
-                        const rating = (runner.average_rating || 0) / 5;
+                        const ratingScore = (runner.average_rating || 0) / 5;
                         
                         // Calculate final score: weighted combination
-                        // Formula: FinalScore = (Category Task Count * 0.5) + (TF-IDF Score * 0.2) + (Rating * 0.3)
-                        const finalScore = (count * 0.5) + (tfidfScore * 0.2) + (rating * 0.3);
+                        // Formula: FinalScore = (DistanceScore * 0.40) + (RatingScore * 0.35) + (TF-IDF Score * 0.25)
+                        const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
                         
                         eligibleRunners.push({
                             id: runner.id,
-                            count: count,
+                            firstName: runner.first_name,
+                            lastName: runner.last_name,
                             distance: distanceMeters,
                             rating: runner.average_rating || 0,
-                            finalScore: finalScore
+                            finalScore: finalScore,
+                            distanceScore: distanceScore,
+                            ratingScore: ratingScore,
+                            tfidfScore: tfidfScore
                         });
-                        
-                        console.log(`📊 [RANKING] Runner ${runner.id}: ${count} completed commissions, ${distanceMeters.toFixed(2)}m away, Rating: ${(runner.average_rating || 0).toFixed(2)}, TF-IDF: ${tfidfScore.toFixed(4)}, Final Score: ${finalScore.toFixed(4)}`);
                     }
+                    
+                    console.log(`Runners within 500m: ${runnersWithin500m}`);
                     
                     if (eligibleRunners.length === 0) {
                         console.log(`❌ [RANKING] No eligible runners within 500m found`);
                         return false;
+                    }
+                    
+                    // STEP 4: Score calculation
+                    console.log(`[QUEUE] STEP 4 — Score calculation`);
+                    for (const runner of eligibleRunners) {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        console.log(`Runner: ${runnerName}`);
+                        console.log(`  distance = ${runner.distance.toFixed(2)}m → distanceScore = ${runner.distanceScore.toFixed(4)}`);
+                        console.log(`  rating = ${runner.rating.toFixed(2)} → ratingScore = ${runner.ratingScore.toFixed(4)}`);
+                        console.log(`  tfidfScore = ${runner.tfidfScore.toFixed(4)}`);
+                        console.log(`  FinalScore = ${runner.finalScore.toFixed(4)}`);
                     }
                     
                     // Sort by final score (descending), then by distance (ascending) as tiebreaker
@@ -1854,8 +2261,27 @@ function useAvailableCommissions() {
                         return a.distance - b.distance;
                     });
                     
+                    // STEP 5: Ranking result
+                    console.log(`[QUEUE] STEP 5 — Runner ranking`);
+                    eligibleRunners.forEach((runner, index) => {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        const runnerShortId = runner.id.substring(0, 8);
+                        const rank = index + 1;
+                        console.log("");
+                        console.log(`Runner ${rank}: ${runnerName} (${runnerShortId})`);
+                        console.log(`distanceScore = ${runner.distanceScore.toFixed(2)}`);
+                        console.log(`ratingScore   = ${runner.ratingScore.toFixed(2)}`);
+                        console.log(`tfidfScore    = ${runner.tfidfScore.toFixed(2)}`);
+                        console.log(`FinalScore    = ${runner.finalScore.toFixed(2)}`);
+                    });
+                    
                     const topRunner = eligibleRunners[0];
-                    console.log(`🏆 [RANKING] Top-ranked runner: ${topRunner.id} with final score ${topRunner.finalScore.toFixed(4)} (${topRunner.count} completed commissions, Rating: ${topRunner.rating.toFixed(2)})`);
+                    const topRunnerName = formatRunnerName(topRunner.firstName, topRunner.lastName, topRunner.id);
+                    
+                    // STEP 6: Assignment
+                    console.log(`[QUEUE] STEP 6 — Assignment`);
+                    console.log(`Assigned runner: ${topRunnerName}`);
+                    console.log(`Timeout window: 60 seconds`);
                     
                     // Assign to top-ranked runner
                     const { error: updateError } = await supabase.rpc('update_commission_notification', {
@@ -1882,9 +2308,12 @@ function useAvailableCommissions() {
                 
                 // Check if 60 seconds have passed and we need to reassign
                 if (notifiedAt && notifiedAt < sixtySecondsAgo) {
-                    console.log(`⏰ [RANKING] Commission ${commission.id}: 60 seconds passed, finding next runner...`);
-                    console.log(`📊 [DEBUG] Current timeout_runner_ids:`, commission.timeout_runner_ids);
-                    console.log(`📊 [DEBUG] Current notified_runner_id:`, commission.notified_runner_id);
+                    // STEP 7: Timeout detected
+                    const previousRunnerId = commission.notified_runner_id || "";
+                    const previousRunnerShortId = previousRunnerId.substring(0, 8);
+                    console.log(`[QUEUE] STEP 7 — Timeout detected`);
+                    console.log(`Runner (id: ${previousRunnerShortId}) did not accept within 60s`);
+                    console.log(`Re-running queueing for remaining runners`);
                     
                     // Get caller location for distance calculation
                     const callerLocation = callerLocations[commission.buddycaller_id || ""];
@@ -1893,13 +2322,52 @@ function useAvailableCommissions() {
                         return false;
                     }
                     
+                    // STEP 1: Task detected (reassignment)
+                    const callerName = commissionCallerNamesById[commission.buddycaller_id || ""] || "BuddyCaller";
+                    const callerShortId = (commission.buddycaller_id || "").substring(0, 8);
+                    console.log(`[QUEUE] STEP 1 — Task detected`);
+                    console.log(`Type: Commission`);
+                    console.log(`Task ID: ${commission.id}`);
+                    console.log(`Caller: ${callerName} (id: ${callerShortId})`);
+                    console.log(`Status: pending`);
+                    
                     // Get all available runners except those who were already notified or timed out
-                    let query = supabase
+                    // Calculate presence thresholds
+                    const presenceThresholdCommissionReassign = new Date(now.getTime() - 90000); // 90 seconds for GPS
+                    const twoMinutesAgoCommissionReassign = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    
+                    // First, get count of runners before presence filter (for logging)
+                    let countQueryCommissionReassign = supabase
                         .from("users")
-                        .select("id, latitude, longitude, average_rating")
+                        .select("id", { count: "exact", head: true })
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true)
                         .neq("id", commission.notified_runner_id);
+                    
+                    // Also exclude declined runner if exists (when caller declines)
+                    if (commission.declined_runner_id) {
+                        countQueryCommissionReassign = countQueryCommissionReassign.neq("id", commission.declined_runner_id);
+                    }
+                    
+                    // Also exclude all timeout runners if exists (when runners don't accept within 60s)
+                    if (commission.timeout_runner_ids && commission.timeout_runner_ids.length > 0) {
+                        for (const timeoutRunnerId of commission.timeout_runner_ids) {
+                            countQueryCommissionReassign = countQueryCommissionReassign.neq("id", timeoutRunnerId);
+                        }
+                    }
+                    
+                    const { count: runnersBeforePresenceCommissionReassign } = await countQueryCommissionReassign;
+                    
+                    // Now fetch runners with presence filters applied
+                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    let query = supabase
+                        .from("users")
+                        .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
+                        .eq("role", "BuddyRunner")
+                        .eq("is_available", true)
+                        .neq("id", commission.notified_runner_id)
+                        .gte("last_seen_at", twoMinutesAgoCommissionReassign.toISOString())
+                        .or(`location_updated_at.gte.${presenceThresholdCommissionReassign.toISOString()},location_updated_at.is.null`);
                     
                     // Also exclude declined runner if exists (when caller declines)
                     if (commission.declined_runner_id) {
@@ -1920,6 +2388,20 @@ function useAvailableCommissions() {
                         return false;
                     }
                     
+                    // STEP 2: Availability check
+                    const totalRunners = availableRunners?.length || 0;
+                    console.log(`[QUEUE] STEP 2 — Availability check`);
+                    console.log(`Total runners fetched: ${totalRunners}`);
+                    console.log(`Available runners: ${totalRunners}`);
+                    console.log(`Unavailable runners filtered out: 0`);
+                    
+                    // STEP 2A: Presence filtering
+                    console.log(`[QUEUE] STEP 2A — Presence filtering`);
+                    console.log(`Presence threshold: ${presenceThresholdCommissionReassign.toISOString()}`);
+                    console.log(`Runners before presence filter: ${runnersBeforePresenceCommissionReassign || 0}`);
+                    const runnersAfterPresenceCommissionReassign = availableRunners?.length || 0;
+                    console.log(`Runners after presence filter: ${runnersAfterPresenceCommissionReassign}`);
+                    
                     if (!availableRunners || availableRunners.length === 0) {
                         console.log(`📊 [RANKING] No other available runners found after excluding timeout runners`);
                         // No eligible runners left, clear notified_runner_id and notified_at using RPC
@@ -1935,10 +2417,11 @@ function useAvailableCommissions() {
                         return false;
                     }
                     
-                    console.log(`📊 [RANKING] Found ${availableRunners.length} available runners before distance filtering`);
-                    
-                    // Filter runners within 500m and calculate their ranks
-                    const eligibleRunners: Array<{ id: string; count: number; distance: number; rating: number; finalScore: number }> = [];
+                    // STEP 3: Distance filtering
+                    console.log(`[QUEUE] STEP 3 — Distance filtering (≤ 500m)`);
+                    const eligibleRunners: Array<{ id: string; firstName: string | null; lastName: string | null; distance: number; rating: number; finalScore: number; distanceScore: number; ratingScore: number; tfidfScore: number }> = [];
+                    let runnersWithin500m = 0;
+                    let runnersExcluded = 0;
                     
                     for (const runner of availableRunners) {
                         if (!runner.latitude || !runner.longitude) continue;
@@ -1957,35 +2440,49 @@ function useAvailableCommissions() {
                         );
                         const distanceMeters = distanceKm * 1000;
                         
-                        // Only consider runners within 500m
-                        if (distanceMeters > effectiveDistanceLimit) continue;
+                        const runnerName = formatRunnerName(runner.first_name, runner.last_name, runner.id);
                         
-                        // Get completed commissions count for this runner
-                        const count = await getRunnerCompletedCount(runner.id, commissionTypes);
+                        // Only consider runners within 500m
+                        if (distanceMeters > 500) {
+                            console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ❌ excluded`);
+                            runnersExcluded++;
+                            continue;
+                        }
+                        
+                        console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ✅`);
+                        runnersWithin500m++;
+                        
+                        // Calculate distance score (normalized 0-1, higher for closer runners)
+                        const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
                         
                         // Get runner's category history for TF-IDF calculation
-                        const runnerHistory = await getRunnerCategoryHistory(runner.id);
+                        const runnerHistoryData = await getRunnerCategoryHistory(runner.id);
+                        const runnerHistory = runnerHistoryData.taskCategories.flat();
                         
                         // Calculate TF-IDF + Cosine Similarity score
-                        const tfidfScore = calculateTFIDFCosineSimilarity(commissionTypes, runnerHistory);
+                        const tfidfScore = calculateTFIDFCosineSimilarity(commissionTypes, runnerHistory, runnerHistoryData.taskCategories, runnerHistoryData.totalTasks);
                         
                         // Get runner's rating (normalize 0-5 to 0-1 scale)
-                        const rating = (runner.average_rating || 0) / 5;
+                        const ratingScore = (runner.average_rating || 0) / 5;
                         
                         // Calculate final score: weighted combination
-                        // Formula: FinalScore = (Category Task Count * 0.5) + (TF-IDF Score * 0.2) + (Rating * 0.3)
-                        const finalScore = (count * 0.5) + (tfidfScore * 0.2) + (rating * 0.3);
+                        // Formula: FinalScore = (DistanceScore * 0.40) + (RatingScore * 0.35) + (TF-IDF Score * 0.25)
+                        const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
                         
                         eligibleRunners.push({
                             id: runner.id,
-                            count: count,
+                            firstName: runner.first_name,
+                            lastName: runner.last_name,
                             distance: distanceMeters,
                             rating: runner.average_rating || 0,
-                            finalScore: finalScore
+                            finalScore: finalScore,
+                            distanceScore: distanceScore,
+                            ratingScore: ratingScore,
+                            tfidfScore: tfidfScore
                         });
-                        
-                        console.log(`📊 [RANKING] Runner ${runner.id}: ${count} completed commissions, ${distanceMeters.toFixed(2)}m away, Rating: ${(runner.average_rating || 0).toFixed(2)}, TF-IDF: ${tfidfScore.toFixed(4)}, Final Score: ${finalScore.toFixed(4)}`);
                     }
+                    
+                    console.log(`Runners within 500m: ${runnersWithin500m}`);
                     
                     if (eligibleRunners.length === 0) {
                         console.log(`❌ [RANKING] No eligible runners within 500m found`);
@@ -2002,14 +2499,44 @@ function useAvailableCommissions() {
                         return false;
                     }
                     
+                    // STEP 4: Score calculation
+                    console.log(`[QUEUE] STEP 4 — Score calculation`);
+                    for (const runner of eligibleRunners) {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        console.log(`Runner: ${runnerName}`);
+                        console.log(`  distance = ${runner.distance.toFixed(2)}m → distanceScore = ${runner.distanceScore.toFixed(4)}`);
+                        console.log(`  rating = ${runner.rating.toFixed(2)} → ratingScore = ${runner.ratingScore.toFixed(4)}`);
+                        console.log(`  tfidfScore = ${runner.tfidfScore.toFixed(4)}`);
+                        console.log(`  FinalScore = ${runner.finalScore.toFixed(4)}`);
+                    }
+                    
                     // Sort by final score (descending), then by distance (ascending) as tiebreaker
                     eligibleRunners.sort((a, b) => {
                         if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
                         return a.distance - b.distance;
                     });
                     
+                    // STEP 5: Ranking result
+                    console.log(`[QUEUE] STEP 5 — Runner ranking`);
+                    eligibleRunners.forEach((runner, index) => {
+                        const runnerName = formatRunnerName(runner.firstName, runner.lastName, runner.id);
+                        const runnerShortId = runner.id.substring(0, 8);
+                        const rank = index + 1;
+                        console.log("");
+                        console.log(`Runner ${rank}: ${runnerName} (${runnerShortId})`);
+                        console.log(`distanceScore = ${runner.distanceScore.toFixed(2)}`);
+                        console.log(`ratingScore   = ${runner.ratingScore.toFixed(2)}`);
+                        console.log(`tfidfScore    = ${runner.tfidfScore.toFixed(2)}`);
+                        console.log(`FinalScore    = ${runner.finalScore.toFixed(2)}`);
+                    });
+                    
                     const nextRunner = eligibleRunners[0];
-                    console.log(`🏆 [RANKING] Next-ranked runner: ${nextRunner.id} with final score ${nextRunner.finalScore.toFixed(4)} (${nextRunner.count} completed commissions, Rating: ${nextRunner.rating.toFixed(2)})`);
+                    const nextRunnerName = formatRunnerName(nextRunner.firstName, nextRunner.lastName, nextRunner.id);
+                    
+                    // STEP 6: Assignment
+                    console.log(`[QUEUE] STEP 6 — Assignment`);
+                    console.log(`Assigned runner: ${nextRunnerName}`);
+                    console.log(`Timeout window: 60 seconds`);
                     
                     // For timeout scenario: pass the previous notified runner ID to prevent re-notification loop
                     const previousNotifiedRunnerId = commission.notified_runner_id;
@@ -2107,32 +2634,67 @@ function useAvailableCommissions() {
         }
     }, []);
 
+    // Update ref whenever availableMode changes (does not recreate subscription)
+    React.useEffect(() => {
+        availableModeRef.current = availableMode;
+        console.log('[REALTIME COMMISSION] 🔄 availableModeRef updated to:', availableMode);
+    }, [availableMode]);
+
+    // Initial fetch effect - runs when availableMode changes to true
+    React.useEffect(() => {
+        if (availableMode) {
+            console.log('[REALTIME COMMISSION] ✅ Runner became available, triggering initial refetch');
+            refetch();
+        }
+    }, [availableMode, refetch]);
+
+    // Realtime subscription - created once, long-lived
     React.useEffect(() => {
         let mounted = true;
-        // Defer initial fetch - will be triggered by availability change effects in HomeWeb/HomeMobile
-        // This prevents GPS from running on mount, improving initial load performance
 
+        console.log('[REALTIME COMMISSION] 🔌 Creating realtime subscription (long-lived)');
+
+        // Realtime subscription for commission changes
         const channel = supabase
             .channel("rt-available-commissions")
             .on("postgres_changes", { event: "*", schema: "public", table: "commission" }, () => {
-                if (mounted) {
-                    // Invalidate cache on realtime update (web only)
-                    if (Platform.OS === 'web') {
-                        (async () => {
-                            try {
-                                const { data: auth } = await supabase.auth.getUser();
-                                const uid = auth?.user?.id ?? null;
-                                if (uid) {
-                                    const { invalidateCache } = await import('../../utils/webCache');
-                                    invalidateCache(`runner_available_commissions_${uid}`);
-                                }
-                            } catch {
-                                // Silent fail
-                            }
-                        })();
-                    }
-                    refetch();
+                if (!mounted) return;
+
+                console.log('[REALTIME COMMISSION] 📨 Realtime event received for commission table');
+                
+                // Read from ref to get latest availableMode without recreating subscription
+                const isAvailable = availableModeRef.current;
+                console.log('[REALTIME COMMISSION] Checking availability - availableModeRef.current:', isAvailable);
+
+                // Guard logic: Only block when explicitly false (OFF)
+                // Allow when true OR undefined (loading state)
+                if (isAvailable === undefined) {
+                    console.log('[REALTIME COMMISSION] ⏳ Availability is undefined (loading), allowing refetch');
                 }
+                
+                if (isAvailable === false) {
+                    console.log('[REALTIME COMMISSION] ❌ Runner is explicitly OFF, skipping refetch');
+                    return;
+                }
+
+                console.log('[REALTIME COMMISSION] ✅ Availability guard passed, calling refetch()');
+
+                // Invalidate cache on realtime update (web only)
+                if (Platform.OS === 'web') {
+                    (async () => {
+                        try {
+                            const { data: auth } = await supabase.auth.getUser();
+                            const uid = auth?.user?.id ?? null;
+                            if (uid) {
+                                const { invalidateCache } = await import('../../utils/webCache');
+                                invalidateCache(`runner_available_commissions_${uid}`);
+                            }
+                        } catch {
+                            // Silent fail
+                        }
+                    })();
+                }
+                refetch();
             })
             .on("postgres_changes", { 
                 event: "UPDATE", 
@@ -2142,32 +2704,52 @@ function useAvailableCommissions() {
             }, () => {
                 // Refetch when user locations are updated (caller or runner)
                 // This ensures commissions are refetched when locations change
-                if (mounted) {
-                    // Invalidate cache on location update (web only)
-                    if (Platform.OS === 'web') {
-                        (async () => {
-                            try {
-                                const { data: auth } = await supabase.auth.getUser();
-                                const uid = auth?.user?.id ?? null;
-                                if (uid) {
-                                    const { invalidateCache } = await import('../../utils/webCache');
-                                    invalidateCache(`runner_available_commissions_${uid}`);
-                                }
-                            } catch {
-                                // Silent fail
-                            }
-                        })();
-                    }
-                    refetch();
+                if (!mounted) return;
+
+                console.log('[REALTIME COMMISSION] 📨 Location update event received');
+                
+                // Read from ref to get latest availableMode without recreating subscription
+                const isAvailable = availableModeRef.current;
+                console.log('[REALTIME COMMISSION] Checking availability - availableModeRef.current:', isAvailable);
+
+                // Guard logic: Only block when explicitly false (OFF)
+                // Allow when true OR undefined (loading state)
+                if (isAvailable === undefined) {
+                    console.log('[REALTIME COMMISSION] ⏳ Availability is undefined (loading), allowing refetch');
                 }
+                
+                if (isAvailable === false) {
+                    console.log('[REALTIME COMMISSION] ❌ Runner is explicitly OFF, skipping refetch');
+                    return;
+                }
+
+                console.log('[REALTIME COMMISSION] ✅ Availability guard passed, calling refetch()');
+
+                // Invalidate cache on location update (web only)
+                if (Platform.OS === 'web') {
+                    (async () => {
+                        try {
+                            const { data: auth } = await supabase.auth.getUser();
+                            const uid = auth?.user?.id ?? null;
+                            if (uid) {
+                                const { invalidateCache } = await import('../../utils/webCache');
+                                invalidateCache(`runner_available_commissions_${uid}`);
+                            }
+                        } catch {
+                            // Silent fail
+                        }
+                    })();
+                }
+                refetch();
             })
             .subscribe();
 
         return () => {
+            console.log('[REALTIME COMMISSION] 🔌 Cleaning up realtime subscription');
             mounted = false;
             supabase.removeChannel(channel);
         };
-    }, [refetch]);
+    }, [refetch]); // Only depends on refetch, NOT availableMode
 
     return { loading, rows, errorText, refetch };
 }
@@ -2535,13 +3117,13 @@ function HomeWeb() {
     const { rating: errandsRating } = useTabSpecificRating("Errands");
     const { rating: commissionsRating } = useTabSpecificRating("Commissions");
 
-    const { loading: errandsLoading, rows: errands, refetch: refetchErrands } = useAvailableErrands();
+    const { loading: errandsLoading, rows: errands, refetch: refetchErrands } = useAvailableErrands({ availableMode });
     const {
         loading: commLoading,
         rows: commissions,
         errorText: commError,
         refetch: refetchCommissions,
-    } = useAvailableCommissions();
+    } = useAvailableCommissions({ availableMode });
     const { count: todayCompletedCount, loading: todayCompletedLoading } = useTodayCompletedCommissions();
     const { count: todayCompletedErrandsCount, loading: todayCompletedErrandsLoading } = useTodayCompletedErrands();
 
@@ -3933,13 +4515,13 @@ function HomeMobile() {
     const { rating: errandsRating } = useTabSpecificRating("Errands");
     const { rating: commissionsRating } = useTabSpecificRating("Commissions");
 
-    const { loading: errandsLoading, rows: errands, refetch: refetchErrands } = useAvailableErrands();
+    const { loading: errandsLoading, rows: errands, refetch: refetchErrands } = useAvailableErrands({ availableMode });
     const {
         loading: commLoading,
         rows: commissions,
         errorText: commError,
         refetch: refetchCommissionsMobile,
-    } = useAvailableCommissions();
+    } = useAvailableCommissions({ availableMode });
     const { count: todayCompletedCount } = useTodayCompletedCommissions();
     const { count: todayCompletedErrandsCount } = useTodayCompletedErrands();
 

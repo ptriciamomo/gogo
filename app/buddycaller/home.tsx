@@ -23,6 +23,7 @@ import NoRunnersAvailableModalWeb from "../../components/NoRunnersAvailableModal
 import { noRunnersAvailableService } from "../../services/NoRunnersAvailableService";
 import { errandAcceptanceService } from "../../services/ErrandAcceptanceService";
 import LocationService from "../../components/LocationService";
+import { logCaller, logCallerError, logCallerWarn, initCallerLogger } from "./utils/callerLogger";
 
 /* ================= COLORS ================= */
 const colors = {
@@ -77,16 +78,21 @@ function titleCase(s?: string | null) {
 
 /* ===================== WEB CALLER AUTH CACHE (WEB ONLY) ===================== */
 
+// Debug flag for performance and cache logs (default: false, set to true to enable noisy logs)
+const DEBUG_CALLER_PERF = false;
+
 // Safe timer helpers to avoid "already exists/does not exist" warnings on web
 const webTimersStarted = new Set<string>();
 function webPerfTime(label?: string) {
     if (!label) return;
+    if (!__DEV__ || !DEBUG_CALLER_PERF) return; // Gate performance logs
     if (webTimersStarted.has(label)) return; // already started, avoid duplicate start
     webTimersStarted.add(label);
     console.time(label);
 }
 function webPerfTimeEnd(label?: string) {
     if (!label) return;
+    if (!__DEV__ || !DEBUG_CALLER_PERF) return; // Gate performance logs
     if (!webTimersStarted.has(label)) return; // only end if started
     webTimersStarted.delete(label);
     console.timeEnd(label);
@@ -637,11 +643,17 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                                 if (Platform.OS === 'web' && __DEV__) {
                                     webPerfTime('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                                 }
+                                // Calculate timestamp for 2 minutes ago (presence threshold)
+                                const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+                                
                                 let { data, error } = await supabase
                                     .from("users")
                                     .select("id, first_name, last_name, role, profile_picture_url, created_at, is_available")
                                     .eq("role", "BuddyRunner")
                                     .eq("is_available", true)
+                                    .not("latitude", "is", null)
+                                    .not("longitude", "is", null)
+                                    .gte("last_seen_at", twoMinutesAgo)
                                     .neq("id", currentUid)
                                     .order("first_name", { ascending: true });
 
@@ -688,11 +700,17 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                 if (Platform.OS === 'web' && __DEV__) {
                     webPerfTime('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                 }
+                // Calculate timestamp for 2 minutes ago (presence threshold)
+                const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+                
                 let { data, error } = await supabase
                     .from("users")
                     .select("id, first_name, last_name, role, profile_picture_url, created_at, is_available")
                     .eq("role", "BuddyRunner")
                     .eq("is_available", true)
+                    .not("latitude", "is", null)
+                    .not("longitude", "is", null)
+                    .gte("last_seen_at", twoMinutesAgo)
                     .neq("id", currentUid)
                     .order("first_name", { ascending: true });
 
@@ -970,7 +988,7 @@ async function cleanupOldRedirects(): Promise<void> {
 // Helper function to check if all eligible runners have timed out for a commission
 async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean> {
     try {
-        console.log(`[Timeout Check] Starting check for commission ${commissionId}`);
+        logCaller(`Timeout check: Starting check for commission ${commissionId}`);
         
         // Get the commission with all relevant fields
         const { data: commission, error: commissionError } = await supabase
@@ -980,19 +998,19 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             .single();
 
         if (commissionError || !commission) {
-            console.error('[Timeout Check] Error fetching commission:', commissionError);
+            logCallerError('Timeout check: Error fetching commission', commissionError);
             return false;
         }
 
         // Only check pending commissions
         if (commission.status !== 'pending') {
-            console.log(`[Timeout Check] Commission ${commissionId} is not pending (status: ${commission.status}), skipping`);
+            logCaller(`Timeout check: Commission ${commissionId} is not pending (status: ${commission.status}), skipping`);
             return false;
         }
 
         // If there's a runner currently notified, wait for them to respond or timeout
         if (commission.notified_runner_id !== null) {
-            console.log(`[Timeout Check] Commission ${commissionId} has a notified runner (${commission.notified_runner_id}), waiting...`);
+            logCaller(`Timeout check: Commission ${commissionId} has a notified runner, waiting...`);
             return false;
         }
 
@@ -1004,7 +1022,7 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             .single();
 
         if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-            console.log(`[Timeout Check] Caller ${commission.buddycaller_id} has no location, cannot check`);
+            logCaller(`Timeout check: Caller has no location, cannot check`);
             return false;
         }
 
@@ -1012,7 +1030,7 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
         const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
 
         if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-            console.log(`[Timeout Check] Invalid caller location for commission ${commissionId}`);
+            logCaller(`Timeout check: Invalid caller location for commission ${commissionId}`);
             return false;
         }
 
@@ -1029,12 +1047,12 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             .eq('is_available', true);
 
         if (runnersError) {
-            console.error('[Timeout Check] Error fetching runners:', runnersError);
+            logCallerError('Timeout check: Error fetching runners', runnersError);
             return false;
         }
 
         if (!allRunners || allRunners.length === 0) {
-            console.log(`[Timeout Check] No runners available at all - all have timed out`);
+            logCaller(`Timeout check: No runners available at all - all have timed out`);
             // Ensure at least 60 seconds have passed since commission creation
             const createdAt = new Date(commission.created_at);
             const now = new Date();
@@ -1042,7 +1060,7 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             return secondsSinceCreation >= 60;
         }
 
-        console.log(`[Timeout Check] Found ${allRunners.length} total available runners`);
+        logCaller(`Timeout check: Found ${allRunners.length} total available runners`);
 
         // Filter runners within 500m of caller
         const eligibleRunners = allRunners.filter(runner => {
@@ -1056,16 +1074,16 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             return distanceMeters <= 500;
         });
 
-        console.log(`[Timeout Check] Found ${eligibleRunners.length} eligible runners within 500m`);
+        logCaller(`Timeout check: Found ${eligibleRunners.length} eligible runners within 500m`);
 
         if (eligibleRunners.length === 0) {
-            console.log(`[Timeout Check] No eligible runners within 500m - all have timed out`);
+            logCaller(`Timeout check: No eligible runners within 500m - all have timed out`);
             // Ensure at least 60 seconds have passed since commission creation
             const createdAt = new Date(commission.created_at);
             const now = new Date();
             const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
             if (secondsSinceCreation >= 60) {
-                console.log(`[Timeout Check] Commission ${commissionId} has been pending for ${secondsSinceCreation.toFixed(1)}s, no eligible runners - TRIGGERING MODAL`);
+                logCaller(`Timeout check: Commission ${commissionId} has been pending for ${secondsSinceCreation.toFixed(1)}s, no eligible runners - TRIGGERING MODAL`);
                 return true;
             }
             return false;
@@ -1076,12 +1094,11 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             ? commission.timeout_runner_ids 
             : (commission.timeout_runner_ids ? [commission.timeout_runner_ids] : []);
 
-        console.log(`[Timeout Check] Commission ${commissionId} details:`, {
+        logCaller(`Timeout check: Commission ${commissionId} details`, {
             totalEligibleRunners: eligibleRunners.length,
             timeoutRunnerIdsCount: timeoutRunnerIds.length,
-            timeoutRunnerIds: timeoutRunnerIds,
-            declinedRunnerId: commission.declined_runner_id,
-            eligibleRunnerIds: eligibleRunners.map(r => r.id)
+            declinedRunnerId: commission.declined_runner_id ? 'present' : 'none',
+            eligibleRunnerIds: eligibleRunners.map(r => r.id.substring(0, 8))
         });
 
         // Check if ALL eligible runners are either:
@@ -1093,7 +1110,7 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             return isTimedOut || isDeclined;
         });
 
-        console.log(`[Timeout Check] Runners that timed out or were declined: ${timedOutOrDeclinedRunners.length} out of ${eligibleRunners.length}`);
+        logCaller(`Timeout check: Runners that timed out or were declined: ${timedOutOrDeclinedRunners.length} out of ${eligibleRunners.length}`);
 
         // Check if all eligible runners have timed out or been declined
         const allTimedOut = timedOutOrDeclinedRunners.length === eligibleRunners.length && eligibleRunners.length > 0;
@@ -1105,19 +1122,19 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
             
             if (secondsSinceCreation >= 60) {
-                console.log(`[Timeout Check] ✅ ALL ${eligibleRunners.length} eligible runners have timed out/declined for commission ${commissionId} (${secondsSinceCreation.toFixed(1)}s since creation) - TRIGGERING MODAL`);
+                logCaller(`Timeout check: ✅ ALL ${eligibleRunners.length} eligible runners have timed out/declined for commission ${commissionId} (${secondsSinceCreation.toFixed(1)}s since creation) - TRIGGERING MODAL`);
                 return true;
             } else {
-                console.log(`[Timeout Check] All runners timed out but only ${secondsSinceCreation.toFixed(1)}s since creation, waiting...`);
+                logCaller(`Timeout check: All runners timed out but only ${secondsSinceCreation.toFixed(1)}s since creation, waiting...`);
                 return false;
             }
         } else {
             const remainingRunners = eligibleRunners.length - timedOutOrDeclinedRunners.length;
-            console.log(`[Timeout Check] ⏳ Commission ${commissionId} still has ${remainingRunners} available runner(s) - not all timed out yet`);
+            logCaller(`Timeout check: ⏳ Commission ${commissionId} still has ${remainingRunners} available runner(s) - not all timed out yet`);
             return false;
         }
     } catch (error) {
-        console.error('[Timeout Check] Error checking if all runners timed out:', error);
+        logCallerError('Timeout check: Error checking if all runners timed out', error);
         return false;
     }
 }
@@ -1131,7 +1148,7 @@ const notifiedErrands = new Set<number>();
 // Helper function to check if all eligible runners have timed out for an errand
 async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boolean> {
     try {
-        console.log(`[Errand Timeout Check] Starting check for errand ${errandId}`);
+        logCaller(`Errand timeout check: Starting check for errand ${errandId}`);
         
         // Get the errand with all relevant fields
         const { data: errand, error: errandError } = await supabase
@@ -1141,19 +1158,19 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             .single();
 
         if (errandError || !errand) {
-            console.error('[Errand Timeout Check] Error fetching errand:', errandError);
+            logCallerError('Errand timeout check: Error fetching errand', errandError);
             return false;
         }
 
         // Only check pending errands
         if (errand.status !== 'pending') {
-            console.log(`[Errand Timeout Check] Errand ${errandId} is not pending (status: ${errand.status}), skipping`);
+            logCaller(`Errand timeout check: Errand ${errandId} is not pending (status: ${errand.status}), skipping`);
             return false;
         }
 
         // If there's a runner currently notified, wait for them to respond or timeout
         if (errand.notified_runner_id !== null) {
-            console.log(`[Errand Timeout Check] Errand ${errandId} has a notified runner (${errand.notified_runner_id}), waiting...`);
+            logCaller(`Errand timeout check: Errand ${errandId} has a notified runner, waiting...`);
             return false;
         }
 
@@ -1165,7 +1182,7 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             .single();
 
         if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-            console.log(`[Errand Timeout Check] Caller ${errand.buddycaller_id} has no location, cannot check`);
+            logCaller(`Errand timeout check: Caller has no location, cannot check`);
             return false;
         }
 
@@ -1173,7 +1190,7 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
         const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
 
         if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-            console.log(`[Errand Timeout Check] Invalid caller location for errand ${errandId}`);
+            logCaller(`Errand timeout check: Invalid caller location for errand ${errandId}`);
             return false;
         }
 
@@ -1185,12 +1202,12 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             .eq('is_available', true);
 
         if (runnersError) {
-            console.error('[Errand Timeout Check] Error fetching runners:', runnersError);
+            logCallerError('Errand timeout check: Error fetching runners', runnersError);
             return false;
         }
 
         if (!allRunners || allRunners.length === 0) {
-            console.log(`[Errand Timeout Check] No runners available at all - all have timed out`);
+            logCaller(`Errand timeout check: No runners available at all - all have timed out`);
             // Ensure at least 60 seconds have passed since errand creation
             const createdAt = new Date(errand.created_at);
             const now = new Date();
@@ -1198,7 +1215,7 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             return secondsSinceCreation >= 60;
         }
 
-        console.log(`[Errand Timeout Check] Found ${allRunners.length} total available runners`);
+        logCaller(`Errand timeout check: Found ${allRunners.length} total available runners`);
 
         // Filter runners within 500m of caller
         const eligibleRunners = allRunners.filter(runner => {
@@ -1212,16 +1229,16 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             return distanceMeters <= 500;
         });
 
-        console.log(`[Errand Timeout Check] Found ${eligibleRunners.length} eligible runners within 500m`);
+        logCaller(`Errand timeout check: Found ${eligibleRunners.length} eligible runners within 500m`);
 
         if (eligibleRunners.length === 0) {
-            console.log(`[Errand Timeout Check] No eligible runners within 500m - all have timed out`);
+            logCaller(`Errand timeout check: No eligible runners within 500m - all have timed out`);
             // Ensure at least 60 seconds have passed since errand creation
             const createdAt = new Date(errand.created_at);
             const now = new Date();
             const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
             if (secondsSinceCreation >= 60) {
-                console.log(`[Errand Timeout Check] Errand ${errandId} has been pending for ${secondsSinceCreation.toFixed(1)}s, no eligible runners - TRIGGERING MODAL`);
+                logCaller(`Errand timeout check: Errand ${errandId} has been pending for ${secondsSinceCreation.toFixed(1)}s, no eligible runners - TRIGGERING MODAL`);
                 return true;
             }
             return false;
@@ -1232,11 +1249,10 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             ? errand.timeout_runner_ids 
             : (errand.timeout_runner_ids ? [errand.timeout_runner_ids] : []);
 
-        console.log(`[Errand Timeout Check] Errand ${errandId} details:`, {
+        logCaller(`Errand timeout check: Errand ${errandId} details`, {
             totalEligibleRunners: eligibleRunners.length,
             timeoutRunnerIdsCount: timeoutRunnerIds.length,
-            timeoutRunnerIds: timeoutRunnerIds,
-            eligibleRunnerIds: eligibleRunners.map(r => r.id)
+            eligibleRunnerIds: eligibleRunners.map(r => r.id.substring(0, 8))
         });
 
         // Check if ALL eligible runners are in timeout_runner_ids
@@ -1244,7 +1260,7 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             return timeoutRunnerIds.includes(runner.id);
         });
 
-        console.log(`[Errand Timeout Check] Runners that timed out: ${timedOutRunners.length} out of ${eligibleRunners.length}`);
+        logCaller(`Errand timeout check: Runners that timed out: ${timedOutRunners.length} out of ${eligibleRunners.length}`);
 
         // Check if all eligible runners have timed out
         const allTimedOut = timedOutRunners.length === eligibleRunners.length && eligibleRunners.length > 0;
@@ -1256,19 +1272,19 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
             
             if (secondsSinceCreation >= 60) {
-                console.log(`[Errand Timeout Check] ✅ ALL ${eligibleRunners.length} eligible runners have timed out for errand ${errandId} (${secondsSinceCreation.toFixed(1)}s since creation) - TRIGGERING MODAL`);
+                logCaller(`Errand timeout check: ✅ ALL ${eligibleRunners.length} eligible runners have timed out for errand ${errandId} (${secondsSinceCreation.toFixed(1)}s since creation) - TRIGGERING MODAL`);
                 return true;
             } else {
-                console.log(`[Errand Timeout Check] All runners timed out but only ${secondsSinceCreation.toFixed(1)}s since creation, waiting...`);
+                logCaller(`Errand timeout check: All runners timed out but only ${secondsSinceCreation.toFixed(1)}s since creation, waiting...`);
                 return false;
             }
         } else {
             const remainingRunners = eligibleRunners.length - timedOutRunners.length;
-            console.log(`[Errand Timeout Check] ⏳ Errand ${errandId} still has ${remainingRunners} available runner(s) - not all timed out yet`);
+            logCaller(`Errand timeout check: ⏳ Errand ${errandId} still has ${remainingRunners} available runner(s) - not all timed out yet`);
             return false;
         }
     } catch (error) {
-        console.error('[Errand Timeout Check] Error checking if all runners timed out:', error);
+        logCallerError('Errand timeout check: Error checking if all runners timed out', error);
         return false;
     }
 }
@@ -1323,12 +1339,12 @@ async function monitorErrandsForTimeout(userId: string, errandId?: number) {
             // 2. No runner is currently notified (notified_runner_id is NULL)
             // 3. At least 60 seconds have passed since creation
             // 4. ALL eligible runners have timed out
-            console.log(`[Errand Timeout Monitor] Checking errand ${errand.id} for all runners timed out`);
+            logCaller(`Errand timeout monitor: Checking errand ${errand.id} for all runners timed out`);
             
             const allTimedOut = await checkIfAllRunnersTimedOutForErrand(errand.id);
             
             if (allTimedOut) {
-                console.log(`[Errand Timeout Monitor] ✅ All runners have timed out for errand ${errand.id}, triggering notification`);
+                logCaller(`Errand timeout monitor: ✅ All runners have timed out for errand ${errand.id}, triggering notification`);
                 // Mark as notified to prevent duplicate notifications
                 notifiedErrands.add(errand.id);
                 // Trigger the notification
@@ -1338,11 +1354,11 @@ async function monitorErrandsForTimeout(userId: string, errandId?: number) {
                     errandTitle: errand.title || 'Untitled Errand'
                 });
             } else {
-                console.log(`[Errand Timeout Monitor] ⏳ Errand ${errand.id} still has available runners or waiting`);
+                logCaller(`Errand timeout monitor: ⏳ Errand ${errand.id} still has available runners or waiting`);
             }
         }
     } catch (error) {
-        console.error('Error monitoring errands for timeout:', error);
+        logCallerError('Error monitoring errands for timeout', error);
     }
 }
 
@@ -1396,12 +1412,12 @@ async function monitorCommissionsForTimeout(userId: string, commissionId?: numbe
             // 2. No runner is currently notified (notified_runner_id is NULL)
             // 3. At least 60 seconds have passed since creation
             // 4. ALL eligible runners have timed out or been declined
-            console.log(`[Timeout Monitor] Checking commission ${commission.id} for all runners timed out`);
+            logCaller(`Timeout monitor: Checking commission ${commission.id} for all runners timed out`);
             
             const allTimedOut = await checkIfAllRunnersTimedOut(commission.id);
             
             if (allTimedOut) {
-                console.log(`[Timeout Monitor] ✅ All runners have timed out for commission ${commission.id}, triggering notification`);
+                logCaller(`Timeout monitor: ✅ All runners have timed out for commission ${commission.id}, triggering notification`);
                 // Mark as notified to prevent duplicate notifications
                 notifiedCommissions.add(commission.id);
                 // Trigger the notification
@@ -1411,11 +1427,11 @@ async function monitorCommissionsForTimeout(userId: string, commissionId?: numbe
                     commissionTitle: commission.title || 'Untitled Commission'
                 });
             } else {
-                console.log(`[Timeout Monitor] ⏳ Commission ${commission.id} still has available runners or waiting`);
+                logCaller(`Timeout monitor: ⏳ Commission ${commission.id} still has available runners or waiting`);
             }
         }
     } catch (error) {
-        console.error('Error monitoring commissions for timeout:', error);
+        logCallerError('Error monitoring commissions for timeout', error);
     }
 }
 
@@ -1427,27 +1443,26 @@ async function handleCommissionUpdate(
     router: any,
     showAcceptedModal?: (runnerName: string, onOk: () => void) => void
 ) {
-    console.log("BuddyCaller: Handling commission update:", {
+    logCaller("Commission update: Handling commission update", {
         commissionId: commission.id,
         status: commission.status,
         oldStatus: oldCommission.status,
-        runnerId: commission.runner_id,
-        callerId: commission.buddycaller_id
+        runnerId: commission.runner_id ? commission.runner_id.substring(0, 8) : 'none'
     });
 
     // Check if commission was just accepted by runner (status changed to "in_progress")
     if (commission.status === "in_progress" && oldCommission.status !== "in_progress") {
-        console.log("BuddyCaller: Commission was accepted, checking redirect guard...");
-        console.log("BuddyCaller: Status change detected - Old:", oldCommission.status, "New:", commission.status);
+        logCaller("Commission update: Commission was accepted, checking redirect guard...");
+        logCaller(`Commission update: Status change detected - Old: ${oldCommission.status}, New: ${commission.status}`);
 
         // Check if we've already redirected for this commission
         const hasBeenRedirected = await hasCommissionBeenRedirected(String(commission.id));
         if (hasBeenRedirected) {
-            console.log("BuddyCaller: Redirect guard active - commission already redirected:", commission.id);
+            logCaller(`Commission update: Redirect guard active - commission already redirected: ${commission.id}`);
             return;
         }
 
-        console.log("BuddyCaller: First-time redirect for commission, processing...");
+        logCaller("Commission update: First-time redirect for commission, processing...");
 
         try {
             // Get runner details
@@ -1457,7 +1472,7 @@ async function handleCommissionUpdate(
                 .eq("id", commission.runner_id)
                 .single();
 
-            console.log("BuddyCaller: Runner data fetched:", runnerData);
+            logCaller("Commission update: Runner data fetched", runnerData ? `${runnerData.first_name || ''} ${runnerData.last_name || ''}`.trim() || 'BuddyRunner' : 'none');
 
             if (runnerData) {
                 // Find or create conversation using legacy schema
@@ -1470,11 +1485,11 @@ async function handleCommissionUpdate(
                     .or(`and(user1_id.eq.${userId},user2_id.eq.${commission.runner_id}),and(user1_id.eq.${commission.runner_id},user2_id.eq.${userId})`)
                     .limit(1);
 
-                console.log("BuddyCaller: Existing conversation search result:", existing);
+                logCaller("Commission update: Existing conversation search", existing && existing.length ? `Found: ${existing[0].id}` : 'Not found');
 
                 if (existing && existing.length) {
                     conversationId = String(existing[0].id);
-                    console.log("BuddyCaller: Using existing conversation:", conversationId);
+                    logCaller(`Commission update: Using existing conversation: ${conversationId}`);
                 } else {
                     // Create new conversation using legacy user1_id/user2_id pattern
                     const { data: created, error: convErr } = await supabase
@@ -1488,7 +1503,7 @@ async function handleCommissionUpdate(
                         .single();
                     if (convErr) throw convErr;
                     conversationId = String(created.id);
-                    console.log("BuddyCaller: Created new conversation:", conversationId);
+                    logCaller(`Commission update: Created new conversation: ${conversationId}`);
                 }
 
                 // Note: Automatic message is sent by the BuddyRunner when they accept the commission
@@ -1496,7 +1511,7 @@ async function handleCommissionUpdate(
 
                 // Mark this commission as redirected BEFORE navigation
                 await markCommissionAsRedirected(String(commission.id));
-                console.log("BuddyCaller: Marked commission as redirected:", commission.id);
+                logCaller(`Commission update: Marked commission as redirected: ${commission.id}`);
 
                 // Prepare navigation params
                 const runnerName = `${runnerData.first_name || ''} ${runnerData.last_name || ''}`.trim() || 'BuddyRunner';
@@ -1506,8 +1521,8 @@ async function handleCommissionUpdate(
                         ? "/buddycaller/messages_hub" 
                         : "/buddycaller/ChatScreenCaller";
                     
-                    console.log("BuddyCaller: Navigating to:", chatPath);
-                    console.log("BuddyCaller: Platform:", Platform.OS);
+                    logCaller(`Commission update: Navigating to: ${chatPath}`);
+                    logCaller(`Commission update: Platform: ${Platform.OS}`);
                     
                     router.replace({
                         pathname: chatPath,
@@ -1538,10 +1553,10 @@ async function handleCommissionUpdate(
                     );
                 }
             } else {
-                console.log("BuddyCaller: No runner data found for ID:", commission.runner_id);
+                logCaller(`Commission update: No runner data found for ID: ${commission.runner_id ? commission.runner_id.substring(0, 8) : 'none'}`);
             }
         } catch (error) {
-            console.error("BuddyCaller: Error handling commission acceptance:", error);
+            logCallerError("Commission update: Error handling commission acceptance", error);
         }
     }
 }
@@ -1595,27 +1610,26 @@ async function handleErrandUpdate(
     userId: string,
     router: any
 ) {
-    console.log("BuddyCaller: Handling errand update:", {
+    logCaller("Errand update: Handling errand update", {
         errandId: errand.id,
         status: errand.status,
         oldStatus: oldErrand.status,
-        runnerId: errand.runner_id,
-        callerId: errand.buddycaller_id
+        runnerId: errand.runner_id ? errand.runner_id.substring(0, 8) : 'none'
     });
 
     // Check if errand was just accepted by runner (status changed to "in_progress")
     if (errand.status === "in_progress" && oldErrand.status !== "in_progress") {
-        console.log("BuddyCaller: Errand was accepted, checking redirect guard...");
-        console.log("BuddyCaller: Status change detected - Old:", oldErrand.status, "New:", errand.status);
+        logCaller("Errand update: Errand was accepted, checking redirect guard...");
+        logCaller(`Errand update: Status change detected - Old: ${oldErrand.status}, New: ${errand.status}`);
 
         // Check if we've already redirected for this errand
         const hasBeenRedirected = await hasErrandBeenRedirected(String(errand.id));
         if (hasBeenRedirected) {
-            console.log("BuddyCaller: Redirect guard active - errand already redirected:", errand.id);
+            logCaller(`Errand update: Redirect guard active - errand already redirected: ${errand.id}`);
             return;
         }
 
-        console.log("BuddyCaller: First-time redirect for errand, processing...");
+        logCaller("Errand update: First-time redirect for errand, processing...");
 
         try {
             // Get runner details
@@ -1625,27 +1639,27 @@ async function handleErrandUpdate(
                 .eq("id", errand.runner_id)
                 .single();
 
-            console.log("BuddyCaller: Runner data fetched:", runnerData);
+            logCaller("Errand update: Runner data fetched", runnerData ? `${runnerData.first_name || ''} ${runnerData.last_name || ''}`.trim() || 'BuddyRunner' : 'none');
 
             if (runnerData) {
                 // Mark this errand as redirected BEFORE showing modal
                 await markErrandAsRedirected(String(errand.id));
-                console.log("BuddyCaller: Marked errand as redirected:", errand.id);
+                logCaller(`Errand update: Marked errand as redirected: ${errand.id}`);
 
                 // Prepare runner name
                 const runnerName = `${runnerData.first_name || ''} ${runnerData.last_name || ''}`.trim() || 'BuddyRunner';
                 
                 // Notify global service to show modal
-                console.log("BuddyCaller: Notifying errand acceptance service");
+                logCaller("Errand update: Notifying errand acceptance service");
                 errandAcceptanceService.notifyAcceptance({
                     runnerName,
                     errandId: errand.id,
                 });
             } else {
-                console.log("BuddyCaller: No runner data found for ID:", errand.runner_id);
+                logCaller(`Errand update: No runner data found for ID: ${errand.runner_id ? errand.runner_id.substring(0, 8) : 'none'}`);
             }
         } catch (error) {
-            console.error("BuddyCaller: Error handling errand acceptance:", error);
+            logCallerError("Errand update: Error handling errand acceptance", error);
         }
     }
 }
@@ -1686,6 +1700,15 @@ function HomeWeb() {
     const [webPhase3Ready, setWebPhase3Ready] = React.useState(!isWeb);
 
     const { loading, criticalLoading, firstName, fullName, roleLabel, profilePictureUrl } = useAuthProfile();
+    
+    // Initialize caller logger with name (web only)
+    // Call it whenever fullName changes, even if initially undefined
+    // This ensures the logger is updated once fullName becomes available
+    React.useEffect(() => {
+        if (Platform.OS === 'web') {
+            initCallerLogger(fullName);
+        }
+    }, [fullName]);
 
     // Phase 1: resolve user identity (web only) without blocking rendering
     React.useEffect(() => {
@@ -1735,7 +1758,7 @@ function HomeWeb() {
         const checkOnMount = async () => {
             const user = await getCallerAuthUser('WEB_CALLER_TIMEOUT_MONITOR_GET_USER');
             if (user) {
-                console.log('[Timeout Monitor Web] Checking for pending timeout notifications on mount');
+                logCaller('Timeout monitor: Checking for pending timeout notifications on mount');
                 monitorCommissionsForTimeout(user.id);
                 monitorErrandsForTimeout(user.id);
             }
@@ -1761,7 +1784,7 @@ function HomeWeb() {
             const user = await getCallerAuthUser('WEB_CALLER_COMMISSION_MONITOR_GET_USER');
             if (!user) return;
 
-            console.log("BuddyCaller Web: Setting up commission monitoring for user:", user.id);
+            logCaller(`Commission monitor: Setting up commission monitoring for user: ${user.id.substring(0, 8)}`);
 
             const channel = supabase
                 .channel(`commission_acceptance_${user.id}`)
@@ -1774,12 +1797,12 @@ function HomeWeb() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log("BuddyCaller Web: Real-time update received:", payload);
+                        logCaller(`Commission monitor: Real-time update received: ${payload.new?.id || 'unknown'}`);
                         await handleCommissionUpdate(payload.new, payload.old, user.id, router, showAcceptedModal);
                     }
                 )
                 .subscribe((status) => {
-                    console.log("BuddyCaller: Subscription status:", status);
+                    logCaller(`Commission monitor: Subscription status: ${status}`);
                 });
 
             // Set up polling as fallback (check every 3 seconds)
@@ -1796,7 +1819,7 @@ function HomeWeb() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        console.error("BuddyCaller Web: Polling error:", error);
+                        logCallerError("Commission monitor: Polling error", error);
                         return;
                     }
 
@@ -1805,16 +1828,16 @@ function HomeWeb() {
                         for (const commission of commissions) {
                             const hasBeenRedirected = await hasCommissionBeenRedirected(String(commission.id));
                             if (!hasBeenRedirected) {
-                                console.log("BuddyCaller Web: Polling found unprocessed commission:", commission.id);
+                                logCaller(`Commission monitor: Polling found unprocessed commission: ${commission.id}`);
                         await handleCommissionUpdate(commission, { status: "pending" }, user.id, router, showAcceptedModal);
                                 break; // Only process one commission per polling cycle
                             } else {
-                                console.log("BuddyCaller Web: Polling found commission but already redirected:", commission.id);
+                                logCaller(`Commission monitor: Polling found commission but already redirected: ${commission.id}`);
                             }
                         }
                     }
                 } catch (error) {
-                    console.error("BuddyCaller Web: Polling error:", error);
+                    logCallerError("Commission monitor: Polling error", error);
                 }
             }, 3000);
 
@@ -1836,14 +1859,14 @@ function HomeWeb() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log('[Timeout Monitor] Commission update detected:', payload);
+                        logCaller(`Timeout monitor: Commission update detected: ${payload.new?.id || 'unknown'}`);
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
                         
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_commission_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
-                            console.log(`[Timeout Monitor] notified_runner_id cleared for commission ${newData.id}, checking immediately`);
+                            logCaller(`Timeout monitor: notified_runner_id cleared for commission ${newData.id}, checking immediately`);
                             // Check this specific commission immediately
                             await monitorCommissionsForTimeout(user.id, newData.id);
                         } else {
@@ -1866,14 +1889,14 @@ function HomeWeb() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log('[Timeout Monitor] Errand update detected:', payload);
+                        logCaller(`Timeout monitor: Errand update detected: ${payload.new?.id || 'unknown'}`);
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
                         
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_errand_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
-                            console.log(`[Timeout Monitor] notified_runner_id cleared for errand ${newData.id}, checking immediately`);
+                            logCaller(`Timeout monitor: notified_runner_id cleared for errand ${newData.id}, checking immediately`);
                             // Check this specific errand immediately
                             await monitorErrandsForTimeout(user.id, newData.id);
                         } else {
@@ -1885,7 +1908,7 @@ function HomeWeb() {
                 .subscribe();
 
             return () => {
-                console.log("BuddyCaller Web: Cleaning up subscription and polling");
+                logCaller("Commission monitor: Cleaning up subscription and polling");
                 supabase.removeChannel(channel);
                 supabase.removeChannel(timeoutCheckChannel);
                 supabase.removeChannel(errandTimeoutCheckChannel);
@@ -1907,7 +1930,7 @@ function HomeWeb() {
             const user = await getCallerAuthUser('WEB_CALLER_ERRAND_MONITOR_GET_USER');
             if (!user) return;
 
-            console.log("BuddyCaller Web: Setting up errand monitoring for user:", user.id);
+            logCaller(`Errand monitor: Setting up errand monitoring for user: ${user.id.substring(0, 8)}`);
 
             const channel = supabase
                 .channel(`errand_acceptance_${user.id}`)
@@ -1920,12 +1943,12 @@ function HomeWeb() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log("BuddyCaller Web: Real-time errand update received:", payload);
+                        logCaller(`Errand monitor: Real-time errand update received: ${payload.new?.id || 'unknown'}`);
                         await handleErrandUpdate(payload.new, payload.old, user.id, router);
                     }
                 )
                 .subscribe((status) => {
-                    console.log("BuddyCaller Web: Errand subscription status:", status);
+                    logCaller(`Errand monitor: Subscription status: ${status}`);
                 });
 
             // Set up polling as fallback (check every 3 seconds)
@@ -1942,7 +1965,7 @@ function HomeWeb() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        console.error("BuddyCaller Web: Errand polling error:", error);
+                        logCallerError("Errand monitor: Polling error", error);
                         return;
                     }
 
@@ -1951,21 +1974,21 @@ function HomeWeb() {
                         for (const errand of errands) {
                             const hasBeenRedirected = await hasErrandBeenRedirected(String(errand.id));
                             if (!hasBeenRedirected) {
-                                console.log("BuddyCaller Web: Polling found unprocessed errand:", errand.id);
+                                logCaller(`Errand monitor: Polling found unprocessed errand: ${errand.id}`);
                                 await handleErrandUpdate(errand, { status: "pending" }, user.id, router);
                                 break; // Only process one errand per polling cycle
                             } else {
-                                console.log("BuddyCaller Web: Polling found errand but already redirected:", errand.id);
+                                logCaller(`Errand monitor: Polling found errand but already redirected: ${errand.id}`);
                             }
                         }
                     }
                 } catch (error) {
-                    console.error("BuddyCaller Web: Errand polling error:", error);
+                    logCallerError("Errand monitor: Polling error", error);
                 }
             }, 3000);
 
             return () => {
-                console.log("BuddyCaller Web: Cleaning up errand subscription and polling");
+                logCaller("Errand monitor: Cleaning up subscription and polling");
                 supabase.removeChannel(channel);
                 clearInterval(pollInterval);
             };
@@ -2603,9 +2626,16 @@ const web = StyleSheet.create({
 function HomeMobile() {
     const router = useRouter();
     const isWeb = Platform.OS === "web";
-    const { loading, criticalLoading, firstName } = useAuthProfile();
+    const { loading, criticalLoading, firstName, fullName } = useAuthProfile();
     const insets = useSafeAreaInsets();
     const [activeTab, setActiveTab] = React.useState<"Errands" | "Commissions">("Errands");
+
+    // Initialize caller logger for mobile
+    // Call it whenever fullName changes, even if initially undefined
+    // This ensures the logger is updated once fullName becomes available
+    React.useEffect(() => {
+        initCallerLogger(fullName);
+    }, [fullName]);
 
     const { initialLoading, rows: errands, runnerNameMap, refetch } = useMyErrands();
     const { initialLoading: runnersLoading, rows: runners, refetch: refetchRunners } = useAvailableRunners();
@@ -2653,7 +2683,7 @@ function HomeMobile() {
         const checkOnMount = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                console.log('[Timeout Monitor Mobile] Checking for pending timeout notifications on mount');
+                logCaller('Timeout monitor: Checking for pending timeout notifications on mount');
                 monitorCommissionsForTimeout(user.id);
                 monitorErrandsForTimeout(user.id);
             }
@@ -2667,7 +2697,7 @@ function HomeMobile() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            console.log("BuddyCaller Mobile: Setting up commission monitoring for user:", user.id);
+            logCaller('Commission monitor: Setting up realtime subscription');
 
             const channel = supabase
                 .channel(`commission_acceptance_mobile_${user.id}`)
@@ -2680,12 +2710,16 @@ function HomeMobile() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log("BuddyCaller Mobile: Real-time update received:", payload);
+                        logCaller('Commission monitor: Real-time update received', {
+                            commissionId: payload.new?.id,
+                            status: payload.new?.status,
+                            oldStatus: payload.old?.status
+                        });
                         await handleCommissionUpdate(payload.new, payload.old, user.id, router);
                     }
                 )
                 .subscribe((status) => {
-                    console.log("BuddyCaller Mobile: Subscription status:", status);
+                    logCaller(`Commission monitor: Subscription ${status === 'SUBSCRIBED' ? 'SUBSCRIBED' : status === 'CHANNEL_ERROR' ? 'ERROR' : 'UNSUBSCRIBED'}`);
                 });
 
             // Set up polling as fallback (check every 3 seconds)
@@ -2702,7 +2736,7 @@ function HomeMobile() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        console.error("BuddyCaller Mobile: Polling error:", error);
+                        logCallerError("Commission monitor: Polling error", error);
                         return;
                     }
 
@@ -2711,16 +2745,15 @@ function HomeMobile() {
                         for (const commission of commissions) {
                             const hasBeenRedirected = await hasCommissionBeenRedirected(String(commission.id));
                             if (!hasBeenRedirected) {
-                                console.log("BuddyCaller Mobile: Polling found unprocessed commission:", commission.id);
+                                logCaller(`Commission monitor: Polling found unprocessed commission: ${commission.id}`);
                                 await handleCommissionUpdate(commission, { status: "pending" }, user.id, router);
                                 break; // Only process one commission per polling cycle
-                            } else {
-                                console.log("BuddyCaller Mobile: Polling found commission but already redirected:", commission.id);
                             }
+                            // Note: Excluding "already redirected" log to reduce noise
                         }
                     }
                 } catch (error) {
-                    console.error("BuddyCaller Mobile: Polling error:", error);
+                    logCallerError("Commission monitor: Polling error", error);
                 }
             }, 3000);
 
@@ -2742,14 +2775,13 @@ function HomeMobile() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log('[Timeout Monitor Mobile] Commission update detected:', payload);
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
                         
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_commission_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
-                            console.log(`[Timeout Monitor Mobile] notified_runner_id cleared for commission ${newData.id}, checking immediately`);
+                            logCaller(`Timeout monitor: notified_runner_id cleared for commission ${newData.id}, checking immediately`);
                             // Check this specific commission immediately
                             await monitorCommissionsForTimeout(user.id, newData.id);
                         } else {
@@ -2772,14 +2804,13 @@ function HomeMobile() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log('[Timeout Monitor Mobile] Errand update detected:', payload);
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
                         
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_errand_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
-                            console.log(`[Timeout Monitor Mobile] notified_runner_id cleared for errand ${newData.id}, checking immediately`);
+                            logCaller(`Timeout monitor: notified_runner_id cleared for errand ${newData.id}, checking immediately`);
                             // Check this specific errand immediately
                             await monitorErrandsForTimeout(user.id, newData.id);
                         } else {
@@ -2791,7 +2822,7 @@ function HomeMobile() {
                 .subscribe();
 
             return () => {
-                console.log("BuddyCaller Mobile: Cleaning up subscription and polling");
+                logCaller('Commission monitor: Cleaning up subscription and polling');
                 supabase.removeChannel(channel);
                 supabase.removeChannel(timeoutCheckChannel);
                 supabase.removeChannel(errandTimeoutCheckChannel);
@@ -2812,7 +2843,7 @@ function HomeMobile() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            console.log("BuddyCaller Mobile: Setting up errand monitoring for user:", user.id);
+            logCaller('Errand monitor: Setting up realtime subscription');
 
             const channel = supabase
                 .channel(`errand_acceptance_mobile_${user.id}`)
@@ -2825,12 +2856,16 @@ function HomeMobile() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        console.log("BuddyCaller Mobile: Real-time errand update received:", payload);
+                        logCaller('Errand monitor: Real-time update received', {
+                            errandId: payload.new?.id,
+                            status: payload.new?.status,
+                            oldStatus: payload.old?.status
+                        });
                         await handleErrandUpdate(payload.new, payload.old, user.id, router);
                     }
                 )
                 .subscribe((status) => {
-                    console.log("BuddyCaller Mobile: Errand subscription status:", status);
+                    logCaller(`Errand monitor: Subscription ${status === 'SUBSCRIBED' ? 'SUBSCRIBED' : status === 'CHANNEL_ERROR' ? 'ERROR' : 'UNSUBSCRIBED'}`);
                 });
 
             // Set up polling as fallback (check every 3 seconds)
@@ -2847,7 +2882,7 @@ function HomeMobile() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        console.error("BuddyCaller Mobile: Errand polling error:", error);
+                        logCallerError("Errand monitor: Polling error", error);
                         return;
                     }
 
@@ -2856,21 +2891,20 @@ function HomeMobile() {
                         for (const errand of errands) {
                             const hasBeenRedirected = await hasErrandBeenRedirected(String(errand.id));
                             if (!hasBeenRedirected) {
-                                console.log("BuddyCaller Mobile: Polling found unprocessed errand:", errand.id);
+                                logCaller(`Errand monitor: Polling found unprocessed errand: ${errand.id}`);
                                 await handleErrandUpdate(errand, { status: "pending" }, user.id, router);
                                 break; // Only process one errand per polling cycle
-                            } else {
-                                console.log("BuddyCaller Mobile: Polling found errand but already redirected:", errand.id);
                             }
+                            // Note: Excluding "already redirected" log to reduce noise
                         }
                     }
                 } catch (error) {
-                    console.error("BuddyCaller Mobile: Errand polling error:", error);
+                    logCallerError("Errand monitor: Polling error", error);
                 }
             }, 3000);
 
             return () => {
-                console.log("BuddyCaller Mobile: Cleaning up errand subscription and polling");
+                logCaller('Errand monitor: Cleaning up subscription and polling');
                 supabase.removeChannel(channel);
                 clearInterval(pollInterval);
             };

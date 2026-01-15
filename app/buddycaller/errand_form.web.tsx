@@ -181,6 +181,7 @@ function CategoryDropdown({
     onPrintingSizeSelect,
     onPrintingColorSelect,
     placeholder = "Select Category",
+    categoryOptions,
 }: {
     value?: string;
     printingSize?: string;
@@ -189,11 +190,20 @@ function CategoryDropdown({
     onPrintingSizeSelect: (size: string) => void;
     onPrintingColorSelect: (color: string) => void;
     placeholder?: string;
+    categoryOptions?: readonly string[];
 }) {
     const [open, setOpen] = useState(false);
     const [printingExpanded, setPrintingExpanded] = useState(false);
     const isWeb = Platform.OS === "web";
     const controlRef = useRef<View | null>(null);
+
+    // Fallback to CATEGORY_OPTIONS if categoryOptions is not provided
+    const options = categoryOptions ?? CATEGORY_OPTIONS;
+
+    // For web display: move "Printing" to the bottom
+    const displayOptions = isWeb 
+        ? [...options.filter(opt => opt !== "Printing"), ...options.filter(opt => opt === "Printing")]
+        : options;
 
     const { anchor, panelMaxH, measure } = useAnchoredPanel(controlRef, open);
 
@@ -260,7 +270,7 @@ function CategoryDropdown({
                 {/* WEB: inline panel */}
                 {isWeb && open && (
                     <View style={s.categoryContainer}>
-                        {CATEGORY_OPTIONS.map((opt) => (
+                        {displayOptions.map((opt) => (
                             <View key={opt} style={s.categorySection}>
                                 <TouchableOpacity
                                     style={s.categoryHeader}
@@ -381,7 +391,7 @@ function CategoryDropdown({
                                 scrollEnabled
                             >
                                 <View style={s.categoryContainer}>
-                                    {CATEGORY_OPTIONS.map((opt) => (
+                                    {options.map((opt) => (
                                         <View key={opt} style={s.categorySection}>
                                             <TouchableOpacity
                                                 style={s.categoryHeader}
@@ -973,6 +983,7 @@ export default function ErrandForm() {
     const [estPrice, setEstPrice] = useState("");
     const [printingFiles, setPrintingFiles] = useState<Record<string, any[]>>({});
     const [campusLocations, setCampusLocations] = useState<CampusLocation[]>([]);
+    const [categoryOptions, setCategoryOptions] = useState<readonly string[]>(CATEGORY_OPTIONS);
     const [deliveryLocationName, setDeliveryLocationName] = useState<string>("");
 
     const [isScheduled, setIsScheduled] = useState(false);
@@ -1006,6 +1017,29 @@ export default function ErrandForm() {
         setPreviewFile(null);
     };
     const [showLocationPermissionModal, setShowLocationPermissionModal] = useState(false);
+
+    // fetch errand categories from backend
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const { data, error } = await supabase.functions.invoke('errand-categories');
+                
+                if (error) {
+                    throw error;
+                }
+                
+                if (data && data.categories && Array.isArray(data.categories)) {
+                    // Map API response to string[] using category.name
+                    const categoryNames = data.categories.map((cat: { code: string; name: string }) => cat.name);
+                    setCategoryOptions(categoryNames);
+                }
+            } catch (err) {
+                console.error("Error fetching errand categories, using fallback:", err);
+                // Fallback to hardcoded array on error - already set as initial state
+            }
+        };
+        fetchCategories();
+    }, []);
 
     // fetch campus delivery locations once
     useEffect(() => {
@@ -1894,14 +1928,15 @@ export default function ErrandForm() {
 
                     <View style={s.formGroup}>
                         <Text style={s.label}>Category:</Text>
-                        <CategoryDropdown 
-                            value={category} 
+                        <CategoryDropdown
+                            value={category}
                             printingSize={printingSize}
                             printingColor={printingColor}
-                            onSelect={setCategory} 
+                            onSelect={setCategory}
                             onPrintingSizeSelect={setPrintingSize}
                             onPrintingColorSelect={setPrintingColor}
-                            placeholder="Select Category" 
+                            placeholder="Select Category"
+                            categoryOptions={categoryOptions}
                         />
                     </View>
 

@@ -5,6 +5,9 @@
 
 import { Platform } from 'react-native';
 
+// Debug flag for cache logs (default: false, set to true to enable cache logs)
+const DEBUG_CALLER_PERF = false;
+
 // Cache TTL: 5 minutes (300000ms)
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -32,7 +35,7 @@ export function getCachedData<T>(key: string): T | null {
     const cachedTimestamp = localStorage.getItem(timestampKey);
     
     if (!cachedData || !cachedTimestamp) {
-      if (__DEV__) console.log(`[CACHE] No cache found for: ${key}`);
+      if (__DEV__ && DEBUG_CALLER_PERF) console.log(`[CACHE] No cache found for: ${key}`);
       return null;
     }
     
@@ -42,7 +45,7 @@ export function getCachedData<T>(key: string): T | null {
     
     // Check if cache is stale
     if (age > CACHE_TTL_MS) {
-      if (__DEV__) console.log(`[CACHE] Cache expired for: ${key} (age: ${Math.round(age / 1000)}s)`);
+      if (__DEV__ && DEBUG_CALLER_PERF) console.log(`[CACHE] Cache expired for: ${key} (age: ${Math.round(age / 1000)}s)`);
       // Remove stale cache
       localStorage.removeItem(cacheKey);
       localStorage.removeItem(timestampKey);
@@ -50,10 +53,10 @@ export function getCachedData<T>(key: string): T | null {
     }
     
     const parsed = JSON.parse(cachedData) as T;
-    if (__DEV__) console.log(`[CACHE] Loaded from cache: ${key} (age: ${Math.round(age / 1000)}s)`);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.log(`[CACHE] Loaded from cache: ${key} (age: ${Math.round(age / 1000)}s)`);
     return parsed;
   } catch (error) {
-    if (__DEV__) console.warn(`[CACHE] Error reading cache for ${key}:`, error);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.warn(`[CACHE] Error reading cache for ${key}:`, error);
     return null;
   }
 }
@@ -72,9 +75,9 @@ export function setCachedData<T>(key: string, data: T): void {
     localStorage.setItem(cacheKey, JSON.stringify(data));
     localStorage.setItem(timestampKey, Date.now().toString());
     
-    if (__DEV__) console.log(`[CACHE] Cached data for: ${key}`);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.log(`[CACHE] Cached data for: ${key}`);
   } catch (error) {
-    if (__DEV__) console.warn(`[CACHE] Error writing cache for ${key}:`, error);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.warn(`[CACHE] Error writing cache for ${key}:`, error);
     // If storage is full, try to clear old caches
     if (error instanceof DOMException && error.code === 22) {
       clearOldCaches();
@@ -96,9 +99,9 @@ export function invalidateCache(key: string): void {
     localStorage.removeItem(cacheKey);
     localStorage.removeItem(timestampKey);
     
-    if (__DEV__) console.log(`[CACHE] Invalidated cache for: ${key}`);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.log(`[CACHE] Invalidated cache for: ${key}`);
   } catch (error) {
-    if (__DEV__) console.warn(`[CACHE] Error invalidating cache for ${key}:`, error);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.warn(`[CACHE] Error invalidating cache for ${key}:`, error);
   }
 }
 
@@ -123,9 +126,9 @@ export function clearAllCaches(): void {
     // Remove all cache keys
     keysToRemove.forEach(key => localStorage.removeItem(key));
     
-    if (__DEV__) console.log(`[CACHE] Cleared ${keysToRemove.length / 2} cache entries`);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.log(`[CACHE] Cleared ${keysToRemove.length / 2} cache entries`);
   } catch (error) {
-    if (__DEV__) console.warn(`[CACHE] Error clearing caches:`, error);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.warn(`[CACHE] Error clearing caches:`, error);
   }
 }
 
@@ -157,11 +160,11 @@ function clearOldCaches(): void {
     // Remove stale cache keys
     keysToRemove.forEach(key => localStorage.removeItem(key));
     
-    if (__DEV__ && keysToRemove.length > 0) {
+    if (__DEV__ && DEBUG_CALLER_PERF && keysToRemove.length > 0) {
       console.log(`[CACHE] Cleared ${keysToRemove.length / 2} stale cache entries`);
     }
   } catch (error) {
-    if (__DEV__) console.warn(`[CACHE] Error clearing old caches:`, error);
+    if (__DEV__ && DEBUG_CALLER_PERF) console.warn(`[CACHE] Error clearing old caches:`, error);
   }
 }
 

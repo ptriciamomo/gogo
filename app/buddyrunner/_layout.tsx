@@ -12,7 +12,6 @@ import { globalNotificationService } from "../../services/GlobalNotificationServ
 import { useRouter } from "expo-router";
 
 export default function BuddyrunnerLayout() {
-    console.log('BuddyrunnerLayout: Component rendering');
     const router = useRouter();
     
     // Global authentication guard for blocked users
@@ -70,15 +69,12 @@ export default function BuddyrunnerLayout() {
         // Add test functions to window for debugging
         if (typeof window !== 'undefined') {
             (window as any).testApprovalNotification = () => {
-                console.log('Testing approval notification...');
                 globalNotificationService.testApprovalNotification();
             };
             (window as any).checkApprovalListeners = () => {
-                console.log('Approval listeners count:', globalNotificationService.getApprovalListenersCount());
-                console.log('Current approval notification:', globalNotificationService.getCurrentApprovalNotification());
+                // Test function - logs removed
             };
             (window as any).testDirectApproval = () => {
-                console.log('Testing direct approval notification...');
                 const testNotification = {
                     id: `test_direct_${Date.now()}`,
                     commissionId: 999,
@@ -91,12 +87,10 @@ export default function BuddyrunnerLayout() {
                 globalNotificationService.notifyTaskApproval(testNotification);
             };
             (window as any).testSimpleApproval = () => {
-                console.log('Testing simple approval notification...');
                 const { approvalModalService } = require('../../services/ApprovalModalService');
                 approvalModalService.testNotification();
             };
             (window as any).testDirectSimpleApproval = () => {
-                console.log('Testing direct simple approval notification...');
                 const { approvalModalService } = require('../../services/ApprovalModalService');
                 const testNotification = {
                     id: `direct_test_${Date.now()}`,
@@ -107,11 +101,9 @@ export default function BuddyrunnerLayout() {
                     runnerId: 'direct-test-runner-id',
                     timestamp: new Date().toISOString()
                 };
-                console.log('Sending direct notification:', testNotification);
                 approvalModalService.notifyApproval(testNotification);
             };
             (window as any).testRealApprovalFlow = () => {
-                console.log('Testing REAL approval flow simulation...');
                 const { approvalModalService } = require('../../services/ApprovalModalService');
                 const { globalNotificationService } = require('../../services/GlobalNotificationService');
                 
@@ -125,20 +117,14 @@ export default function BuddyrunnerLayout() {
                     timestamp: new Date().toISOString()
                 };
                 
-                console.log('Sending to BOTH services like real approval:');
-                console.log('1. Sending to globalNotificationService...');
                 globalNotificationService.notifyTaskApproval(realNotification);
-                console.log('2. Sending to approvalModalService...');
                 approvalModalService.notifyApproval(realNotification);
-                console.log('Real approval flow simulation complete!');
             };
             (window as any).checkSimpleApprovalListeners = () => {
                 const { approvalModalService } = require('../../services/ApprovalModalService');
-                console.log('Simple approval listeners count:', approvalModalService.getListenerCount());
-                console.log('Current simple approval notification:', approvalModalService.getCurrentNotification());
+                // Test function - logs removed
             };
             (window as any).testMobileApproval = () => {
-                console.log('Testing mobile approval notification...');
                 const { approvalModalService } = require('../../services/ApprovalModalService');
                 const mobileNotification = {
                     id: `mobile_test_${Date.now()}`,
@@ -149,7 +135,6 @@ export default function BuddyrunnerLayout() {
                     runnerId: 'mobile-test-runner-id',
                     timestamp: new Date().toISOString()
                 };
-                console.log('Sending mobile notification:', mobileNotification);
                 approvalModalService.notifyApproval(mobileNotification);
             };
             
@@ -228,6 +213,48 @@ export default function BuddyrunnerLayout() {
             }
             if (approvalsChannelCleanup) {
                 approvalsChannelCleanup();
+            }
+        };
+    }, []);
+
+    // Runner presence heartbeat: Update last_seen_at while app is active
+    useEffect(() => {
+        let presenceInterval: NodeJS.Timeout | null = null;
+
+        const updatePresence = async () => {
+            try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user?.id) {
+                    console.log('BuddyrunnerLayout: No authenticated user, skipping presence update');
+                    return;
+                }
+
+                const { error } = await supabase
+                    .from('users')
+                    .update({ last_seen_at: new Date().toISOString() })
+                    .eq('id', user.id);
+
+                if (error) {
+                    console.warn('BuddyrunnerLayout: Failed to update presence:', error);
+                }
+            } catch (error) {
+                console.warn('BuddyrunnerLayout: Error updating presence:', error);
+            }
+        };
+
+        // Update immediately on mount
+        updatePresence();
+
+        // Set up interval to update every 60 seconds
+        presenceInterval = setInterval(() => {
+            updatePresence();
+        }, 60000);
+
+        // Cleanup on unmount
+        return () => {
+            if (presenceInterval) {
+                clearInterval(presenceInterval);
+                presenceInterval = null;
             }
         };
     }, []);

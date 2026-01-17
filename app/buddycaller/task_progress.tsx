@@ -767,7 +767,7 @@ export default function TaskProgressMobile() {
 			<View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 }}>
 				<View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
 					<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-						<TouchableOpacity onPress={() => router.back()} style={{ padding: 4 }}>
+						<TouchableOpacity onPress={() => router.push("/buddycaller/my_request_commission")} style={{ padding: 4 }}>
 							<Ionicons name="arrow-back" size={24} color={colors.text} />
 						</TouchableOpacity>
 						<Image source={require("../../assets/images/logo.png")} style={{ width: 22, height: 22, resizeMode: "contain" }} />

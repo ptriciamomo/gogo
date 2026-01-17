@@ -373,10 +373,12 @@ export default function ViewMap() {
 				// Start watching location changes
 				locationSubscriptionRef.current = await LocationService.watchLocation(
 					async (location) => {
-						console.log('📍 [Map Mobile] Runner location updated:', {
-							lat: location.latitude.toFixed(6),
-							lng: location.longitude.toFixed(6),
-						});
+						if (__DEV__) {
+							console.log('📍 [Map Mobile] Runner location updated:', {
+								lat: location.latitude.toFixed(6),
+								lng: location.longitude.toFixed(6),
+							});
+						}
 
 						// Update local state immediately
 						setRunnerLocation({ lat: location.latitude, lng: location.longitude });

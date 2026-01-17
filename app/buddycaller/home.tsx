@@ -201,9 +201,9 @@ function useAuthProfile() {
                             }
                             const { data: row, error } = await supabase
                                 .from("users")
-                                .select("id, role, first_name, last_name, is_blocked, profile_picture_url")
+                                .select("id, role, first_name, last_name, is_blocked, id_image_approved, id_image_path, profile_picture_url")
                                 .eq("id", user.id)
-                                .single<ProfileRow & { is_blocked: boolean | null; profile_picture_url: string | null }>();
+                                .single<ProfileRow & { is_blocked: boolean | null; id_image_approved: boolean | null; id_image_path: string | null; profile_picture_url: string | null }>();
                             if (Platform.OS === 'web' && __DEV__) {
                                 webPerfTimeEnd('WEB_CALLER_AUTH_PROFILE_QUERY');
                             }
@@ -215,6 +215,24 @@ function useAuthProfile() {
                                 await supabase.auth.signOut();
                                 router.replace('/login');
                                 return;
+                            }
+
+                            // SECURITY: Check ID approval status for non-admin users
+                            if (row && row.role !== 'admin') {
+                                if (row.id_image_path) {
+                                    if (row.id_image_approved === false || row.id_image_approved === null) {
+                                        if (__DEV__) console.log('User ID not approved, logging out...');
+                                        await supabase.auth.signOut();
+                                        router.replace('/login');
+                                        return;
+                                    }
+                                } else {
+                                    // User hasn't uploaded ID - block access
+                                    if (__DEV__) console.log('User has no ID image, logging out...');
+                                    await supabase.auth.signOut();
+                                    router.replace('/login');
+                                    return;
+                                }
                             }
 
                             const f = titleCase(row?.first_name || "");
@@ -262,9 +280,9 @@ function useAuthProfile() {
             }
             const { data: row, error } = await supabase
                 .from("users")
-                .select("id, role, first_name, last_name, is_blocked, profile_picture_url")
+                .select("id, role, first_name, last_name, is_blocked, id_image_approved, id_image_path, profile_picture_url")
                 .eq("id", user.id)
-                .single<ProfileRow & { is_blocked: boolean | null; profile_picture_url: string | null }>();
+                .single<ProfileRow & { is_blocked: boolean | null; id_image_approved: boolean | null; id_image_path: string | null; profile_picture_url: string | null }>();
             if (Platform.OS === 'web' && __DEV__) {
                 webPerfTimeEnd('WEB_CALLER_AUTH_PROFILE_QUERY');
             }
@@ -276,6 +294,24 @@ function useAuthProfile() {
                 await supabase.auth.signOut();
                 router.replace('/login');
                 return;
+            }
+
+            // SECURITY: Check ID approval status for non-admin users
+            if (row && row.role !== 'admin') {
+                if (row.id_image_path) {
+                    if (row.id_image_approved === false || row.id_image_approved === null) {
+                        if (__DEV__) console.log('User ID not approved, logging out...');
+                        await supabase.auth.signOut();
+                        router.replace('/login');
+                        return;
+                    }
+                } else {
+                    // User hasn't uploaded ID - block access
+                    if (__DEV__) console.log('User has no ID image, logging out...');
+                    await supabase.auth.signOut();
+                    router.replace('/login');
+                    return;
+                }
             }
 
             const f = titleCase(row?.first_name || "");

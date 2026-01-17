@@ -1,18 +1,21 @@
 import { Stack } from "expo-router";
 import { Platform } from "react-native";
 import { supabase } from "../../lib/supabase";
+import IdStatusModal from "../../components/IdStatusModalWeb";
 import GlobalTaskCompletionModal from "../../components/GlobalTaskCompletionModal";
 import GlobalTaskCompletionModalWeb from "../../components/GlobalTaskCompletionModalWeb";
 import SimpleTaskApprovalModal from "../../components/SimpleTaskApprovalModal";
 import SimpleTaskApprovalModalWeb from "../../components/SimpleTaskApprovalModalWeb";
 import GlobalInvoiceAcceptanceModal from "../../components/GlobalInvoiceAcceptanceModal";
 import { invoiceAcceptanceService } from "../../services/InvoiceAcceptanceService";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { globalNotificationService } from "../../services/GlobalNotificationService";
 import { useRouter } from "expo-router";
 
 export default function BuddyrunnerLayout() {
     const router = useRouter();
+    const [showPendingIdModal, setShowPendingIdModal] = useState(false);
+    const [showDisapprovedIdModal, setShowDisapprovedIdModal] = useState(false);
     
     // Global authentication guard for blocked users
     useEffect(() => {
@@ -23,7 +26,7 @@ export default function BuddyrunnerLayout() {
 
                 const { data: userData, error: userError } = await supabase
                     .from('users')
-                    .select('is_blocked, is_settlement_blocked')
+                    .select('is_blocked, is_settlement_blocked, id_image_approved, id_image_path, role')
                     .eq('id', user.id)
                     .maybeSingle();
 
@@ -45,6 +48,35 @@ export default function BuddyrunnerLayout() {
                     console.log('Layout: User is blocked, logging out...');
                     await supabase.auth.signOut();
                     router.replace('/login');
+                    return;
+                }
+
+                // SECURITY: Check ID approval status for non-admin users
+                if (userData && userData.role !== 'admin') {
+                    if (userData.id_image_path) {
+                        if (userData.id_image_approved === false) {
+                            console.log('Layout: User ID disapproved, logging out...');
+                            setShowDisapprovedIdModal(true);
+                            await supabase.auth.signOut();
+                            router.replace('/login');
+                            return;
+                        }
+                        
+                        if (userData.id_image_approved === null) {
+                            console.log('Layout: User ID pending approval, logging out...');
+                            setShowPendingIdModal(true);
+                            await supabase.auth.signOut();
+                            router.replace('/login');
+                            return;
+                        }
+                    } else {
+                        // User hasn't uploaded ID - block access
+                        console.log('Layout: User has no ID image, logging out...');
+                        setShowPendingIdModal(true);
+                        await supabase.auth.signOut();
+                        router.replace('/login');
+                        return;
+                    }
                 }
             } catch (error) {
                 console.error('Layout: Error checking user status:', error);
@@ -219,7 +251,7 @@ export default function BuddyrunnerLayout() {
 
     // Runner presence heartbeat: Update last_seen_at while app is active
     useEffect(() => {
-        let presenceInterval: NodeJS.Timeout | null = null;
+        let presenceInterval: ReturnType<typeof setInterval> | null = null;
 
         const updatePresence = async () => {
             try {
@@ -321,6 +353,28 @@ export default function BuddyrunnerLayout() {
         {Platform.OS === "web" ? <GlobalTaskCompletionModalWeb /> : <GlobalTaskCompletionModal />}
         {Platform.OS === "web" ? <SimpleTaskApprovalModalWeb /> : <SimpleTaskApprovalModal />}
         <GlobalInvoiceAcceptanceModal />
+
+        {/* ID Status Modals - Web & Mobile (unified UI) */}
+        <IdStatusModal
+            visible={showPendingIdModal}
+            title="ID Pending Approval"
+            message="Your student ID is pending admin approval. Please wait until your ID is approved."
+            onPress={async () => {
+                setShowPendingIdModal(false);
+                await supabase.auth.signOut();
+                router.replace('/login');
+            }}
+        />
+        <IdStatusModal
+            visible={showDisapprovedIdModal}
+            title="ID Not Approved"
+            message="Your student ID was disapproved. Please contact support or upload a new ID image."
+            onPress={async () => {
+                setShowDisapprovedIdModal(false);
+                await supabase.auth.signOut();
+                router.replace('/login');
+            }}
+        />
         </>
     );
 }

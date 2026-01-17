@@ -1,7 +1,9 @@
 import { Stack } from "expo-router";
 import { Platform } from "react-native";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { useRouter } from "expo-router";
+import IdStatusModal from "../../components/IdStatusModalWeb";
 import GlobalErrandAcceptanceModal from "../../components/GlobalErrandAcceptanceModal";
 import GlobalErrandCompletionModal from "../../components/GlobalErrandCompletionModal";
 import GlobalCallerErrandRatingModal from "../../components/GlobalCallerErrandRatingModal";
@@ -10,6 +12,88 @@ import { errandCompletionService } from "../../services/ErrandCompletionService"
 import { errandAcceptanceService } from "../../services/ErrandAcceptanceService";
 
 export default function BuddycallerLayout() {
+    const router = useRouter();
+    const [showPendingIdModal, setShowPendingIdModal] = useState(false);
+    const [showDisapprovedIdModal, setShowDisapprovedIdModal] = useState(false);
+    
+    // Global authentication guard for blocked users and ID approval
+    useEffect(() => {
+        const checkUserStatus = async () => {
+            try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) return;
+
+                const { data: userData, error: userError } = await supabase
+                    .from('users')
+                    .select('is_blocked, is_settlement_blocked, id_image_approved, id_image_path, role')
+                    .eq('id', user.id)
+                    .maybeSingle();
+
+                // If user doesn't exist yet (new registration), allow them to continue
+                // They'll complete registration on account_confirm page
+                if (userError && userError.code === 'PGRST116') {
+                    console.log('Layout: User record not found yet (new registration), allowing to continue');
+                    return;
+                }
+
+                // If there's another error, log it but don't block
+                if (userError) {
+                    console.warn('Layout: Error checking user status:', userError);
+                    return;
+                }
+
+                // Only redirect if user is blocked (disciplinary or settlement-based)
+                if (userData?.is_blocked || userData?.is_settlement_blocked) {
+                    console.log('Layout: User is blocked, logging out...');
+                    await supabase.auth.signOut();
+                    router.replace('/login');
+                    return;
+                }
+
+                // SECURITY: Check ID approval status for non-admin users
+                if (userData && userData.role !== 'admin') {
+                    if (userData.id_image_path) {
+                        if (userData.id_image_approved === false) {
+                            console.log('Layout: User ID disapproved, logging out...');
+                            setShowDisapprovedIdModal(true);
+                            await supabase.auth.signOut();
+                            router.replace('/login');
+                            return;
+                        }
+                        
+                        if (userData.id_image_approved === null) {
+                            console.log('Layout: User ID pending approval, logging out...');
+                            setShowPendingIdModal(true);
+                            await supabase.auth.signOut();
+                            router.replace('/login');
+                            return;
+                        }
+                    } else {
+                        // User hasn't uploaded ID - block access
+                        console.log('Layout: User has no ID image, logging out...');
+                        setShowPendingIdModal(true);
+                        await supabase.auth.signOut();
+                        router.replace('/login');
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.error('Layout: Error checking user status:', error);
+            }
+        };
+
+        checkUserStatus();
+        
+        // Listen for auth state changes
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+            if (event === 'SIGNED_IN' && session?.user) {
+                await checkUserStatus();
+            }
+        });
+
+        return () => subscription.unsubscribe();
+    }, [router]);
+
     // Global listener for errand completion (broadcast + database backup)
     const processedErrandsRef = useRef<Set<number>>(new Set());
     // Global listener for errand acceptance (broadcast + database backup)
@@ -310,6 +394,28 @@ export default function BuddycallerLayout() {
         ) : (
           <GlobalCallerErrandRatingModal />
         )}
+
+        {/* ID Status Modals - Web & Mobile (unified UI) */}
+        <IdStatusModal
+            visible={showPendingIdModal}
+            title="ID Pending Approval"
+            message="Your student ID is pending admin approval. Please wait until your ID is approved."
+            onPress={async () => {
+                setShowPendingIdModal(false);
+                await supabase.auth.signOut();
+                router.replace('/login');
+            }}
+        />
+        <IdStatusModal
+            visible={showDisapprovedIdModal}
+            title="ID Not Approved"
+            message="Your student ID was disapproved. Please contact support or upload a new ID image."
+            onPress={async () => {
+                setShowDisapprovedIdModal(false);
+                await supabase.auth.signOut();
+                router.replace('/login');
+            }}
+        />
         </>
     );
 }

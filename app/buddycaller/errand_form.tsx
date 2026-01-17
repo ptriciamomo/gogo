@@ -2,7 +2,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import TermsAndConditions from "../TermsAndConditions";
-import { supabase } from "../../lib/supabase";
+import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase";
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -988,11 +988,22 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
     useEffect(() => {
         const fetchCategories = async () => {
             try {
-                const { data, error } = await supabase.functions.invoke('errand-categories');
+                // Use GET request to match Edge Function's expected method
+                const functionUrl = `${supabaseUrl}/functions/v1/errand-categories`;
                 
-                if (error) {
-                    throw error;
+                const response = await fetch(functionUrl, {
+                    method: 'GET',
+                    headers: {
+                        'apikey': supabaseAnonKey,
+                        'Authorization': `Bearer ${supabaseAnonKey}`,
+                    },
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
+                
+                const data = await response.json();
                 
                 if (data && data.categories && Array.isArray(data.categories)) {
                     // Map API response to string[] using category.name
@@ -1339,6 +1350,36 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                 return;
             }
 
+            // SECURITY: Check ID approval status before allowing errand posting
+            const { data: userProfile, error: profileErr } = await supabase
+                .from('users')
+                .select('id_image_approved, id_image_path, role')
+                .eq('id', user.id)
+                .single();
+
+            if (!profileErr && userProfile) {
+                // Admin users are exempt
+                if (userProfile.role !== 'admin') {
+                    if (userProfile.id_image_path) {
+                        if (userProfile.id_image_approved !== true) {
+                            Alert.alert(
+                                'ID Not Approved',
+                                userProfile.id_image_approved === false
+                                    ? 'Your student ID has been disapproved. You cannot post errands until your ID is approved.'
+                                    : 'Your student ID is pending approval. You cannot post errands until your ID is approved.'
+                            );
+                            return;
+                        }
+                    } else {
+                        Alert.alert(
+                            'ID Required',
+                            'Please upload your student ID before posting errands.'
+                        );
+                        return;
+                    }
+                }
+            }
+
             // Require campus delivery destination when Deliver Items is selected
             let selectedDeliveryLocation: CampusLocation | undefined;
             if (category === "Deliver Items") {
@@ -1437,11 +1478,6 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                 .from('errand-files')
                                 .getPublicUrl(uploadData.path);
                             
-                            console.log('File uploaded successfully:', {
-                                fileName,
-                                fileUri: publicUrl
-                            });
-                            
                             allFiles.push({
                                 fileName: fileName,
                                 fileUri: publicUrl // Complete Supabase Storage URL
@@ -1452,9 +1488,6 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                             return; // Stop the process if file upload fails
                         }
                     }
-                } else {
-                    // No files for this item, skip
-                    console.log('No files to upload for item:', item.id);
                 }
             }
 

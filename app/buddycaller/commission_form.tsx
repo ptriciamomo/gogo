@@ -49,6 +49,30 @@ async function createCommission(input: {
   const { data: auth, error: authErr } = await supabase.auth.getUser();
   if (authErr || !auth?.user) throw new Error(authErr?.message || 'Not authenticated');
 
+  // SECURITY: Check ID approval status before allowing commission posting
+  const { data: userProfile, error: profileErr } = await supabase
+    .from('users')
+    .select('id_image_approved, id_image_path, role')
+    .eq('id', auth.user.id)
+    .single();
+
+  if (!profileErr && userProfile) {
+    // Admin users are exempt
+    if (userProfile.role !== 'admin') {
+      if (userProfile.id_image_path) {
+        if (userProfile.id_image_approved !== true) {
+          throw new Error(
+            userProfile.id_image_approved === false
+              ? 'Your student ID has been disapproved. You cannot post commissions until your ID is approved.'
+              : 'Your student ID is pending approval. You cannot post commissions until your ID is approved.'
+          );
+        }
+      } else {
+        throw new Error('Please upload your student ID before posting commissions.');
+      }
+    }
+  }
+
   const due_at = toDueAtISO(input.completionDate, input.completionTime);
 
   const { data, error } = await supabase

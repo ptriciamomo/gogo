@@ -1006,7 +1006,7 @@ export default function TaskProgressWeb() {
 						) : (
 							<>
 						<TouchableOpacity 
-							onPress={() => router.back()} 
+							onPress={() => router.push("/buddycaller/my_request_commission_web")} 
 							style={[
 								web.backButton,
 								{

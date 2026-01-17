@@ -77,9 +77,11 @@ class LocationService {
    */
   public async getCurrentLocation(): Promise<LocationResult> {
     try {
-      console.log('🔍 [LocationService] Starting getCurrentLocation...');
-      console.log('🔍 [LocationService] Platform:', Platform.OS);
-      console.log('🔍 [LocationService] Current permission status:', this.locationPermissionGranted);
+      if (__DEV__) {
+        console.log('🔍 [LocationService] Starting getCurrentLocation...');
+        console.log('🔍 [LocationService] Platform:', Platform.OS);
+        console.log('🔍 [LocationService] Current permission status:', this.locationPermissionGranted);
+      }
       
       if (this.isWeb()) {
         // Use browser's geolocation API for web
@@ -90,8 +92,10 @@ class LocationService {
           };
         }
 
-        console.log('🔄 [Web] Requesting current GPS position via browser API...');
-        console.log('🔄 [Web] This will trigger the browser permission prompt if not already granted');
+        if (__DEV__) {
+          console.log('🔄 [Web] Requesting current GPS position via browser API...');
+          console.log('🔄 [Web] This will trigger the browser permission prompt if not already granted');
+        }
         const startTime = Date.now();
 
         return new Promise((resolve) => {
@@ -109,7 +113,7 @@ class LocationService {
             (position) => {
               clearTimeout(timeoutId);
               const requestTime = Date.now() - startTime;
-              console.log(`✅ [Web] GPS position obtained in ${requestTime}ms`);
+              if (__DEV__) console.log(`✅ [Web] GPS position obtained in ${requestTime}ms`);
 
               const locationData: LocationData = {
                 latitude: position.coords.latitude,
@@ -118,14 +122,15 @@ class LocationService {
                 timestamp: new Date(position.timestamp)
               };
 
-              console.log('📍 [Web] Location data:', {
-                latitude: locationData.latitude,
-                longitude: locationData.longitude,
-                accuracy: locationData.accuracy,
-                timestamp: locationData.timestamp.toISOString()
-              });
-              
-              console.log(`\n📍 [Web] GPS LOCATION OBTAINED: (${locationData.latitude.toFixed(8)}, ${locationData.longitude.toFixed(8)}) accuracy: ${locationData.accuracy.toFixed(2)}m`);
+              if (__DEV__) {
+                console.log('📍 [Web] Location data:', {
+                  latitude: locationData.latitude,
+                  longitude: locationData.longitude,
+                  accuracy: locationData.accuracy,
+                  timestamp: locationData.timestamp.toISOString()
+                });
+                console.log(`\n📍 [Web] GPS LOCATION OBTAINED: (${locationData.latitude.toFixed(8)}, ${locationData.longitude.toFixed(8)}) accuracy: ${locationData.accuracy.toFixed(2)}m`);
+              }
 
               // Cache the location
               this.lastKnownLocation = locationData;
@@ -170,9 +175,9 @@ class LocationService {
         // Use expo-location for native platforms
         // Check if permission is granted
         if (!this.locationPermissionGranted) {
-          console.log('⚠️ [Native] Permission not granted, requesting...');
+          if (__DEV__) console.log('⚠️ [Native] Permission not granted, requesting...');
           const permissionGranted = await this.requestLocationPermission();
-          console.log('📋 [Native] Permission request result:', permissionGranted);
+          if (__DEV__) console.log('📋 [Native] Permission request result:', permissionGranted);
           if (!permissionGranted) {
             console.error('❌ [Native] Location permission denied');
             return {
@@ -182,7 +187,7 @@ class LocationService {
           }
         }
 
-        console.log('🔄 [Native] Requesting current GPS position...');
+        if (__DEV__) console.log('🔄 [Native] Requesting current GPS position...');
         const startTime = Date.now();
         
         // Get current position with high accuracy for better filtering
@@ -192,7 +197,7 @@ class LocationService {
         });
 
         const requestTime = Date.now() - startTime;
-        console.log(`✅ [Native] GPS position obtained in ${requestTime}ms`);
+        if (__DEV__) console.log(`✅ [Native] GPS position obtained in ${requestTime}ms`);
 
         const locationData: LocationData = {
           latitude: location.coords.latitude,
@@ -201,21 +206,22 @@ class LocationService {
           timestamp: new Date(location.timestamp)
         };
 
-        console.log('📍 [Native] Location data:', {
-          latitude: locationData.latitude,
-          longitude: locationData.longitude,
-          accuracy: locationData.accuracy,
-          timestamp: locationData.timestamp.toISOString(),
-          rawLat: location.coords.latitude,
-          rawLon: location.coords.longitude,
-          rawAccuracy: location.coords.accuracy,
-          heading: location.coords.heading,
-          speed: location.coords.speed,
-          altitude: location.coords.altitude
-        });
-        
-        // Log location prominently to help debug
-        console.log(`\n📍 [Native] GPS LOCATION OBTAINED: (${locationData.latitude.toFixed(8)}, ${locationData.longitude.toFixed(8)}) accuracy: ${locationData.accuracy.toFixed(2)}m`);
+        if (__DEV__) {
+          console.log('📍 [Native] Location data:', {
+            latitude: locationData.latitude,
+            longitude: locationData.longitude,
+            accuracy: locationData.accuracy,
+            timestamp: locationData.timestamp.toISOString(),
+            rawLat: location.coords.latitude,
+            rawLon: location.coords.longitude,
+            rawAccuracy: location.coords.accuracy,
+            heading: location.coords.heading,
+            speed: location.coords.speed,
+            altitude: location.coords.altitude
+          });
+          // Log location prominently to help debug
+          console.log(`\n📍 [Native] GPS LOCATION OBTAINED: (${locationData.latitude.toFixed(8)}, ${locationData.longitude.toFixed(8)}) accuracy: ${locationData.accuracy.toFixed(2)}m`);
+        }
 
         // Cache the location
         this.lastKnownLocation = locationData;
@@ -308,13 +314,13 @@ class LocationService {
         if (this.isWithinCampusBounds(latitude, longitude)) {
           return currentLocation;
         } else {
-          console.warn('Location is outside campus bounds, using fallback');
+          if (__DEV__) console.warn('Location is outside campus bounds, using fallback');
         }
       }
 
       // Fallback to last known location
       if (this.lastKnownLocation) {
-        console.log('Using last known location as fallback');
+        if (__DEV__) console.log('Using last known location as fallback');
         return {
           success: true,
           location: this.lastKnownLocation
@@ -322,7 +328,7 @@ class LocationService {
       }
 
       // Final fallback to campus center
-      console.log('Using campus center as fallback');
+      if (__DEV__) console.log('Using campus center as fallback');
       return {
         success: true,
         location: {
@@ -430,7 +436,7 @@ class LocationService {
         return false;
       }
 
-      console.log('✅ Location updated in database successfully');
+      if (__DEV__) console.log('✅ Location updated in database successfully');
       return true;
     } catch (error) {
       console.error('Error in updateLocationInDatabase:', error);

@@ -17,8 +17,10 @@ const SimpleTaskApprovalModal: React.FC = () => {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showRateAndFeedback, setShowRateAndFeedback] = useState(false);
 
+  if (__DEV__) {
   console.log('SimpleTaskApprovalModal: Component rendering - visible:', visible, 'notification:', notification);
   console.log('SimpleTaskApprovalModal: Platform check - should render on mobile');
+  }
 
   // Get current user ID
   useEffect(() => {
@@ -27,7 +29,7 @@ const SimpleTaskApprovalModal: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           setCurrentUserId(user.id);
-          console.log('SimpleTaskApprovalModal: Current user ID:', user.id);
+          if (__DEV__) console.log('SimpleTaskApprovalModal: Current user ID:', user.id);
         }
       } catch (error) {
         console.error('SimpleTaskApprovalModal: Error getting current user:', error);
@@ -37,40 +39,48 @@ const SimpleTaskApprovalModal: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (__DEV__) {
     console.log('SimpleTaskApprovalModal: Component mounted and setting up subscription');
     console.log('SimpleTaskApprovalModal: Current listener count:', approvalModalService.getListenerCount());
+    }
     
     const unsubscribe = approvalModalService.subscribe((newNotification) => {
+      if (__DEV__) {
       console.log('SimpleTaskApprovalModal: Received notification:', newNotification);
       console.log('SimpleTaskApprovalModal: Current visible state before processing:', visible);
       console.log('SimpleTaskApprovalModal: Current user ID:', currentUserId);
+      }
       
       if (newNotification) {
         // Only show modal if the notification is for the current user
         if (currentUserId && newNotification.runnerId === currentUserId) {
-          console.log('SimpleTaskApprovalModal: Notification is for current user, showing modal');
+          if (__DEV__) console.log('SimpleTaskApprovalModal: Notification is for current user, showing modal');
           setNotification(newNotification);
           setVisible(true);
-          console.log('SimpleTaskApprovalModal: Modal should now be visible');
+          if (__DEV__) console.log('SimpleTaskApprovalModal: Modal should now be visible');
         } else {
+          if (__DEV__) {
           console.log('SimpleTaskApprovalModal: Notification is not for current user, ignoring');
           console.log('SimpleTaskApprovalModal: Notification runnerId:', newNotification.runnerId);
           console.log('SimpleTaskApprovalModal: Current userId:', currentUserId);
+          }
         }
       } else {
-        console.log('SimpleTaskApprovalModal: Hiding modal');
+        if (__DEV__) console.log('SimpleTaskApprovalModal: Hiding modal');
         setVisible(false);
         setNotification(null);
       }
     });
 
+    if (__DEV__) {
     console.log('SimpleTaskApprovalModal: Subscription set up');
     console.log('SimpleTaskApprovalModal: New listener count after subscription:', approvalModalService.getListenerCount());
+    }
     return unsubscribe;
   }, [currentUserId]);
 
   const handleClose = () => {
-    console.log('SimpleTaskApprovalModal: Closing modal');
+    if (__DEV__) console.log('SimpleTaskApprovalModal: Closing modal');
     setVisible(false);
     setNotification(null);
     setShowRateAndFeedback(false);
@@ -78,13 +88,13 @@ const SimpleTaskApprovalModal: React.FC = () => {
   };
 
   const handleOkPress = () => {
-    console.log('SimpleTaskApprovalModal: OK button pressed, showing rate and feedback modal');
+    if (__DEV__) console.log('SimpleTaskApprovalModal: OK button pressed, showing rate and feedback modal');
     setVisible(false);
     setShowRateAndFeedback(true);
   };
 
   const handleRateAndFeedbackSubmit = (rating: number, feedback: string) => {
-    console.log('SimpleTaskApprovalModal: Rate and feedback submitted:', { rating, feedback });
+    if (__DEV__) console.log('SimpleTaskApprovalModal: Rate and feedback submitted:', { rating, feedback });
     // Here you can add logic to save the rating and feedback to your database
     // For now, we'll just log it and close the modal
     setShowRateAndFeedback(false);
@@ -93,18 +103,18 @@ const SimpleTaskApprovalModal: React.FC = () => {
   };
 
   const handleRateAndFeedbackClose = () => {
-    console.log('SimpleTaskApprovalModal: Rate and feedback modal closed');
+    if (__DEV__) console.log('SimpleTaskApprovalModal: Rate and feedback modal closed');
     setShowRateAndFeedback(false);
     setNotification(null);
     approvalModalService.clearNotification();
   };
 
   if (!visible && !showRateAndFeedback) {
-    console.log('SimpleTaskApprovalModal: Not visible, returning null');
+    if (__DEV__) console.log('SimpleTaskApprovalModal: Not visible, returning null');
     return null;
   }
 
-  console.log('SimpleTaskApprovalModal: Rendering modal with notification:', notification);
+  if (__DEV__) console.log('SimpleTaskApprovalModal: Rendering modal with notification:', notification);
 
   return (
     <>

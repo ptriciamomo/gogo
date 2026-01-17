@@ -18,48 +18,50 @@ class ApprovalModalService {
 
   // Subscribe to approval notifications
   subscribe(listener: (notification: TaskApprovalNotification | null) => void) {
-    console.log('ApprovalModalService: Adding listener, total listeners:', this.listeners.length + 1);
+    if (__DEV__) console.log('ApprovalModalService: Adding listener, total listeners:', this.listeners.length + 1);
     this.listeners.push(listener);
     
     // If there's already a notification, send it immediately
     if (this.currentNotification) {
-      console.log('ApprovalModalService: Sending existing notification to new listener:', this.currentNotification);
+      if (__DEV__) console.log('ApprovalModalService: Sending existing notification to new listener:', this.currentNotification);
       listener(this.currentNotification);
     }
     
     return () => {
-      console.log('ApprovalModalService: Removing listener');
+      if (__DEV__) console.log('ApprovalModalService: Removing listener');
       this.listeners = this.listeners.filter(l => l !== listener);
     };
   }
 
   // Send approval notification
   notifyApproval(notification: TaskApprovalNotification) {
-    console.log('ApprovalModalService: notifyApproval called with:', notification);
-    console.log('ApprovalModalService: Number of listeners:', this.listeners.length);
-    console.log('ApprovalModalService: Current approval notification before update:', this.currentNotification);
+    if (__DEV__) {
+      console.log('ApprovalModalService: notifyApproval called with:', notification);
+      console.log('ApprovalModalService: Number of listeners:', this.listeners.length);
+      console.log('ApprovalModalService: Current approval notification before update:', this.currentNotification);
+    }
     
     this.currentNotification = notification;
     
     if (this.listeners.length === 0) {
-      console.warn('ApprovalModalService: No listeners registered! Modal will not appear.');
+      if (__DEV__) console.warn('ApprovalModalService: No listeners registered! Modal will not appear.');
     }
     
     this.listeners.forEach((listener, index) => {
-      console.log(`ApprovalModalService: Notifying listener ${index + 1} of ${this.listeners.length}`);
+      if (__DEV__) console.log(`ApprovalModalService: Notifying listener ${index + 1} of ${this.listeners.length}`);
       try {
         listener(notification);
-        console.log(`ApprovalModalService: Listener ${index + 1} notified successfully`);
+        if (__DEV__) console.log(`ApprovalModalService: Listener ${index + 1} notified successfully`);
       } catch (error) {
         console.error(`ApprovalModalService: Error notifying listener ${index + 1}:`, error);
       }
     });
-    console.log('ApprovalModalService: All listeners notified');
+    if (__DEV__) console.log('ApprovalModalService: All listeners notified');
   }
 
   // Clear current notification
   clearNotification() {
-    console.log('ApprovalModalService: Clearing notification');
+    if (__DEV__) console.log('ApprovalModalService: Clearing notification');
     this.currentNotification = null;
     this.listeners.forEach(listener => {
       try {
@@ -92,7 +94,7 @@ class ApprovalModalService {
       timestamp: new Date().toISOString()
     };
     
-    console.log('ApprovalModalService: Sending test notification:', testNotification);
+    if (__DEV__) console.log('ApprovalModalService: Sending test notification:', testNotification);
     this.notifyApproval(testNotification);
   }
 }

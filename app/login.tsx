@@ -17,6 +17,7 @@ import {
     useWindowDimensions,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import IdStatusModal from '../components/IdStatusModalWeb';
 
 const MAROON = '#8B0000';
 
@@ -79,6 +80,8 @@ export default function LoginScreen() {
     // NEW: banner text
     const [errorText, setErrorText] = useState('');
     const [showBlockedModal, setShowBlockedModal] = useState(false);
+    const [showPendingIdModal, setShowPendingIdModal] = useState(false);
+    const [showDisapprovedIdModal, setShowDisapprovedIdModal] = useState(false);
 
     // Dismiss keyboard when Account Locked modal appears
     React.useEffect(() => {
@@ -166,10 +169,10 @@ export default function LoginScreen() {
             const uid = data.user?.id;
             if (!uid) throw new Error('No user id from auth.');
 
-            // 2) Read role, blocked status, and registration date from your app profile table
+            // 2) Read role, blocked status, ID approval status, and registration date from your app profile table
             const { data: profile, error: pErr } = await supabase
                 .from('users')
-                .select('role, is_blocked, is_settlement_blocked, created_at')
+                .select('role, is_blocked, is_settlement_blocked, id_image_approved, id_image_path, created_at')
                 .eq('id', uid)
                 .single();
 
@@ -191,6 +194,40 @@ export default function LoginScreen() {
                     });
                 }, 5000);
                 return;
+            }
+
+            // SECURITY: Check ID approval status for non-admin users
+            if (profile?.role !== 'admin') {
+                // If user has uploaded an ID image, check approval status
+                if (profile.id_image_path) {
+                    if (profile.id_image_approved === false) {
+                        // ID was disapproved
+                        setLoading(false);
+                        Keyboard.dismiss();
+                        
+                        // Use modal on both web and mobile
+                        setShowDisapprovedIdModal(true);
+                        return;
+                    }
+                    
+                    if (profile.id_image_approved === null) {
+                        // ID is pending approval
+                        setLoading(false);
+                        Keyboard.dismiss();
+                        
+                        // Use modal on both web and mobile
+                        setShowPendingIdModal(true);
+                        return;
+                    }
+                } else {
+                    // User hasn't uploaded ID yet - block login
+                    setLoading(false);
+                    Keyboard.dismiss();
+                    
+                    // Use modal on both web and mobile
+                    setShowPendingIdModal(true);
+                    return;
+                }
             }
 
             // Continue with normal login flow
@@ -446,6 +483,28 @@ export default function LoginScreen() {
                         </View>
                     </View>
                 )}
+
+                {/* ID Status Modals - Web & Mobile (unified UI) */}
+                <IdStatusModal
+                    visible={showPendingIdModal}
+                    title="ID Pending Approval"
+                    message="Your student ID is pending admin approval. Please wait until your ID is approved."
+                    onPress={async () => {
+                        setShowPendingIdModal(false);
+                        await supabase.auth.signOut();
+                        router.replace('/login');
+                    }}
+                />
+                <IdStatusModal
+                    visible={showDisapprovedIdModal}
+                    title="ID Not Approved"
+                    message="Your student ID was disapproved. Please contact support or upload a new ID image."
+                    onPress={async () => {
+                        setShowDisapprovedIdModal(false);
+                        await supabase.auth.signOut();
+                        router.replace('/login');
+                    }}
+                />
             </SafeAreaView>
         );
     }
@@ -535,6 +594,28 @@ export default function LoginScreen() {
                     </View>
                 </View>
             )}
+
+            {/* ID Status Modals - Web & Mobile (unified UI) */}
+            <IdStatusModal
+                visible={showPendingIdModal}
+                title="ID Pending Approval"
+                message="Your student ID is pending admin approval. Please wait until your ID is approved."
+                onPress={async () => {
+                    setShowPendingIdModal(false);
+                    await supabase.auth.signOut();
+                    router.replace('/login');
+                }}
+            />
+            <IdStatusModal
+                visible={showDisapprovedIdModal}
+                title="ID Not Approved"
+                message="Your student ID was disapproved."
+                onPress={async () => {
+                    setShowDisapprovedIdModal(false);
+                    await supabase.auth.signOut();
+                    router.replace('/login');
+                }}
+            />
         </SafeAreaView>
     );
 }

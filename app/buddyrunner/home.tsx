@@ -217,14 +217,15 @@ function useAuthProfile() {
 
             const { data: row } = await supabase
                 .from("users")
-                .select("id, role, first_name, last_name, average_rating, is_blocked, is_settlement_blocked, warning_count, created_at, profile_picture_url")
+                .select("id, role, first_name, last_name, average_rating, is_blocked, is_settlement_blocked, id_image_approved, id_image_path, warning_count, created_at, profile_picture_url")
                 .eq("id", user.id)
-                .single<ProfileRow & { average_rating: number; is_blocked: boolean; is_settlement_blocked?: boolean | null; warning_count: number; created_at: string; profile_picture_url: string | null }>();
+                .single<ProfileRow & { average_rating: number; is_blocked: boolean; is_settlement_blocked?: boolean | null; id_image_approved: boolean | null; id_image_path: string | null; warning_count: number; created_at: string; profile_picture_url: string | null }>();
 
             if (__DEV__) console.log('🔍 User profile data:', {
                 userId: user.id,
                 isBlocked: row?.is_blocked,
                 isSettlementBlocked: row?.is_settlement_blocked,
+                idImageApproved: row?.id_image_approved,
                 warningCount: row?.warning_count,
                 userName: `${row?.first_name} ${row?.last_name}`,
                 timestamp: new Date().toISOString()
@@ -263,6 +264,70 @@ function useAuthProfile() {
                 });
                 
                 return;
+            }
+
+            // SECURITY: Check ID approval status for non-admin users
+            if (row && row.role !== 'admin') {
+                if (row.id_image_path) {
+                    if (row.id_image_approved === false || row.id_image_approved === null) {
+                        if (__DEV__) console.log('🚨 ID NOT APPROVED - BLOCKING ACCESS:', {
+                            userId: user.id,
+                            idImageApproved: row.id_image_approved,
+                            idImagePath: row.id_image_path ? 'exists' : 'missing',
+                            timestamp: new Date().toISOString()
+                        });
+                        
+                        // Clear any cached data immediately (web only)
+                        if (Platform.OS === 'web') {
+                            localStorage.clear();
+                            sessionStorage.clear();
+                        }
+                        
+                        // Force redirect to login immediately
+                        if (Platform.OS === 'web') {
+                            window.location.href = '/login';
+                        } else {
+                            router.replace('/login');
+                        }
+                        
+                        // Also try Supabase logout (but don't wait for it)
+                        supabase.auth.signOut().then(() => {
+                            if (__DEV__) console.log('✅ Supabase logout completed');
+                        }).catch((error) => {
+                            if (__DEV__) console.error('❌ Supabase logout error:', error);
+                        });
+                        
+                        return;
+                    }
+                } else {
+                    // User hasn't uploaded ID - block access
+                    if (__DEV__) console.log('🚨 NO ID IMAGE - BLOCKING ACCESS:', {
+                        userId: user.id,
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    // Clear any cached data immediately (web only)
+                    if (Platform.OS === 'web') {
+                        localStorage.clear();
+                        sessionStorage.clear();
+                    }
+                    
+                    // Force redirect to login immediately
+                    if (Platform.OS === 'web') {
+                        window.location.href = '/login';
+                    } else {
+                        router.replace('/login');
+                    }
+                    
+                    // Also try Supabase logout (but don't wait for it)
+                    supabase.auth.signOut().then(() => {
+                        if (__DEV__) console.log('✅ Supabase logout completed');
+                    }).catch((error) => {
+                        if (__DEV__) console.error('❌ Supabase logout error:', error);
+                    });
+                    
+                    return;
+                }
             }
 
             // Account locking is now handled by SQL functions based on overdue settlements
@@ -641,23 +706,25 @@ function toUiStatus(s: ErrandRowDB["status"]): UiStatus {
 
 /* ===================== TF-IDF + COSINE SIMILARITY UTILITIES ===================== */
 
+// STEP 1: Calculate Term Frequency (token-based)
+
 function calculateTF(term: string, document: string[]): number {
     if (document.length === 0) return 0;
+    // STEP 1: Count term occurrences in document array using filter to match exact term, then get count via .length property
     const termCount = document.filter(word => word === term).length;
+    // STEP 1B: Divide term count by total document length to compute token-based TF
     return termCount / document.length;
 }
 
-/**
- * Calculate Term Frequency (TF) based on task count
- * NEW: TF(term) = (number of completed tasks in this category) / (total number of completed tasks)
- * Each completed task counts as 1, even if it has multiple categories
- */
+// STEP 2: Calculate Term Frequency (task-based)
+
 function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
     if (totalTasks === 0) return 0;
-    // Count how many tasks contain this category
+    // STEP 2: Count how many tasks contain the category term by filtering tasks where any category matches (case-insensitive), then get count via .length
     const tasksWithCategory = taskCategories.filter(taskCats => 
         taskCats.some(cat => cat === term.toLowerCase())
     ).length;
+    // STEP 2B: Divide tasks containing category by total tasks to compute task-based TF
     return tasksWithCategory / totalTasks;
 }
 
@@ -670,27 +737,31 @@ function calculateIDF(term: string, allDocuments: string[][]): number {
     return Math.log(allDocuments.length / documentsContainingTerm);
 }
 
-/**
- * Calculate adjusted IDF for a term (handles small document corpus)
- * When a term appears in all documents, we use a small positive value instead of 0
- */
+// STEP 3: Calculate Document Frequency (DF)
+
+// STEP 4: Calculate Inverse Document Frequency (IDF) with adjustment
+
 function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
+    // STEP 3: Count documents containing term by filtering documents where term exists, then get count via .length property. This computes Document Frequency (DF).
     const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
     if (documentsContainingTerm === 0) return 0;
     
-    // If term appears in all documents, use a small positive IDF value instead of 0
+    // STEP 7: Apply IDF smoothing by returning constant 0.1 when term appears in all documents (prevents zero IDF)
     if (documentsContainingTerm === allDocuments.length) {
-        // Use a small epsilon value to avoid zero IDF
-        // This represents that the term is common but still valuable for similarity
+       
         return 0.1;
     }
     
+    // STEP 4: Get total document count N via allDocuments.length property, used in IDF calculation
+    // STEP 5: Divide total documents N by documents containing term (df) to compute N/df ratio
+    // STEP 6: Apply natural logarithm to N/df ratio using Math.log() to compute IDF value
     return Math.log(allDocuments.length / documentsContainingTerm);
 }
 
-/**
- * Calculate TF-IDF vector with adjusted IDF calculation
- */
+// STEP 5: Compute TF-IDF weight (TF × IDF) for query document
+
+// STEP 8: Construct TF-IDF vector for query document
+
 function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
     const uniqueTerms = Array.from(new Set(document));
     const tfidfMap = new Map<string, number>();
@@ -698,16 +769,17 @@ function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[]
     uniqueTerms.forEach(term => {
         const tf = calculateTF(term, document);
         const idf = calculateIDFAdjusted(term, allDocuments);
+        // STEP 8: Multiply TF and IDF values using multiplication operator * to compute TF-IDF weight for each term in query document
         tfidfMap.set(term, tf * idf);
     });
     
     return tfidfMap;
 }
 
-/**
- * Calculate TF-IDF vector with task-based TF calculation
- * Uses task count instead of category token count for TF denominator
- */
+// STEP 7: Compute TF-IDF weight (TF × IDF) for runner document using task-based TF
+// Purpose: Multiplies task-based TF and IDF values for runner history. This is the preferred method for runner documents as it uses task count instead of token count, preventing multi-category tasks from inflating TF values. Formula: TF-IDF(term) = TF(term) × IDF(term) where TF uses task count.
+// STEP 9: Construct TF-IDF vector for runner document using task-based TF
+// Purpose: Builds a Map<string, number> representing the TF-IDF vector for runner history using task-based TF calculation. Collects all unique terms from taskCategories array, computes task-based TF × IDF for each term, and stores in map. This is the preferred method for runner vectors as it accurately represents task-level frequency.
 function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
     // Get all unique terms from all tasks
     const allTerms = new Set<string>();
@@ -720,6 +792,7 @@ function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTask
     allTerms.forEach(term => {
         const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks);
         const idf = calculateIDFAdjusted(term, allDocuments);
+        // STEP 9: Multiply task-based TF and IDF values using multiplication operator * to compute TF-IDF weight for each term in runner document
         tfidfMap.set(term, tf * idf);
     });
     
@@ -742,9 +815,12 @@ function calculateTFIDFVector(document: string[], allDocuments: string[][]): Map
     return tfidfMap;
 }
 
-/**
- * Calculate Cosine Similarity between two TF-IDF vectors
- */
+// STEP 12: Calculate dot product for cosine similarity
+// Purpose: Computes dot product of two TF-IDF vectors as sum of products of corresponding term weights. Formula: dotProduct = Σ(v1[term] × v2[term]) for all terms. Iterates through union of all terms from both vectors, multiplies corresponding values, and sums the products. Returns 0 for missing terms.
+// STEP 13: Calculate vector magnitudes for cosine similarity
+// Purpose: Computes Euclidean magnitude (L2 norm) of each TF-IDF vector as square root of sum of squared term weights. Formula: ||v|| = √(Σ(v[term]²)). Calculates magnitude1 and magnitude2, then multiplies them to get denominator. Used to normalize dot product in cosine similarity calculation.
+// STEP 14: Calculate final cosine similarity score
+// Purpose: Computes cosine similarity as (v1 · v2) / (||v1|| × ||v2||) where numerator is dot product and denominator is product of magnitudes. Returns 0 if denominator is 0 (zero vectors). Result is a value between 0 and 1, where 1 indicates perfect similarity and 0 indicates no similarity. Used for both errands and commissions.
 function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
     const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
     
@@ -755,14 +831,22 @@ function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, num
     allTerms.forEach(term => {
         const val1 = vector1.get(term) || 0;
         const val2 = vector2.get(term) || 0;
+        // STEP 13: Compute dot product by iterating all terms, multiplying corresponding vector values, and accumulating sum using += operator
         dotProduct += val1 * val2;
+        // STEP 15: Compute sum of squared values for first vector by squaring each value and accumulating using += operator
         magnitude1 += val1 * val1;
+        // STEP 16: Compute sum of squared values for second vector by squaring each value and accumulating using += operator
         magnitude2 += val2 * val2;
     });
     
+    // STEP 19: Compute square root of sum of squares for first vector using Math.sqrt() to get Euclidean magnitude
+    // STEP 20: Compute square root of sum of squares for second vector using Math.sqrt() to get Euclidean magnitude
+    // STEP 21: Multiply two vector magnitudes using * operator to compute denominator for cosine similarity
     const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
+    // STEP 25: Check if denominator equals zero using === operator, return 0 if true to prevent division by zero
     if (denominator === 0) return 0;
     
+    // STEP 26: Divide dot product by product of magnitudes using / operator to compute final cosine similarity score
     return dotProduct / denominator;
 }
 
@@ -802,6 +886,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     const runnerCategoryTaskCounts = new Map<string, number>();
     if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
         // Use task-based counting
+        // Count tasks per category by iterating tasks, extracting unique categories per task, and incrementing count in map using +1
         runnerTaskCategories.forEach(taskCats => {
             const uniqueCatsInTask = Array.from(new Set(taskCats));
             uniqueCatsInTask.forEach(cat => {
@@ -810,6 +895,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         });
     } else {
         // Fallback to token-based counting (backward compatibility)
+        // Count category occurrences in runner document by iterating categories and incrementing count in map using +1 (token-based fallback)
         runnerDoc.forEach(cat => {
             runnerCategoryTaskCounts.set(cat, (runnerCategoryTaskCounts.get(cat) || 0) + 1);
         });
@@ -825,8 +911,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         console.log(`[TFIDF] Total completed tasks: ${runnerTotalTasks}`);
     }
     
-    // Build TF-IDF vectors
-    // Instead of IDF, we'll use Term Frequency (TF) with a small smoothing factor for IDF
+    // STEP 12: Build document corpus array containing exactly 2 documents: query document and runner document
     const allDocuments = [queryDoc, runnerDoc];
     
     // Calculate TF, IDF, and TF-IDF for logging
@@ -850,6 +935,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         } else {
             // OLD: Use token-based TF calculation (backward compatibility)
             tf = calculateTF(term, runnerDoc);
+            // Count term occurrences in runner document for logging purposes (same logic as Step 1)
             taskCount = runnerDoc.filter(word => word === term).length;
             denominator = runnerDoc.length;
         }
@@ -873,6 +959,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     uniqueRunnerTerms.forEach(term => {
         const tf = runnerTFMap.get(term) || 0;
         const idf = idfMap.get(term) || 0;
+        // STEP 10: Multiply TF and IDF values retrieved from maps using multiplication operator * to compute TF-IDF weight for runner terms (for logging)
         const tfidf = tf * idf;
         runnerTFIDFMap.set(term, tfidf);
         console.log(`[TFIDF] - ${term}: ${tf.toFixed(4)} × ${idf.toFixed(4)} = ${tfidf.toFixed(4)}`);
@@ -884,6 +971,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     uniqueQueryTerms.forEach(term => {
         const tf = calculateTF(term, queryDoc);
         const idf = idfMap.get(term) || 0;
+        // STEP 11: Multiply TF and IDF values using multiplication operator * to compute TF-IDF weight for query terms (for logging)
         const tfidf = tf * idf;
         queryTFIDFMap.set(term, tfidf);
         const termCount = queryDoc.filter(word => word === term).length;
@@ -892,17 +980,24 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     
     // For terms that appear in all documents, we use a small positive IDF value instead of 0
     // Use task-based TF calculation for runner if task data is available
+    // STEP 8: Construct TF-IDF vector for query document
+    // Purpose: Builds a Map<string, number> representing the TF-IDF vector for the query document (task categories). Iterates through all unique terms in the document, computes TF × IDF for each term, and stores in map. Used for both errands and commissions as the task vector.
     const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
     let runnerVector: Map<string, number>;
     if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-        // NEW: Use task-based TF calculation
+        // STEP 9: Construct TF-IDF vector for runner document using task-based TF
+        // Purpose: Builds a Map<string, number> representing the TF-IDF vector for runner history using task-based TF calculation. Collects all unique terms from taskCategories array, computes task-based TF × IDF for each term, and stores in map. This is the preferred method for runner vectors as it accurately represents task-level frequency.
         runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
     } else {
-        // OLD: Use token-based TF calculation (backward compatibility)
+        // STEP 10: Construct TF-IDF vector for runner document using token-based TF (fallback)
+        // Purpose: Builds a Map<string, number> representing the TF-IDF vector for runner history using token-based TF calculation. Used as fallback when task data is unavailable. Same process as query document vector construction but applied to runner document.
         runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
     }
     
-    // 8️⃣ Cosine similarity calculation summary
+    // STEP 12: Calculate dot product for cosine similarity
+    // Purpose: Computes dot product of two TF-IDF vectors as sum of products of corresponding term weights. Formula: dotProduct = Σ(v1[term] × v2[term]) for all terms. Iterates through union of all terms from both vectors, multiplies corresponding values, and sums the products. Returns 0 for missing terms.
+    // STEP 13: Calculate vector magnitudes for cosine similarity
+    // Purpose: Computes Euclidean magnitude (L2 norm) of each TF-IDF vector as square root of sum of squared term weights. Formula: ||v|| = √(Σ(v[term]²)). Calculates magnitude1 and magnitude2, then multiplies them to get denominator. Used to normalize dot product in cosine similarity calculation.
     const allTerms = Array.from(new Set([...queryVector.keys(), ...runnerVector.keys()]));
     let dotProduct = 0;
     let magnitude1 = 0;
@@ -911,13 +1006,19 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     allTerms.forEach(term => {
         const val1 = queryVector.get(term) || 0;
         const val2 = runnerVector.get(term) || 0;
+        // STEP 14: Compute dot product by iterating all terms, multiplying corresponding vector values, and accumulating sum using += operator (for logging)
         dotProduct += val1 * val2;
+        // STEP 17: Compute sum of squared values for query vector by squaring each value and accumulating using += operator (for logging)
         magnitude1 += val1 * val1;
+        // STEP 18: Compute sum of squared values for runner vector by squaring each value and accumulating using += operator (for logging)
         magnitude2 += val2 * val2;
     });
     
+    // STEP 22: Compute square root of sum of squares for query vector using Math.sqrt() to get Euclidean magnitude (for logging)
     const taskMagnitude = Math.sqrt(magnitude1);
+    // STEP 23: Compute square root of sum of squares for runner vector using Math.sqrt() to get Euclidean magnitude (for logging)
     const runnerMagnitude = Math.sqrt(magnitude2);
+    // STEP 24: Multiply two vector magnitudes using * operator to compute denominator for cosine similarity (for logging)
     const denominator = taskMagnitude * runnerMagnitude;
     
     console.log(`[TFIDF] Cosine similarity calculation:`);
@@ -925,7 +1026,8 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     console.log(`[TFIDF] - Task magnitude: ${taskMagnitude.toFixed(4)}`);
     console.log(`[TFIDF] - Runner magnitude: ${runnerMagnitude.toFixed(4)}`);
     
-    // Calculate cosine similarity
+    // STEP 14: Calculate final cosine similarity score
+    // Purpose: Computes cosine similarity as (v1 · v2) / (||v1|| × ||v2||) where numerator is dot product and denominator is product of magnitudes. Returns 0 if denominator is 0 (zero vectors). Result is a value between 0 and 1, where 1 indicates perfect similarity and 0 indicates no similarity. Used for both errands and commissions.
     const similarity = cosineSimilarity(queryVector, runnerVector);
     
     // 9️⃣ Final TF-IDF similarity score
@@ -1002,7 +1104,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 return;
             }
 
-            // Resolve runner location (GPS with retries -> DB fallback), matching commissions flow
+            // STEP 1: Resolve runner location 
+            // Purpose: Get current runner location for distance calculations.
             let runnerLat: number | null = null;
             let runnerLon: number | null = null;
             let gpsAccuracy = 0;
@@ -1066,7 +1169,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 }
             }
 
-            // Strict distance limit: 500 meters (no GPS accuracy expansion)
+            // STEP 2: Fetch pending errands
+            // Purpose: Query all pending errands that haven't been assigned to a runner yet, ordered by creation time (newest first).
             const distanceLimit = 500;
 
             const { data: eData, error } = await supabase
@@ -1079,11 +1183,12 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
             if (error) throw error;
             const errands = (eData || []) as ErrandRowDB[];
 
+            // STEP 3: Fetch caller names and locations
+            // Purpose: Get caller location data needed for distance calculations.
             const callerIds = Array.from(
                 new Set(errands.map((r) => r.buddycaller_id).filter((v): v is string => !!v))
             );
 
-            // Fetch caller names and locations
             let namesById: Record<string, string> = {};
             let callerLocations: Record<string, { latitude: number; longitude: number }> = {};
             if (callerIds.length) {
@@ -1100,7 +1205,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 });
             }
 
-            // Apply distance filtering (same as commissions)
+            // STEP 4: Pre-ranking distance filtering
+            // Purpose: Filter errands to only those within 500 meters of the runner before ranking. Uses Haversine formula to calculate distance between runner and caller locations.
             const filteredErrands = errands.filter((errand) => {
                 const callerLocation = callerLocations[errand.buddycaller_id || ""];
                 if (!callerLocation) return false;
@@ -1120,8 +1226,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 return true;
             });
 
-            // Helper function to get runner's category history from all completed errands
-            // Returns array of arrays: each inner array represents one task's categories
+            // Helper function: Get runner's category history for TF-IDF calculation
+            // Purpose: Fetches all completed errands for a runner and returns their categories organized by task. Used to calculate TF-IDF similarity scores.
             const getRunnerErrandCategoryHistory = async (runnerId: string): Promise<{ taskCategories: string[][]; totalTasks: number }> => {
                 try {
                     const { data, error } = await supabase
@@ -1235,15 +1341,15 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     // Get caller location for distance calculation
                     const callerLocation = callerLocations[errand.buddycaller_id || ""];
                     if (!callerLocation) {
-                        console.log(`❌ [ERRAND RANKING] Errand ${errand.id}: Caller has no location, cannot rank runners`);
+                        if (__DEV__) console.log(`❌ [ERRAND RANKING] Errand ${errand.id}: Caller has no location, cannot rank runners`);
                         return false;
                     }
                     
-                    // Get all available runners (is_available = true)
-                    // Calculate presence thresholds
+                    // STEP 5: Fetch available runners with presence and availability filters
+                    // Purpose: Query all runners who are available, have been active recently (2 min app presence, 90 sec GPS), and exclude any runners who have already timed out for this errand.
                     const presenceThreshold = new Date(now.getTime() - 90000); // 90 seconds for GPS
                     const twoMinutesAgo = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
-                    
+
                     // First, get count of runners before presence filter (for logging)
                     let countQuery = supabase
                         .from("users")
@@ -1305,7 +1411,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                         return false;
                     }
                     
-                    // STEP 3: Distance filtering
+                    // STEP 6: Distance filtering and scoring for each runner
+                    // Purpose: For each available runner, calculate distance to caller, filter out runners beyond 500m, then calculate distance score, TF-IDF score, rating score, and final weighted score.
                     console.log(`[QUEUE] STEP 3 — Distance filtering (≤ 500m)`);
                     const eligibleRunners: Array<{ id: string; firstName: string | null; lastName: string | null; distance: number; rating: number; finalScore: number; distanceScore: number; ratingScore: number; tfidfScore: number }> = [];
                     let runnersWithin500m = 0;
@@ -1319,7 +1426,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                         
                         if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue;
                         
-                        // Calculate distance
+                        // STEP 6A: Calculate distance between runner and caller
+                        // Purpose: Uses Haversine formula to compute distance in kilometers, then converts to meters for comparison against 500m threshold.
                         const distanceKm = LocationService.calculateDistance(
                             lat,
                             lon,
@@ -1340,22 +1448,26 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                         console.log(`Runner: ${runnerName} — ${distanceMeters.toFixed(2)}m ✅`);
                         runnersWithin500m++;
                         
-                        // Calculate distance score (normalized 0-1, higher for closer runners)
+                        // STEP 6B: Calculate distance score
+                        
                         const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
                         
-                        // Get runner's category history for TF-IDF calculation
+                        // STEP 6C: Fetch runner category history for TF-IDF calculation
+                        
                         const runnerHistoryData = await getRunnerErrandCategoryHistory(runner.id);
                         const runnerHistory = runnerHistoryData.taskCategories.flat();
                         
-                        // Calculate TF-IDF + Cosine Similarity score (using single category for errands)
+                        // STEP 6D: Calculate TF-IDF + Cosine Similarity score
+                        
                         const errandCategories = [errandCategory.toLowerCase()];
                         const tfidfScore = calculateTFIDFCosineSimilarity(errandCategories, runnerHistory, runnerHistoryData.taskCategories, runnerHistoryData.totalTasks);
                         
-                        // Get runner's rating (normalize 0-5 to 0-1 scale)
+                        // STEP 6E: Normalize rating score
+
                         const ratingScore = (runner.average_rating || 0) / 5;
                         
-                        // Calculate final score: weighted combination
-                        // Formula: FinalScore = (DistanceScore * 0.40) + (RatingScore * 0.35) + (TF-IDF Score * 0.25)
+                        // STEP 6F: Calculate final weighted score
+                       
                         const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
                         
                         eligibleRunners.push({
@@ -1389,7 +1501,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                         console.log(`  FinalScore = ${runner.finalScore.toFixed(4)}`);
                     }
                     
-                    // Sort by final score (descending), then by distance (ascending) as tiebreaker
+                    // STEP 7: Sort and rank runners
+                    
                     eligibleRunners.sort((a, b) => {
                         if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
                         return a.distance - b.distance;
@@ -1418,7 +1531,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     console.log(`Assigned runner: ${topRunnerName}`);
                     console.log(`Timeout window: 60 seconds`);
                     
-                    // Assign to top-ranked runner
+                    // STEP 8: Assign errand to top-ranked runner
+                    
                     await updateErrandNotification(
                         errand.id,
                         topRunner.id,
@@ -1435,9 +1549,9 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     }
                 }
                 
-                // Check if 60 seconds have passed and we need to reassign
+                // STEP 9: Timeout detection and reassignment
+                
                 if (notifiedAt && notifiedAt < sixtySecondsAgo) {
-                    // STEP 7: Timeout detected
                     const previousRunnerId = errand.notified_runner_id || "";
                     const previousRunnerShortId = previousRunnerId.substring(0, 8);
                     console.log(`[QUEUE] STEP 7 — Timeout detected`);
@@ -1447,7 +1561,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     // Get caller location for distance calculation
                     const callerLocation = callerLocations[errand.buddycaller_id || ""];
                     if (!callerLocation) {
-                        console.log(`❌ [ERRAND RANKING] Errand ${errand.id}: Caller has no location, cannot find next runner`);
+                        if (__DEV__) console.log(`❌ [ERRAND RANKING] Errand ${errand.id}: Caller has no location, cannot find next runner`);
                         return false;
                     }
                     
@@ -1460,11 +1574,11 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     console.log(`Caller: ${callerName} (id: ${callerShortId})`);
                     console.log(`Status: pending`);
                     
-                    // Get all available runners except those who were already notified or timed out
-                    // Calculate presence thresholds
+                    // STEP 9A: Fetch available runners excluding previous and timeout runners
+                   
                     const presenceThresholdReassign = new Date(now.getTime() - 90000); // 90 seconds for GPS
                     const twoMinutesAgoReassign = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
-                    
+
                     // First, get count of runners before presence filter (for logging)
                     let countQueryReassign = supabase
                         .from("users")
@@ -1642,10 +1756,10 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     console.log(`Assigned runner: ${nextRunnerName}`);
                     console.log(`Timeout window: 60 seconds`);
                     
-                    // For timeout scenario: pass the previous notified runner ID to prevent re-notification loop
+                    // STEP 9B: Reassign to next runner with timeout tracking
+                    
                     const previousNotifiedRunnerId = errand.notified_runner_id;
                     
-                    // Assign to next-ranked runner
                     await updateErrandNotification(
                         errand.id,
                         nextRunner.id,
@@ -1674,7 +1788,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 return false;
             };
 
-            // Apply ranking filter to distance-filtered errands
+            // STEP 10: Apply ranking filter to determine visibility
+            // Purpose: For each distance-filtered errand, run the ranking logic (shouldShowErrand) to determine if current runner should see it. Only errands assigned to current runner (or unassigned errands where current runner is top-ranked) are shown.
             const rankingFilteredErrands: ErrandRowDB[] = [];
             for (const errand of filteredErrands) {
                 const shouldShow = await shouldShowErrand(errand);
@@ -1756,22 +1871,22 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
 
                 console.log('[REALTIME ERRAND] ✅ Availability guard passed, calling refetch()');
 
-                // Invalidate cache on realtime update (web only)
-                if (Platform.OS === 'web') {
-                    (async () => {
-                        try {
-                            const { data: auth } = await supabase.auth.getUser();
-                            const uid = auth?.user?.id ?? null;
-                            if (uid) {
-                                const { invalidateCache } = await import('../../utils/webCache');
-                                invalidateCache(`runner_available_errands_${uid}`);
+                    // Invalidate cache on realtime update (web only)
+                    if (Platform.OS === 'web') {
+                        (async () => {
+                            try {
+                                const { data: auth } = await supabase.auth.getUser();
+                                const uid = auth?.user?.id ?? null;
+                                if (uid) {
+                                    const { invalidateCache } = await import('../../utils/webCache');
+                                    invalidateCache(`runner_available_errands_${uid}`);
+                                }
+                            } catch {
+                                // Silent fail
                             }
-                        } catch {
-                            // Silent fail
-                        }
-                    })();
-                }
-                refetch();
+                        })();
+                    }
+                    refetch();
             })
             .subscribe();
 
@@ -2318,7 +2433,7 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     // Get caller location for distance calculation
                     const callerLocation = callerLocations[commission.buddycaller_id || ""];
                     if (!callerLocation) {
-                        console.log(`❌ [RANKING] Commission ${commission.id}: Caller has no location, cannot find next runner`);
+                        if (__DEV__) console.log(`❌ [RANKING] Commission ${commission.id}: Caller has no location, cannot find next runner`);
                         return false;
                     }
                     
@@ -2679,22 +2794,22 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
 
                 console.log('[REALTIME COMMISSION] ✅ Availability guard passed, calling refetch()');
 
-                // Invalidate cache on realtime update (web only)
-                if (Platform.OS === 'web') {
-                    (async () => {
-                        try {
-                            const { data: auth } = await supabase.auth.getUser();
-                            const uid = auth?.user?.id ?? null;
-                            if (uid) {
-                                const { invalidateCache } = await import('../../utils/webCache');
-                                invalidateCache(`runner_available_commissions_${uid}`);
+                    // Invalidate cache on realtime update (web only)
+                    if (Platform.OS === 'web') {
+                        (async () => {
+                            try {
+                                const { data: auth } = await supabase.auth.getUser();
+                                const uid = auth?.user?.id ?? null;
+                                if (uid) {
+                                    const { invalidateCache } = await import('../../utils/webCache');
+                                    invalidateCache(`runner_available_commissions_${uid}`);
+                                }
+                            } catch {
+                                // Silent fail
                             }
-                        } catch {
-                            // Silent fail
-                        }
-                    })();
-                }
-                refetch();
+                        })();
+                    }
+                    refetch();
             })
             .on("postgres_changes", { 
                 event: "UPDATE", 
@@ -2706,7 +2821,7 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                 // This ensures commissions are refetched when locations change
                 if (!mounted) return;
 
-                console.log('[REALTIME COMMISSION] 📨 Location update event received');
+                if (__DEV__) console.log('[REALTIME COMMISSION] 📨 Location update event received');
                 
                 // Read from ref to get latest availableMode without recreating subscription
                 const isAvailable = availableModeRef.current;
@@ -2725,22 +2840,22 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
 
                 console.log('[REALTIME COMMISSION] ✅ Availability guard passed, calling refetch()');
 
-                // Invalidate cache on location update (web only)
-                if (Platform.OS === 'web') {
-                    (async () => {
-                        try {
-                            const { data: auth } = await supabase.auth.getUser();
-                            const uid = auth?.user?.id ?? null;
-                            if (uid) {
-                                const { invalidateCache } = await import('../../utils/webCache');
-                                invalidateCache(`runner_available_commissions_${uid}`);
+                    // Invalidate cache on location update (web only)
+                    if (Platform.OS === 'web') {
+                        (async () => {
+                            try {
+                                const { data: auth } = await supabase.auth.getUser();
+                                const uid = auth?.user?.id ?? null;
+                                if (uid) {
+                                    const { invalidateCache } = await import('../../utils/webCache');
+                                    invalidateCache(`runner_available_commissions_${uid}`);
+                                }
+                            } catch {
+                                // Silent fail
                             }
-                        } catch {
-                            // Silent fail
-                        }
-                    })();
-                }
-                refetch();
+                        })();
+                    }
+                    refetch();
             })
             .subscribe();
 
@@ -2844,11 +2959,13 @@ function useTodayCompletedErrands() {
             const startOfTodayISO = startOfToday.toISOString();
             const endOfTodayISO = endOfToday.toISOString();
 
-            console.log('🔍 [Today Completed Errands] Date range:', {
-                startOfToday: startOfTodayISO,
-                endOfToday: endOfTodayISO,
-                runnerId: uid
-            });
+            if (__DEV__) {
+                console.log('🔍 [Today Completed Errands] Date range:', {
+                    startOfToday: startOfTodayISO,
+                    endOfToday: endOfTodayISO,
+                    runnerId: uid
+                });
+            }
 
             // Query for errands completed today (status='completed' and completed_at within today)
             // Use completed_at column to match when errand was actually completed
@@ -2861,11 +2978,13 @@ function useTodayCompletedErrands() {
                 .gte("completed_at", startOfTodayISO)
                 .lt("completed_at", endOfTodayISO);
 
-            console.log('🔍 [Today Completed Errands] Query result:', {
-                count: data?.length ?? 0,
-                error: error?.message,
-                data: data
-            });
+            if (__DEV__) {
+                console.log('🔍 [Today Completed Errands] Query result:', {
+                    count: data?.length ?? 0,
+                    error: error?.message,
+                    data: data
+                });
+            }
 
             if (error) {
                 console.error("Error fetching today's completed errands:", error);
@@ -2998,6 +3117,84 @@ const success = StyleSheet.create({
     okText: { color: "#fff", fontWeight: "800" },
 });
 
+function GeofenceErrorModal({
+    visible,
+    onClose,
+}: {
+    visible: boolean;
+    onClose: () => void;
+}) {
+    return (
+        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+            <View style={geofenceError.backdrop}>
+                <View style={geofenceError.card}>
+                    <Text style={geofenceError.title}>Unavailable Outside UM Matina</Text>
+                    <Text style={geofenceError.msg}>
+                        You are currently outside the University of Mindanao – Matina campus.
+                        To go online and accept errands or commissions, please return inside the campus area and try again.
+                    </Text>
+                    <TouchableOpacity onPress={onClose} style={geofenceError.okBtn} activeOpacity={0.9}>
+                        <Text style={geofenceError.okText}>OK</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+}
+const geofenceError = StyleSheet.create({
+    backdrop: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.38)",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+    },
+    card: { width: 400, maxWidth: "100%", backgroundColor: "#fff", borderRadius: 14, padding: 18 },
+    title: { color: colors.text, fontSize: 16, fontWeight: "900", marginBottom: 6 },
+    msg: { color: colors.text, fontSize: 13, opacity: 0.9, marginBottom: 14, lineHeight: 18 },
+    okBtn: { backgroundColor: colors.maroon, paddingVertical: 10, paddingHorizontal: 24, borderRadius: 10, alignSelf: "flex-end" },
+    okText: { color: "#fff", fontWeight: "800" },
+});
+
+function WaitingForLocationModal({
+    visible,
+    onClose,
+}: {
+    visible: boolean;
+    onClose: () => void;
+}) {
+    return (
+        <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+            <View style={waitingForLocation.backdrop}>
+                <View style={waitingForLocation.card}>
+                    <Text style={waitingForLocation.title}>Waiting for Location</Text>
+                    <Text style={waitingForLocation.msg}>
+                        We are still trying to get your current location.
+                        Please make sure location services are enabled and try again in a moment.
+                    </Text>
+                    <TouchableOpacity onPress={onClose} style={waitingForLocation.okBtn} activeOpacity={0.9}>
+                        <Text style={waitingForLocation.okText}>OK</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+}
+const waitingForLocation = StyleSheet.create({
+    backdrop: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.38)",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+    },
+    card: { width: 400, maxWidth: "100%", backgroundColor: "#fff", borderRadius: 14, padding: 18 },
+    title: { color: colors.text, fontSize: 16, fontWeight: "900", marginBottom: 6 },
+    msg: { color: colors.text, fontSize: 13, opacity: 0.9, marginBottom: 14, lineHeight: 18 },
+    okBtn: { backgroundColor: colors.maroon, paddingVertical: 10, paddingHorizontal: 24, borderRadius: 10, alignSelf: "flex-end" },
+    okText: { color: "#fff", fontWeight: "800" },
+});
+
 /* MAIN */
 export default function HomeScreen() {
     const { width } = useWindowDimensions();
@@ -3051,6 +3248,12 @@ function HomeWeb() {
     const [locationPromptVisible, setLocationPromptVisible] = useState(false);
     const [locationPromptLoading, setLocationPromptLoading] = useState(false);
     const [permissionBlockedVisible, setPermissionBlockedVisible] = useState(false);
+    
+    // Geofence error modal state
+    const [geofenceErrorVisible, setGeofenceErrorVisible] = useState(false);
+    
+    // Waiting for location modal state
+    const [waitingForLocationVisible, setWaitingForLocationVisible] = useState(false);
 
     // Function to toggle availability and save to database
     const toggleAvailability = async (newStatus: boolean) => {
@@ -3063,7 +3266,125 @@ function HomeWeb() {
 
             console.log(`🔄 Toggling availability for user ${user.id} to:`, newStatus);
 
-            // Update local state
+            // PRE-VALIDATION FLOW: When turning ON, validate BEFORE updating state or database
+            // UI must remain OFF until validation succeeds
+            if (newStatus) {
+                // PRE-VALIDATION STEP 1: Fetch GPS location (one-time fetch, not tracking)
+                // Location can be fetched even while status is OFF - this is the pre-validation check
+                let locationResult = null;
+                
+                try {
+                    // GPS Warm-up / Retry: Attempt to get GPS up to 3 times within ~3-5 seconds
+                    const maxRetries = 3;
+                    const retryDelayMs = 1000; // 1 second between retries
+                    
+                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                        if (attempt > 1) {
+                            // Wait before retry (except first attempt)
+                            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+                        }
+                        
+                        // Wrap each GPS attempt in try/catch to prevent exceptions from bypassing retry logic
+                        try {
+                            locationResult = await LocationService.getCurrentLocation();
+                            
+                            if (locationResult.success && locationResult.location) {
+                                break; // GPS acquired successfully
+                            }
+                            
+                            if (__DEV__) {
+                                console.log(`🔄 GPS attempt ${attempt}/${maxRetries} failed, retrying...`);
+                            }
+                        } catch (gpsError) {
+                            // GPS attempt threw an exception - catch it and continue retrying
+                            if (__DEV__) {
+                                console.log(`🔄 GPS attempt ${attempt}/${maxRetries} threw exception:`, gpsError);
+                            }
+                            locationResult = {
+                                success: false,
+                                error: gpsError instanceof Error ? gpsError.message : 'GPS acquisition failed'
+                            };
+                            // Continue to next retry attempt
+                        }
+                    }
+                    
+                    // PRE-VALIDATION STEP 2: Check GPS availability
+                    // If GPS is still not available after retries
+                    if (!locationResult || !locationResult.success || !locationResult.location) {
+                        // Status remains OFF, show modal, return early
+                        setWaitingForLocationVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    const { latitude, longitude } = locationResult.location;
+
+                    // PRE-VALIDATION STEP 3: Validate GPS coordinates
+                    // Client-side guard: Validate GPS coordinates before calling Edge Function
+                    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+                        // Status remains OFF, show modal, return early
+                        setWaitingForLocationVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    if (isNaN(latitude) || isNaN(longitude)) {
+                        // Status remains OFF, show modal, return early
+                        setWaitingForLocationVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    // PRE-VALIDATION STEP 4: Geofence validation (authoritative backend check)
+                    // Call backend Edge Function for authoritative geofence validation
+                    const { data: validationResult, error: validationError } = await supabase.functions.invoke(
+                        'validate-availability',
+                        {
+                            body: {
+                                runner_id: user.id,
+                                latitude: latitude,
+                                longitude: longitude,
+                            },
+                        }
+                    );
+
+                    // PRE-VALIDATION STEP 5: Handle geofence validation result
+                    if (validationError) {
+                        // Network/server error - status remains OFF
+                        console.error('❌ Geofence validation error:', validationError);
+                        Alert.alert(
+                            'Validation Error',
+                            'Unable to validate location. Please try again.'
+                        );
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    if (!validationResult?.allowed) {
+                        // Geofence violation - status remains OFF, show modal
+                        setGeofenceErrorVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    // ✅ PRE-VALIDATION PASSED: Runner is inside UM Matina
+                    // Now we can proceed with updating availability
+                    console.log('✅ Geofence validation passed - proceeding with availability update');
+                    
+                } catch (geofenceError) {
+                    // Outer catch: Only for network errors or unexpected errors (not GPS availability)
+                    // Status remains OFF on error
+                    console.error('❌ Error during geofence validation:', geofenceError);
+                    Alert.alert(
+                        'Validation Error',
+                        'An error occurred while validating your location. Please try again.'
+                    );
+                    return; // Early return - UI and database remain OFF
+                }
+                
+                // ✅ VALIDATION SUCCEEDED: Only reach here if geofence validation passed
+                // Now update UI state and database - this is the ONLY place status changes to ON
+            }
+
+            // POST-VALIDATION: Update state and database
+            // This only executes if:
+            // - Turning OFF (no validation needed), OR
+            // - Turning ON AND validation succeeded (all early returns avoided)
             setAvailableMode(newStatus);
 
             // Prepare update data
@@ -3074,7 +3395,7 @@ function HomeWeb() {
                 updateData.latitude = null;
                 updateData.longitude = null;
                 updateData.location_updated_at = null;
-                console.log('🗑️ [Web] Clearing location data (going offline)');
+                if (__DEV__) console.log('🗑️ [Web] Clearing location data (going offline)');
             }
 
             // Save to database - try to update is_available field
@@ -3088,9 +3409,9 @@ function HomeWeb() {
                 console.error('Full error:', error);
                 // If the field doesn't exist, we'll just keep the local state
             } else {
-                console.log('✅ Successfully updated is_available to:', newStatus);
+                if (__DEV__) console.log('✅ Successfully updated is_available to:', newStatus);
                 if (!newStatus) {
-                    console.log('✅ [Web] Location data cleared from database');
+                    if (__DEV__) console.log('✅ [Web] Location data cleared from database');
                 }
                 
                 // Verify the update by querying the user again
@@ -3192,23 +3513,23 @@ function HomeWeb() {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (!user) return;
 
-                console.log('🔍 [Web] Checking location status for user:', user.id);
+                if (__DEV__) console.log('🔍 [Web] Checking location status for user:', user.id);
                 const locationStatus = await LocationService.checkLocationStatus(user.id);
 
-                console.log('📍 [Web] Location status:', locationStatus);
+                if (__DEV__) console.log('📍 [Web] Location status:', locationStatus);
 
                 // For web browsers, we should NOT automatically request location (triggers browser prompt)
                 // Only show modal if location is not in database
                 // User must click "Enable Location" button to trigger the browser permission prompt
                 if (!locationStatus.locationInDatabase) {
-                    console.log('⚠️ [Web] Location not in database, showing prompt modal');
+                    if (__DEV__) console.log('⚠️ [Web] Location not in database, showing prompt modal');
                     setLocationPromptVisible(true);
                     return;
                 }
 
                 // If location exists in database, we're good - don't request again automatically
                 // This prevents triggering browser prompt on page load
-                console.log('✅ [Web] Location exists in database, no need to request again');
+                if (__DEV__) console.log('✅ [Web] Location exists in database, no need to request again');
             } catch (error) {
                 console.error('❌ [Web] Error checking/updating location:', error);
             }
@@ -3224,25 +3545,25 @@ function HomeWeb() {
         const startLocationTracking = async () => {
             // Only track if available mode is ON and not loading
             if (!availableMode || availabilityLoading) {
-                console.log('📍 [Web] Location tracking not started - status is OFF or loading');
+                if (__DEV__) console.log('📍 [Web] Location tracking not started - status is OFF or loading');
                 return;
             }
 
             try {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (!user) {
-                    console.log('❌ [Web] No user found for location tracking');
+                    if (__DEV__) console.log('❌ [Web] No user found for location tracking');
                     return;
                 }
 
-                console.log('🔄 [Web] Starting real-time location tracking for user:', user.id);
+                if (__DEV__) console.log('🔄 [Web] Starting real-time location tracking for user:', user.id);
 
                 // Immediately update location when tracking starts (ensures fresh location on mount or toggle)
-                console.log('🔄 [Web] Immediately updating location when tracking starts...');
+                if (__DEV__) console.log('🔄 [Web] Immediately updating location when tracking starts...');
                 try {
                     const immediateResult = await LocationService.requestAndSaveLocation(user.id);
                     if (immediateResult.success) {
-                        console.log('✅ [Web] Immediate location updated when tracking started');
+                        if (__DEV__) console.log('✅ [Web] Immediate location updated when tracking started');
                         // Refetch commissions after immediate location update
                         if (refetchCommissions) {
                             setTimeout(() => {
@@ -3250,7 +3571,7 @@ function HomeWeb() {
                             }, 500);
                         }
                     } else {
-                        console.warn('⚠️ [Web] Failed to get immediate location when tracking started:', immediateResult.error);
+                        if (__DEV__) console.warn('⚠️ [Web] Failed to get immediate location when tracking started:', immediateResult.error);
                         // Check if error is PERMISSION_DENIED (code 1)
                         if (immediateResult.error && immediateResult.error.toLowerCase().includes('permission denied')) {
                             setPermissionBlockedVisible(true);
@@ -3265,25 +3586,27 @@ function HomeWeb() {
                 // Start watching location changes
                 locationSubscription = await LocationService.watchLocation(
                     async (location) => {
-                        console.log('📍 [Web] Location updated:', {
-                            lat: location.latitude.toFixed(6),
-                            lng: location.longitude.toFixed(6),
-                            accuracy: location.accuracy.toFixed(2)
-                        });
+                        if (__DEV__) {
+                            console.log('📍 [Web] Location updated:', {
+                                lat: location.latitude.toFixed(6),
+                                lng: location.longitude.toFixed(6),
+                                accuracy: location.accuracy.toFixed(2)
+                            });
+                        }
 
                         // Update location in database
                         const updated = await LocationService.updateLocationInDatabase(user.id, location);
                         if (updated) {
-                            console.log('✅ [Web] Location saved to database');
+                            if (__DEV__) console.log('✅ [Web] Location saved to database');
                             // Refetch commissions after location is saved to update distance filtering
                             if (refetchCommissions) {
-                                console.log('🔄 [Web] Refetching commissions after location update');
+                                if (__DEV__) console.log('🔄 [Web] Refetching commissions after location update');
                                 setTimeout(() => {
                                     refetchCommissions();
                                 }, 500); // Small delay to ensure database update is complete
                             }
                         } else {
-                            console.warn('⚠️ [Web] Failed to save location to database');
+                            if (__DEV__) console.warn('⚠️ [Web] Failed to save location to database');
                         }
                     },
                     {
@@ -3294,9 +3617,9 @@ function HomeWeb() {
                 );
 
                 if (locationSubscription) {
-                    console.log('✅ [Web] Location tracking started successfully');
+                    if (__DEV__) console.log('✅ [Web] Location tracking started successfully');
                 } else {
-                    console.warn('⚠️ [Web] Failed to start location tracking');
+                    if (__DEV__) console.warn('⚠️ [Web] Failed to start location tracking');
                     // If watchLocation returns null, it may indicate permission denied
                     // Check permission status
                     if (typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -3331,13 +3654,13 @@ function HomeWeb() {
         // Cleanup function - stop tracking when component unmounts or availability changes
         return () => {
             if (locationSubscription) {
-                console.log('🛑 [Web] Stopping location tracking');
+                if (__DEV__) console.log('🛑 [Web] Stopping location tracking');
                 try {
                     if (typeof locationSubscription.remove === 'function') {
                 locationSubscription.remove();
                     }
                 } catch (error) {
-                    console.warn('⚠️ [Web] Error removing location subscription:', error);
+                    if (__DEV__) console.warn('⚠️ [Web] Error removing location subscription:', error);
                 }
                 locationSubscription = null;
             }
@@ -3417,7 +3740,7 @@ function HomeWeb() {
                         }
 
                         // Use device's current GPS location for filtering (not database location)
-                        console.log('🔄 [Web Real-time] Getting device current GPS location for notification check...');
+                        if (__DEV__) console.log('🔄 [Web Real-time] Getting device current GPS location for notification check...');
                         let runnerLat: number;
                         let runnerLon: number;
                         let locationSource: 'gps' | 'database' = 'gps';
@@ -3429,37 +3752,41 @@ function HomeWeb() {
                                 runnerLat = locationResult.location.latitude;
                                 runnerLon = locationResult.location.longitude;
                                 locationSource = 'gps';
-                                console.log('✅ [Web Real-time] Device current GPS location obtained:', { 
-                                    lat: runnerLat, 
-                                    lon: runnerLon,
-                                    accuracy: locationResult.location.accuracy,
-                                    runnerId: user.id,
-                                    source: locationSource
-                                });
+                                if (__DEV__) {
+                                    console.log('✅ [Web Real-time] Device current GPS location obtained:', { 
+                                        lat: runnerLat, 
+                                        lon: runnerLon,
+                                        accuracy: locationResult.location.accuracy,
+                                        runnerId: user.id,
+                                        source: locationSource
+                                    });
+                                }
                             } else {
                                 throw new Error(locationResult.error || 'Failed to get GPS location');
                             }
                         } catch (error) {
-                            console.warn('⚠️ [Web Real-time] Failed to get device current GPS location, falling back to database location:', error);
+                            if (__DEV__) console.warn('⚠️ [Web Real-time] Failed to get device current GPS location, falling back to database location:', error);
                             
                             // Fallback to database location if GPS fails
                             const dbLat = typeof runnerData?.latitude === 'number' ? runnerData.latitude : parseFloat(String(runnerData?.latitude || ''));
                             const dbLon = typeof runnerData?.longitude === 'number' ? runnerData.longitude : parseFloat(String(runnerData?.longitude || ''));
                             
                             if (!dbLat || !dbLon || isNaN(dbLat) || isNaN(dbLon)) {
-                                console.log('❌ [Web Real-time] Database location also invalid, not showing notification');
+                                if (__DEV__) console.log('❌ [Web Real-time] Database location also invalid, not showing notification');
                                 return;
                             }
                             
                             runnerLat = dbLat;
                             runnerLon = dbLon;
                             locationSource = 'database';
-                            console.log('✅ [Web Real-time] Using database location as fallback:', { 
-                                lat: runnerLat, 
-                                lon: runnerLon,
-                                runnerId: user.id,
-                                source: locationSource
-                            });
+                            if (__DEV__) {
+                                console.log('✅ [Web Real-time] Using database location as fallback:', { 
+                                    lat: runnerLat, 
+                                    lon: runnerLon,
+                                    runnerId: user.id,
+                                    source: locationSource
+                                });
+                            }
                         }
 
                         // Check distance (500 meters = 0.5 km)
@@ -3478,17 +3805,17 @@ function HomeWeb() {
                             );
                             const distanceMeters = distanceKm * 1000;
 
-                            console.log(`📍 [Web Real-time] Commission ${commission.id} distance check: ${distanceMeters.toFixed(2)}m [runner source: ${locationSource}]`);
+                            if (__DEV__) console.log(`📍 [Web Real-time] Commission ${commission.id} distance check: ${distanceMeters.toFixed(2)}m [runner source: ${locationSource}]`);
 
                             if (distanceMeters > 500) {
-                                console.log(`❌ [Web Real-time] Skipping notification for commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m (exceeds 500m)`);
+                                if (__DEV__) console.log(`❌ [Web Real-time] Skipping notification for commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m (exceeds 500m)`);
                                 return;
                             }
 
-                            console.log('✅ [Web Real-time] Runner is online and within 500m, showing notification');
+                            if (__DEV__) console.log('✅ [Web Real-time] Runner is online and within 500m, showing notification');
                             setNewCommissionCount(prev => prev + 1);
                         } else {
-                            console.log('❌ [Web Real-time] Caller has no location, not showing notification');
+                            if (__DEV__) console.log('❌ [Web Real-time] Caller has no location, not showing notification');
                         }
                     } catch (error) {
                         console.error('Error checking runner availability for notification:', error);
@@ -3518,17 +3845,17 @@ function HomeWeb() {
                 return;
             }
 
-            console.log('🔄 Requesting location permission and saving to database...');
+            if (__DEV__) console.log('🔄 Requesting location permission and saving to database...');
             const result = await LocationService.requestAndSaveLocation(user.id);
 
             if (result.success) {
-                console.log('✅ Location enabled and saved successfully');
+                if (__DEV__) console.log('✅ Location enabled and saved successfully');
                 setLocationPromptVisible(false);
                 // Only turn availability ON if location permission is actually granted and geolocation succeeds
                 await toggleAvailability(true);
                 // Refetch commissions after location is enabled to update distance filtering
                 if (refetchCommissions) {
-                    console.log('🔄 [Web] Refetching commissions after location enabled');
+                    if (__DEV__) console.log('🔄 [Web] Refetching commissions after location enabled');
                     setTimeout(() => {
                         refetchCommissions();
                     }, 500); // Small delay to ensure database update is complete
@@ -3610,6 +3937,14 @@ function HomeWeb() {
                     // 3) Navigate AFTER user taps OK (matches your screenshot flow)
                     router.replace("/login");
                 }}
+            />
+            <GeofenceErrorModal
+                visible={geofenceErrorVisible}
+                onClose={() => setGeofenceErrorVisible(false)}
+            />
+            <WaitingForLocationModal
+                visible={waitingForLocationVisible}
+                onClose={() => setWaitingForLocationVisible(false)}
             />
             <LocationPromptModalWeb
                 visible={locationPromptVisible}
@@ -4344,6 +4679,12 @@ function HomeMobile() {
     // Location prompt modal state
     const [locationPromptVisible, setLocationPromptVisible] = useState(false);
     const [locationPromptLoading, setLocationPromptLoading] = useState(false);
+    
+    // Geofence error modal state
+    const [geofenceErrorVisible, setGeofenceErrorVisible] = useState(false);
+    
+    // Waiting for location modal state
+    const [waitingForLocationVisible, setWaitingForLocationVisible] = useState(false);
 
     // Get window dimensions for mobile browser detection
     const { width } = useWindowDimensions();
@@ -4373,7 +4714,7 @@ function HomeMobile() {
                 ((window as any).navigator.geolocation as any).getCurrentPosition(
                     async (position: GeolocationPosition) => {
                         setLocationPromptLoading(true);
-                        console.log('✅ [Mobile Browser] Location obtained successfully');
+                        if (__DEV__) console.log('✅ [Mobile Browser] Location obtained successfully');
                         
                         const locationData = {
                             latitude: position.coords.latitude,
@@ -4393,7 +4734,7 @@ function HomeMobile() {
                             const saved = await LocationService.updateLocationInDatabase(user.id, locationData);
                             
                             if (saved) {
-                                console.log('✅ [Web] Location saved to database');
+                                if (__DEV__) console.log('✅ [Web] Location saved to database');
                                 setLocationPromptVisible(false);
                                 setLocationPromptLoading(false);
                                 if (refetchCommissionsMobile) {
@@ -4461,7 +4802,125 @@ function HomeMobile() {
 
             console.log(`🔄 Toggling availability for user ${user.id} to:`, newStatus);
 
-            // Update local state
+            // PRE-VALIDATION FLOW: When turning ON, validate BEFORE updating state or database
+            // UI must remain OFF until validation succeeds
+            if (newStatus) {
+                // PRE-VALIDATION STEP 1: Fetch GPS location (one-time fetch, not tracking)
+                // Location can be fetched even while status is OFF - this is the pre-validation check
+                let locationResult = null;
+                
+                try {
+                    // GPS Warm-up / Retry: Attempt to get GPS up to 3 times within ~3-5 seconds
+                    const maxRetries = 3;
+                    const retryDelayMs = 1000; // 1 second between retries
+                    
+                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                        if (attempt > 1) {
+                            // Wait before retry (except first attempt)
+                            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+                        }
+                        
+                        // Wrap each GPS attempt in try/catch to prevent exceptions from bypassing retry logic
+                        try {
+                            locationResult = await LocationService.getCurrentLocation();
+                            
+                            if (locationResult.success && locationResult.location) {
+                                break; // GPS acquired successfully
+                            }
+                            
+                            if (__DEV__) {
+                                console.log(`🔄 GPS attempt ${attempt}/${maxRetries} failed, retrying...`);
+                            }
+                        } catch (gpsError) {
+                            // GPS attempt threw an exception - catch it and continue retrying
+                            if (__DEV__) {
+                                console.log(`🔄 GPS attempt ${attempt}/${maxRetries} threw exception:`, gpsError);
+                            }
+                            locationResult = {
+                                success: false,
+                                error: gpsError instanceof Error ? gpsError.message : 'GPS acquisition failed'
+                            };
+                            // Continue to next retry attempt
+                        }
+                    }
+                    
+                    // PRE-VALIDATION STEP 2: Check GPS availability
+                    // If GPS is still not available after retries
+                    if (!locationResult || !locationResult.success || !locationResult.location) {
+                        // Status remains OFF, show modal, return early
+                        setWaitingForLocationVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    const { latitude, longitude } = locationResult.location;
+
+                    // PRE-VALIDATION STEP 3: Validate GPS coordinates
+                    // Client-side guard: Validate GPS coordinates before calling Edge Function
+                    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+                        // Status remains OFF, show modal, return early
+                        setWaitingForLocationVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    if (isNaN(latitude) || isNaN(longitude)) {
+                        // Status remains OFF, show modal, return early
+                        setWaitingForLocationVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    // PRE-VALIDATION STEP 4: Geofence validation (authoritative backend check)
+                    // Call backend Edge Function for authoritative geofence validation
+                    const { data: validationResult, error: validationError } = await supabase.functions.invoke(
+                        'validate-availability',
+                        {
+                            body: {
+                                runner_id: user.id,
+                                latitude: latitude,
+                                longitude: longitude,
+                            },
+                        }
+                    );
+
+                    // PRE-VALIDATION STEP 5: Handle geofence validation result
+                    if (validationError) {
+                        // Network/server error - status remains OFF
+                        console.error('❌ Geofence validation error:', validationError);
+                        Alert.alert(
+                            'Validation Error',
+                            'Unable to validate location. Please try again.'
+                        );
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    if (!validationResult?.allowed) {
+                        // Geofence violation - status remains OFF, show modal
+                        setGeofenceErrorVisible(true);
+                        return; // Early return - UI and database remain OFF
+                    }
+
+                    // ✅ PRE-VALIDATION PASSED: Runner is inside UM Matina
+                    // Now we can proceed with updating availability
+                    console.log('✅ Geofence validation passed - proceeding with availability update');
+                    
+                } catch (geofenceError) {
+                    // Outer catch: Only for network errors or unexpected errors (not GPS availability)
+                    // Status remains OFF on error
+                    console.error('❌ Error during geofence validation:', geofenceError);
+                    Alert.alert(
+                        'Validation Error',
+                        'An error occurred while validating your location. Please try again.'
+                    );
+                    return; // Early return - UI and database remain OFF
+                }
+                
+                // ✅ VALIDATION SUCCEEDED: Only reach here if geofence validation passed
+                // Now update UI state and database - this is the ONLY place status changes to ON
+            }
+
+            // POST-VALIDATION: Update state and database
+            // This only executes if:
+            // - Turning OFF (no validation needed), OR
+            // - Turning ON AND validation succeeded (all early returns avoided)
             setAvailableMode(newStatus);
 
             // Prepare update data
@@ -4472,7 +4931,7 @@ function HomeMobile() {
                 updateData.latitude = null;
                 updateData.longitude = null;
                 updateData.location_updated_at = null;
-                console.log('🗑️ [Mobile] Clearing location data (going offline)');
+                if (__DEV__) console.log('🗑️ [Mobile] Clearing location data (going offline)');
             }
 
             // Save to database - try to update is_available field
@@ -4486,9 +4945,9 @@ function HomeMobile() {
                 console.error('Full error:', error);
                 // If the field doesn't exist, we'll just keep the local state
             } else {
-                console.log('✅ Successfully updated is_available to:', newStatus);
+                if (__DEV__) console.log('✅ Successfully updated is_available to:', newStatus);
                 if (!newStatus) {
-                    console.log('✅ [Mobile] Location data cleared from database');
+                    if (__DEV__) console.log('✅ [Mobile] Location data cleared from database');
                 }
                 
                 // Verify the update by querying the user again
@@ -4590,35 +5049,35 @@ function HomeMobile() {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (!user) return;
 
-                console.log('🔍 [Mobile] Checking location status for user:', user.id);
+                if (__DEV__) console.log('🔍 [Mobile] Checking location status for user:', user.id);
                 const locationStatus = await LocationService.checkLocationStatus(user.id);
 
-                console.log('📍 [Mobile] Location status:', locationStatus);
+                if (__DEV__) console.log('📍 [Mobile] Location status:', locationStatus);
 
                 // For native mobile apps, check permission and request location if needed
                 if (Platform.OS === 'web') {
                     // For web browsers, don't automatically request location
                     // Only show modal if location is not in database
                     if (!locationStatus.locationInDatabase) {
-                        console.log('⚠️ [Mobile Web] Location not in database, showing prompt modal');
+                        if (__DEV__) console.log('⚠️ [Mobile Web] Location not in database, showing prompt modal');
                         setLocationPromptVisible(true);
                         return;
                     }
-                    console.log('✅ [Mobile Web] Location exists in database, no need to request again');
+                    if (__DEV__) console.log('✅ [Mobile Web] Location exists in database, no need to request again');
                 } else {
                     // Native mobile app - can check permission and request location
                     if (!locationStatus.hasPermission) {
-                        console.log('⚠️ [Mobile Native] Location permission not granted, showing prompt modal');
+                        if (__DEV__) console.log('⚠️ [Mobile Native] Location permission not granted, showing prompt modal');
                         setLocationPromptVisible(true);
                         return;
                     }
 
                     // If permission is granted, immediately request and save current location
-                    console.log('🔄 [Mobile Native] Status is ON and permission granted - immediately updating location...');
+                    if (__DEV__) console.log('🔄 [Mobile Native] Status is ON and permission granted - immediately updating location...');
                     const locationResult = await LocationService.requestAndSaveLocation(user.id);
                     
                     if (locationResult.success) {
-                        console.log('✅ [Mobile Native] Immediate location updated successfully');
+                        if (__DEV__) console.log('✅ [Mobile Native] Immediate location updated successfully');
                         // Refetch commissions after location is saved
                         if (refetchCommissionsMobile) {
                             setTimeout(() => {
@@ -4626,7 +5085,7 @@ function HomeMobile() {
                             }, 500);
                         }
                     } else {
-                        console.warn('⚠️ [Mobile Native] Failed to get immediate location:', locationResult.error);
+                        if (__DEV__) console.warn('⚠️ [Mobile Native] Failed to get immediate location:', locationResult.error);
                         // Show modal if location couldn't be obtained
                         setLocationPromptVisible(true);
                     }
@@ -4646,25 +5105,25 @@ function HomeMobile() {
         const startLocationTracking = async () => {
             // Only track if available mode is ON and not loading
             if (!availableMode || availabilityLoading) {
-                console.log('📍 [Mobile] Location tracking not started - status is OFF or loading');
+                if (__DEV__) console.log('📍 [Mobile] Location tracking not started - status is OFF or loading');
                 return;
             }
 
             try {
                 const { data: { user } } = await supabase.auth.getUser();
                 if (!user) {
-                    console.log('❌ [Mobile] No user found for location tracking');
+                    if (__DEV__) console.log('❌ [Mobile] No user found for location tracking');
                     return;
                 }
 
-                console.log('🔄 [Mobile] Starting real-time location tracking for user:', user.id);
+                if (__DEV__) console.log('🔄 [Mobile] Starting real-time location tracking for user:', user.id);
 
                 // Immediately update location when tracking starts (ensures fresh location on mount or toggle)
-                console.log('🔄 [Mobile] Immediately updating location when tracking starts...');
+                if (__DEV__) console.log('🔄 [Mobile] Immediately updating location when tracking starts...');
                 try {
                     const immediateResult = await LocationService.requestAndSaveLocation(user.id);
                     if (immediateResult.success) {
-                        console.log('✅ [Mobile] Immediate location updated when tracking started');
+                        if (__DEV__) console.log('✅ [Mobile] Immediate location updated when tracking started');
                         // Refetch commissions after immediate location update
                         if (refetchCommissionsMobile) {
                             setTimeout(() => {
@@ -4672,7 +5131,7 @@ function HomeMobile() {
                             }, 500);
                         }
                     } else {
-                        console.warn('⚠️ [Mobile] Failed to get immediate location when tracking started:', immediateResult.error);
+                        if (__DEV__) console.warn('⚠️ [Mobile] Failed to get immediate location when tracking started:', immediateResult.error);
                     }
                 } catch (error) {
                     console.error('❌ [Mobile] Error getting immediate location when tracking started:', error);
@@ -4681,25 +5140,27 @@ function HomeMobile() {
                 // Start watching location changes
                 locationSubscription = await LocationService.watchLocation(
                     async (location) => {
-                        console.log('📍 [Mobile] Location updated:', {
-                            lat: location.latitude.toFixed(6),
-                            lng: location.longitude.toFixed(6),
-                            accuracy: location.accuracy.toFixed(2)
-                        });
+                        if (__DEV__) {
+                            console.log('📍 [Mobile] Location updated:', {
+                                lat: location.latitude.toFixed(6),
+                                lng: location.longitude.toFixed(6),
+                                accuracy: location.accuracy.toFixed(2)
+                            });
+                        }
 
                         // Update location in database
                         const updated = await LocationService.updateLocationInDatabase(user.id, location);
                         if (updated) {
-                            console.log('✅ [Mobile] Location saved to database');
+                            if (__DEV__) console.log('✅ [Mobile] Location saved to database');
                             // Refetch commissions after location is saved to update distance filtering
                             if (refetchCommissionsMobile) {
-                                console.log('🔄 [Mobile] Refetching commissions after location update');
+                                if (__DEV__) console.log('🔄 [Mobile] Refetching commissions after location update');
                                 setTimeout(() => {
                                     refetchCommissionsMobile();
                                 }, 500); // Small delay to ensure database update is complete
                             }
                         } else {
-                            console.warn('⚠️ [Mobile] Failed to save location to database');
+                            if (__DEV__) console.warn('⚠️ [Mobile] Failed to save location to database');
                         }
                     },
                     {
@@ -4710,9 +5171,9 @@ function HomeMobile() {
                 );
 
                 if (locationSubscription) {
-                    console.log('✅ [Mobile] Location tracking started successfully');
+                    if (__DEV__) console.log('✅ [Mobile] Location tracking started successfully');
                 } else {
-                    console.warn('⚠️ [Mobile] Failed to start location tracking');
+                    if (__DEV__) console.warn('⚠️ [Mobile] Failed to start location tracking');
                 }
             } catch (error) {
                 console.error('❌ [Mobile] Error starting location tracking:', error);
@@ -4724,7 +5185,7 @@ function HomeMobile() {
         // Cleanup function - stop tracking when component unmounts or availability changes
         return () => {
             if (locationSubscription) {
-                console.log('🛑 [Mobile] Stopping location tracking');
+                if (__DEV__) console.log('🛑 [Mobile] Stopping location tracking');
                 locationSubscription.remove();
                 locationSubscription = null;
             }
@@ -4879,7 +5340,7 @@ function HomeMobile() {
                                 }
 
                                 // Use device's current GPS location for filtering (not database location)
-                                console.log('🔄 [Mobile Real-time] Getting device current GPS location for notification check...');
+                                if (__DEV__) console.log('🔄 [Mobile Real-time] Getting device current GPS location for notification check...');
                                 let runnerLat: number;
                                 let runnerLon: number;
                                 let locationSource: 'gps' | 'database' = 'gps';
@@ -4891,37 +5352,41 @@ function HomeMobile() {
                                         runnerLat = locationResult.location.latitude;
                                         runnerLon = locationResult.location.longitude;
                                         locationSource = 'gps';
-                                        console.log('✅ [Mobile Real-time] Device current GPS location obtained:', { 
-                                            lat: runnerLat, 
-                                            lon: runnerLon,
-                                            accuracy: locationResult.location.accuracy,
-                                            runnerId: currentUser.id,
-                                            source: locationSource
-                                        });
+                                        if (__DEV__) {
+                                            console.log('✅ [Mobile Real-time] Device current GPS location obtained:', { 
+                                                lat: runnerLat, 
+                                                lon: runnerLon,
+                                                accuracy: locationResult.location.accuracy,
+                                                runnerId: currentUser.id,
+                                                source: locationSource
+                                            });
+                                        }
                                     } else {
                                         throw new Error(locationResult.error || 'Failed to get GPS location');
                                     }
                                 } catch (error) {
-                                    console.warn('⚠️ [Mobile Real-time] Failed to get device current GPS location, falling back to database location:', error);
+                                    if (__DEV__) console.warn('⚠️ [Mobile Real-time] Failed to get device current GPS location, falling back to database location:', error);
                                     
                                     // Fallback to database location if GPS fails
                                     const dbLat = typeof runnerData?.latitude === 'number' ? runnerData.latitude : parseFloat(String(runnerData?.latitude || ''));
                                     const dbLon = typeof runnerData?.longitude === 'number' ? runnerData.longitude : parseFloat(String(runnerData?.longitude || ''));
                                     
                                     if (!dbLat || !dbLon || isNaN(dbLat) || isNaN(dbLon)) {
-                                        console.log('❌ [Mobile Real-time] Database location also invalid, not showing notification');
+                                        if (__DEV__) console.log('❌ [Mobile Real-time] Database location also invalid, not showing notification');
                                         return;
                                     }
                                     
                                     runnerLat = dbLat;
                                     runnerLon = dbLon;
                                     locationSource = 'database';
-                                    console.log('✅ [Mobile Real-time] Using database location as fallback:', { 
-                                        lat: runnerLat, 
-                                        lon: runnerLon,
-                                        runnerId: currentUser.id,
-                                        source: locationSource
-                                    });
+                                    if (__DEV__) {
+                                        console.log('✅ [Mobile Real-time] Using database location as fallback:', { 
+                                            lat: runnerLat, 
+                                            lon: runnerLon,
+                                            runnerId: currentUser.id,
+                                            source: locationSource
+                                        });
+                                    }
                                 }
 
                                 // Check distance (500 meters = 0.5 km)
@@ -4940,27 +5405,29 @@ function HomeMobile() {
                                     );
                                     const distanceMeters = distanceKm * 1000;
 
-                                    console.log(`📍 [Mobile Real-time] Commission ${commission.id} distance check: ${distanceMeters.toFixed(2)}m [runner source: ${locationSource}]`);
+                                    if (__DEV__) console.log(`📍 [Mobile Real-time] Commission ${commission.id} distance check: ${distanceMeters.toFixed(2)}m [runner source: ${locationSource}]`);
 
                                     if (distanceMeters > 500) {
-                                        console.log(`❌ [Mobile Real-time] Skipping notification for commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m (exceeds 500m)`);
+                                        if (__DEV__) console.log(`❌ [Mobile Real-time] Skipping notification for commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m (exceeds 500m)`);
                                         return;
                                     }
 
                                     // Only increment notification count if runner is online, has location, within 500m, and component is mounted
                                     if (mounted) {
-                                        console.log('✅ Runner is online and within 500m, incrementing notification count');
+                                        if (__DEV__) console.log('✅ Runner is online and within 500m, incrementing notification count');
                                     // Update state using functional form to ensure it always gets latest value
                                     setNewCommissionCount(currentCount => {
                                         const updatedCount = currentCount + 1;
                                         notificationCountRef.current = updatedCount;
-                                        console.log(`📱 Mobile notification count: ${currentCount} -> ${updatedCount}`);
-                                        console.log(`📱 Notification badge should now show: ${updatedCount}`);
+                                        if (__DEV__) {
+                                            console.log(`📱 Mobile notification count: ${currentCount} -> ${updatedCount}`);
+                                            console.log(`📱 Notification badge should now show: ${updatedCount}`);
+                                        }
                                         return updatedCount;
                                     });
                                     }
                                 } else {
-                                    console.log('❌ Caller has no location, not showing notification');
+                                    if (__DEV__) console.log('❌ Caller has no location, not showing notification');
                                 }
                             } catch (error) {
                                 console.error('❌ Error checking runner availability for notification:', error);
@@ -5057,11 +5524,11 @@ function HomeMobile() {
                 }
 
                 const platformLabel = Platform.OS === 'web' ? 'Desktop Browser' : 'Mobile Native';
-                console.log(`🔄 [${platformLabel}] Requesting location permission and saving to database...`);
+                if (__DEV__) console.log(`🔄 [${platformLabel}] Requesting location permission and saving to database...`);
                 const result = await LocationService.requestAndSaveLocation(user.id);
 
                 if (result.success) {
-                    console.log(`✅ [${platformLabel}] Location enabled and saved successfully`);
+                    if (__DEV__) console.log(`✅ [${platformLabel}] Location enabled and saved successfully`);
                     setLocationPromptVisible(false);
                     if (refetchCommissionsMobile) {
                         setTimeout(() => {
@@ -5093,6 +5560,16 @@ function HomeMobile() {
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
             {Platform.OS !== "web" && <Stack.Screen options={{ animation: "none" }} />}
+            {/* Geofence Error Modal */}
+            <GeofenceErrorModal
+                visible={geofenceErrorVisible}
+                onClose={() => setGeofenceErrorVisible(false)}
+            />
+            {/* Waiting for Location Modal */}
+            <WaitingForLocationModal
+                visible={waitingForLocationVisible}
+                onClose={() => setWaitingForLocationVisible(false)}
+            />
 
             {/* Location Prompt Modal */}
             <LocationPromptModal
@@ -5102,7 +5579,7 @@ function HomeMobile() {
                 isLoading={locationPromptLoading}
                 onGeolocationSuccess={async (position: GeolocationPosition) => {
                     setLocationPromptLoading(true);
-                    console.log('✅ [Mobile Browser] Location obtained successfully');
+                    if (__DEV__) console.log('✅ [Mobile Browser] Location obtained successfully');
                     
                     const locationData = {
                         latitude: position.coords.latitude,
@@ -5122,7 +5599,7 @@ function HomeMobile() {
                         const saved = await LocationService.updateLocationInDatabase(user.id, locationData);
                         
                         if (saved) {
-                            console.log('✅ [Mobile Browser] Location saved to database');
+                            if (__DEV__) console.log('✅ [Mobile Browser] Location saved to database');
                             setLocationPromptVisible(false);
                             setLocationPromptLoading(false);
                             if (refetchCommissionsMobile) {

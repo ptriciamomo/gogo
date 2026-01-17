@@ -33,7 +33,6 @@ tapos open ka new terminal
 Open a NEW terminal window (keep Step 2 running!) and run:
 ```bash
 npx cloudflared tunnel --url http://192.168.1.6:8081
-```
 (Replace `192.168.1.5` with your actual IP from `ipconfig` - look for "IPv4 Address" under "Wireless LAN adapter Wi-Fi")
 
 **⚠️ Make sure Step 2 (Expo server) is running BEFORE running this command, otherwise you'll get a 502 Bad Gateway error!**
@@ -55,7 +54,8 @@ This will give you an HTTPS URL like: `https://random-name.trycloudflare.com` - 
 AYAW NANI
 ## Alternative: Use ngrok (Also Free)
 
-### Step 1: Install ngrok
+
+```### Step 1: Install ngrok
 Download from: https://ngrok.com/download
 
 ### Step 2: Start Expo

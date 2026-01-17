@@ -61,26 +61,28 @@ class GlobalNotificationService {
 
   // Notify all listeners about a new task approval
   notifyTaskApproval(notification: TaskApprovalNotification) {
+    if (__DEV__) {
     console.log('GlobalNotificationService: notifyTaskApproval called with:', notification);
     console.log('GlobalNotificationService: Number of approval listeners:', this.approvalListeners.length);
     console.log('GlobalNotificationService: Current approval notification before update:', this.currentApprovalNotification);
+    }
     
     this.currentApprovalNotification = notification;
     
     if (this.approvalListeners.length === 0) {
-      console.warn('GlobalNotificationService: No approval listeners registered! Modal may not appear.');
+      if (__DEV__) console.warn('GlobalNotificationService: No approval listeners registered! Modal may not appear.');
     }
     
     this.approvalListeners.forEach((listener, index) => {
-      console.log(`GlobalNotificationService: Notifying listener ${index + 1} of ${this.approvalListeners.length}`);
+      if (__DEV__) console.log(`GlobalNotificationService: Notifying listener ${index + 1} of ${this.approvalListeners.length}`);
       try {
         listener(notification);
-        console.log(`GlobalNotificationService: Listener ${index + 1} notified successfully`);
+        if (__DEV__) console.log(`GlobalNotificationService: Listener ${index + 1} notified successfully`);
       } catch (error) {
         console.error(`GlobalNotificationService: Error notifying listener ${index + 1}:`, error);
       }
     });
-    console.log('GlobalNotificationService: All listeners notified');
+    if (__DEV__) console.log('GlobalNotificationService: All listeners notified');
   }
 
   // Clear current approval notification
@@ -111,7 +113,7 @@ class GlobalNotificationService {
       timestamp: new Date().toISOString()
     };
     
-    console.log('GlobalNotificationService: Sending test notification:', testNotification);
+    if (__DEV__) console.log('GlobalNotificationService: Sending test notification:', testNotification);
     this.notifyTaskCompletion(testNotification);
   }
 
@@ -127,7 +129,7 @@ class GlobalNotificationService {
       timestamp: new Date().toISOString()
     };
     
-    console.log('GlobalNotificationService: Sending test approval notification:', testNotification);
+    if (__DEV__) console.log('GlobalNotificationService: Sending test approval notification:', testNotification);
     this.notifyTaskApproval(testNotification);
   }
 
@@ -135,16 +137,16 @@ class GlobalNotificationService {
 
   // Set up real-time subscription for task completion and task approval notifications
   setupRealtimeSubscription() {
-    console.log('GlobalNotificationService: Setting up real-time subscription');
+    if (__DEV__) console.log('GlobalNotificationService: Setting up real-time subscription');
     
     try {
       // Get current user once to avoid repeated auth calls
       let currentUserId: string | null = null;
       supabase.auth.getUser().then(({ data: { user } }) => {
         currentUserId = user?.id || null;
-        console.log('GlobalNotificationService: Current user ID cached:', currentUserId);
+        if (__DEV__) console.log('GlobalNotificationService: Current user ID cached:', currentUserId);
       }).catch((error) => {
-        console.warn('GlobalNotificationService: Failed to get user, real-time subscription may not work:', error);
+        if (__DEV__) console.warn('GlobalNotificationService: Failed to get user, real-time subscription may not work:', error);
       });
       
       // Listen for notifications table inserts (task completion only)
@@ -159,21 +161,21 @@ class GlobalNotificationService {
             filter: 'type=eq.task_completion'
           },
           (payload) => {
-            console.log('Task completion notification received:', payload);
+            if (__DEV__) console.log('Task completion notification received:', payload);
             
             try {
               const notificationData = payload.new as any;
               
               // Use cached user ID for faster processing
               if (!currentUserId || notificationData.user_id !== currentUserId) {
-                console.log('Task completion notification not for current user, skipping');
+                if (__DEV__) console.log('Task completion notification not for current user, skipping');
                 return;
               }
 
               // Extract the notification data
               const notification: TaskCompletionNotification = notificationData.data;
 
-              console.log('Sending task completion notification to modal:', notification);
+              if (__DEV__) console.log('Sending task completion notification to modal:', notification);
               // Notify all listeners immediately
               this.notifyTaskCompletion(notification);
             } catch (error) {
@@ -182,6 +184,7 @@ class GlobalNotificationService {
           }
         )
         .subscribe((status) => {
+          if (__DEV__) {
           console.log('GlobalNotificationService: Subscription status:', status);
           if (status === 'SUBSCRIBED') {
             console.log('GlobalNotificationService: Real-time subscription is active');
@@ -191,6 +194,7 @@ class GlobalNotificationService {
             console.warn('GlobalNotificationService: Real-time subscription timed out - this is not critical for task approvals');
           } else if (status === 'CLOSED') {
             console.warn('GlobalNotificationService: Real-time subscription closed - this is not critical for task approvals');
+            }
           }
         });
 
@@ -206,15 +210,15 @@ class GlobalNotificationService {
             filter: 'type=eq.task_approval'
           },
           (payload) => {
-            console.log('Task approval notification received:', payload);
+            if (__DEV__) console.log('Task approval notification received:', payload);
             try {
               const notificationData = payload.new as any;
               if (!currentUserId || notificationData.user_id !== currentUserId) {
-                console.log('Task approval notification not for current user, skipping');
+                if (__DEV__) console.log('Task approval notification not for current user, skipping');
                 return;
               }
               const notification: TaskApprovalNotification = notificationData.data;
-              console.log('Sending task approval notification to modal:', notification);
+              if (__DEV__) console.log('Sending task approval notification to modal:', notification);
               this.notifyTaskApproval(notification);
             } catch (error) {
               console.error('Error processing task approval notification:', error);
@@ -222,27 +226,27 @@ class GlobalNotificationService {
           }
         )
         .subscribe((status) => {
-          console.log('GlobalNotificationService (approval): Subscription status:', status);
+          if (__DEV__) console.log('GlobalNotificationService (approval): Subscription status:', status);
         });
 
       return () => {
-        console.log('GlobalNotificationService: Cleaning up subscription');
+        if (__DEV__) console.log('GlobalNotificationService: Cleaning up subscription');
         try {
           supabase.removeChannel(channel);
         } catch (error) {
-          console.warn('GlobalNotificationService: Error cleaning up task completion subscription:', error);
+          if (__DEV__) console.warn('GlobalNotificationService: Error cleaning up task completion subscription:', error);
         }
         try {
           supabase.removeChannel(approvalChannel);
         } catch (error) {
-          console.warn('GlobalNotificationService: Error cleaning up task approval subscription:', error);
+          if (__DEV__) console.warn('GlobalNotificationService: Error cleaning up task approval subscription:', error);
         }
       };
     } catch (error) {
-      console.warn('GlobalNotificationService: Failed to setup real-time subscription - this is not critical for task approvals:', error);
+      if (__DEV__) console.warn('GlobalNotificationService: Failed to setup real-time subscription - this is not critical for task approvals:', error);
       // Return a no-op cleanup function
       return () => {
-        console.log('GlobalNotificationService: No subscription to clean up');
+        if (__DEV__) console.log('GlobalNotificationService: No subscription to clean up');
       };
     }
   }

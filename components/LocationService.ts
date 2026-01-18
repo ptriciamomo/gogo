@@ -278,6 +278,14 @@ class LocationService {
 
   /**
    * Calculate distance between two coordinates (in kilometers)
+   * Uses Haversine formula - symmetric, so argument order doesn't affect result.
+   * Convention: (point1Lat, point1Lon, point2Lat, point2Lon)
+   * Common usage: (runnerLat, runnerLon, callerLat, callerLon)
+   * 
+   * LOCATION UPDATE FREQUENCY:
+   * - location_updated_at is set when updateLocationInDatabase() is called
+   * - This happens on GPS change events (varies by device/movement)
+   * - Presence threshold: 45s (runners with stale GPS are filtered out)
    */
   public calculateDistance(
     lat1: number, 

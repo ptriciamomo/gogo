@@ -250,6 +250,9 @@ export default function BuddyrunnerLayout() {
     }, []);
 
     // Runner presence heartbeat: Update last_seen_at while app is active
+    // HEARTBEAT INTERVAL: Currently updates every 60 seconds
+    // PRESENCE THRESHOLD: Eligibility queries use 75s threshold (buffered to prevent flapping)
+    // This ensures runners remain visible between heartbeat updates (60s interval < 75s threshold)
     useEffect(() => {
         let presenceInterval: ReturnType<typeof setInterval> | null = null;
 

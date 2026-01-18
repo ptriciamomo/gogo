@@ -636,6 +636,24 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
     const inFlightRef = React.useRef<Promise<void> | null>(null);
     const realtimeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // Helper function to filter runners by distance (≤ 500m)
+    const filterRunnersByDistance = (
+        runners: any[],
+        callerLat: number,
+        callerLon: number
+    ): any[] => {
+        return runners.filter(runner => {
+            if (!runner.latitude || !runner.longitude) return false;
+            const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
+            const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
+            if (!lat || !lon || isNaN(lat) || isNaN(lon)) return false;
+
+            const distanceKm = LocationService.calculateDistance(lat, lon, callerLat, callerLon);
+            const distanceMeters = distanceKm * 1000;
+            return distanceMeters <= 500;
+        });
+    };
+
     const fetchRows = React.useCallback(async (opts?: { silent?: boolean }) => {
         const silent = !!opts?.silent;
 
@@ -662,6 +680,33 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                     return;
                 }
 
+                // Fetch caller's location for distance filtering
+                const { data: callerData, error: callerError } = await supabase
+                    .from('users')
+                    .select('latitude, longitude')
+                    .eq('id', currentUid)
+                    .single();
+
+                // Caller location is required to show nearby runners
+                // Without valid caller coordinates, distance filtering is impossible
+                if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
+                    setRows([]);
+                    setInitialLoading(false);
+                    setRefreshing(false);
+                    return;
+                }
+
+                const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
+                const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
+
+                // Caller location is required to show nearby runners
+                if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
+                    setRows([]);
+                    setInitialLoading(false);
+                    setRefreshing(false);
+                    return;
+                }
+
                 // WEB CACHING: Try to load from cache first
                 if (Platform.OS === 'web' && initialLoading && !silent) {
                     const { getCachedData, setCachedData } = await import('../../utils/webCache');
@@ -679,17 +724,22 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                                 if (Platform.OS === 'web' && __DEV__) {
                                     webPerfTime('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                                 }
-                                // Calculate timestamp for 2 minutes ago (presence threshold)
-                                const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+                                // Calculate presence thresholds (aligned with assignment eligibility)
+                                // Runner heartbeat updates: last_seen_at every ~60s
+                                // Thresholds: 75s (buffered to prevent flapping between heartbeats)
+                                const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
                                 
+                                // Fetch runners with full assignment eligibility filters:
+                                // role = BuddyRunner, is_available = true, last_seen_at >= 75s, location_updated_at >= 75s OR NULL
                                 let { data, error } = await supabase
                                     .from("users")
-                                    .select("id, first_name, last_name, role, profile_picture_url, created_at, is_available")
+                                    .select("id, first_name, last_name, role, profile_picture_url, created_at, is_available, latitude, longitude")
                                     .eq("role", "BuddyRunner")
                                     .eq("is_available", true)
                                     .not("latitude", "is", null)
                                     .not("longitude", "is", null)
-                                    .gte("last_seen_at", twoMinutesAgo)
+                                    .gte("last_seen_at", seventyFiveSecondsAgo)
+                                    .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`)
                                     .neq("id", currentUid)
                                     .order("first_name", { ascending: true });
 
@@ -701,7 +751,7 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                                     }
                                     const fallbackResult = await supabase
                                         .from("users")
-                                        .select("id, first_name, last_name, role, profile_picture_url, created_at")
+                                        .select("id, first_name, last_name, role, profile_picture_url, created_at, latitude, longitude")
                                         .eq("role", "BuddyRunner")
                                         .neq("id", currentUid)
                                         .order("first_name", { ascending: true });
@@ -720,9 +770,10 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                                     webPerfTimeEnd('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                                 }
 
-                                const runners = data ?? [];
-                                setRows(runners);
-                                setCachedData(cacheKey, runners);
+                                // Apply distance filter (≤ 500m)
+                                const runnersWithinDistance = filterRunnersByDistance(data ?? [], callerLat, callerLon);
+                                setRows(runnersWithinDistance);
+                                setCachedData(cacheKey, runnersWithinDistance);
                             } catch {
                                 // Silent fail in background refresh
                             }
@@ -732,21 +783,26 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                 }
 
                 // No cache or not web: fetch normally
-                // Fetch all users with role 'buddyrunner' who are available except current user
+                // Fetch runners with full assignment eligibility filters
                 if (Platform.OS === 'web' && __DEV__) {
                     webPerfTime('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                 }
-                // Calculate timestamp for 2 minutes ago (presence threshold)
-                const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+                // Calculate presence thresholds (aligned with assignment eligibility)
+                // Runner heartbeat updates: last_seen_at every ~60s
+                // Thresholds: 75s (buffered to prevent flapping between heartbeats)
+                const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
                 
+                // Fetch runners with full assignment eligibility filters:
+                // role = BuddyRunner, is_available = true, last_seen_at >= 75s, location_updated_at >= 75s OR NULL
                 let { data, error } = await supabase
                     .from("users")
-                    .select("id, first_name, last_name, role, profile_picture_url, created_at, is_available")
+                    .select("id, first_name, last_name, role, profile_picture_url, created_at, is_available, latitude, longitude")
                     .eq("role", "BuddyRunner")
                     .eq("is_available", true)
                     .not("latitude", "is", null)
                     .not("longitude", "is", null)
-                    .gte("last_seen_at", twoMinutesAgo)
+                    .gte("last_seen_at", seventyFiveSecondsAgo)
+                    .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`)
                     .neq("id", currentUid)
                     .order("first_name", { ascending: true });
 
@@ -758,7 +814,7 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                     }
                     const fallbackResult = await supabase
                         .from("users")
-                        .select("id, first_name, last_name, role, profile_picture_url, created_at")
+                        .select("id, first_name, last_name, role, profile_picture_url, created_at, latitude, longitude")
                         .eq("role", "BuddyRunner")
                         .neq("id", currentUid)
                         .order("first_name", { ascending: true });
@@ -779,14 +835,15 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                     webPerfTimeEnd('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                 }
 
-                const runners = data ?? [];
-                setRows(runners);
+                // Apply distance filter (≤ 500m)
+                const runnersWithinDistance = filterRunnersByDistance(data ?? [], callerLat, callerLon);
+                setRows(runnersWithinDistance);
 
                 // Cache the result (web only)
                 if (Platform.OS === 'web') {
                     const { setCachedData } = await import('../../utils/webCache');
                     const cacheKey = `caller_available_runners_${currentUid}`;
-                    setCachedData(cacheKey, runners);
+                    setCachedData(cacheKey, runnersWithinDistance);
                 }
             } finally {
                 setInitialLoading(false);

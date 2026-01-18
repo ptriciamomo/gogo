@@ -1346,9 +1346,10 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     }
                     
                     // STEP 5: Fetch available runners with presence and availability filters
-                    // Purpose: Query all runners who are available, have been active recently (2 min app presence, 90 sec GPS), and exclude any runners who have already timed out for this errand.
-                    const presenceThreshold = new Date(now.getTime() - 90000); // 90 seconds for GPS
-                    const twoMinutesAgo = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    // Purpose: Query all runners who are available, have been active recently, and exclude any runners who have already timed out for this errand.
+                    // Runner heartbeat updates: last_seen_at every ~60s
+                    // Thresholds: 75s (buffered to prevent flapping between heartbeats)
+                    const seventyFiveSecondsAgo = new Date(now.getTime() - 75 * 1000); // 75 seconds for both presence checks
 
                     // First, get count of runners before presence filter (for logging)
                     let countQuery = supabase
@@ -1367,14 +1368,14 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     const { count: runnersBeforePresence } = await countQuery;
                     
                     // Now fetch runners with presence filters applied
-                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    // Eligibility: is_available = true AND last_seen_at >= 75s ago AND (location_updated_at >= 75s ago OR location_updated_at IS NULL)
                     let query = supabase
                         .from("users")
                         .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true)
-                        .gte("last_seen_at", twoMinutesAgo.toISOString())
-                        .or(`location_updated_at.gte.${presenceThreshold.toISOString()},location_updated_at.is.null`);
+                        .gte("last_seen_at", seventyFiveSecondsAgo.toISOString())
+                        .or(`location_updated_at.gte.${seventyFiveSecondsAgo.toISOString()},location_updated_at.is.null`);
                     
                     // Exclude all timeout runners if exists
                     if (errand.timeout_runner_ids && errand.timeout_runner_ids.length > 0) {
@@ -1401,7 +1402,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     
                     // STEP 2A: Presence filtering
                     console.log(`[QUEUE] STEP 2A — Presence filtering`);
-                    console.log(`Presence threshold: ${presenceThreshold.toISOString()}`);
+                    console.log(`Presence threshold: ${seventyFiveSecondsAgo.toISOString()}`);
                     console.log(`Runners before presence filter: ${runnersBeforePresence || 0}`);
                     const runnersAfterPresence = availableRunners?.length || 0;
                     console.log(`Runners after presence filter: ${runnersAfterPresence}`);
@@ -1575,9 +1576,9 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     console.log(`Status: pending`);
                     
                     // STEP 9A: Fetch available runners excluding previous and timeout runners
-                   
-                    const presenceThresholdReassign = new Date(now.getTime() - 90000); // 90 seconds for GPS
-                    const twoMinutesAgoReassign = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    // Runner heartbeat updates: last_seen_at every ~60s
+                    // Thresholds: 75s (buffered to prevent flapping between heartbeats)
+                    const seventyFiveSecondsAgoReassign = new Date(now.getTime() - 75 * 1000); // 75 seconds for both presence checks
 
                     // First, get count of runners before presence filter (for logging)
                     let countQueryReassign = supabase
@@ -1597,15 +1598,15 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     const { count: runnersBeforePresenceReassign } = await countQueryReassign;
                     
                     // Now fetch runners with presence filters applied
-                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    // Eligibility: is_available = true AND last_seen_at >= 75s ago AND (location_updated_at >= 75s ago OR location_updated_at IS NULL)
                     let query = supabase
                         .from("users")
                         .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true)
                         .neq("id", errand.notified_runner_id || "")
-                        .gte("last_seen_at", twoMinutesAgoReassign.toISOString())
-                        .or(`location_updated_at.gte.${presenceThresholdReassign.toISOString()},location_updated_at.is.null`);
+                        .gte("last_seen_at", seventyFiveSecondsAgoReassign.toISOString())
+                        .or(`location_updated_at.gte.${seventyFiveSecondsAgoReassign.toISOString()},location_updated_at.is.null`);
                     
                     // Also exclude all timeout runners if exists
                     if (errand.timeout_runner_ids && errand.timeout_runner_ids.length > 0) {
@@ -1630,7 +1631,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     
                     // STEP 2A: Presence filtering
                     console.log(`[QUEUE] STEP 2A — Presence filtering`);
-                    console.log(`Presence threshold: ${presenceThresholdReassign.toISOString()}`);
+                    console.log(`Presence threshold: ${seventyFiveSecondsAgoReassign.toISOString()}`);
                     console.log(`Runners before presence filter: ${runnersBeforePresenceReassign || 0}`);
                     const runnersAfterPresenceReassign = availableRunners?.length || 0;
                     console.log(`Runners after presence filter: ${runnersAfterPresenceReassign}`);
@@ -2213,8 +2214,9 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     
                     // Get all available runners (is_available = true)
                     // Calculate presence thresholds
-                    const presenceThresholdCommission = new Date(now.getTime() - 90000); // 90 seconds for GPS
-                    const twoMinutesAgoCommission = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    // Runner heartbeat updates: last_seen_at every ~60s
+                    // Thresholds: 75s (buffered to prevent flapping between heartbeats)
+                    const seventyFiveSecondsAgoCommission = new Date(now.getTime() - 75 * 1000); // 75 seconds for both presence checks
                     
                     // First, get count of runners before presence filter (for logging)
                     let countQueryCommission = supabase
@@ -2238,14 +2240,14 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     const { count: runnersBeforePresenceCommission } = await countQueryCommission;
                     
                     // Now fetch runners with presence filters applied
-                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    // Eligibility: is_available = true AND last_seen_at >= 75s ago AND (location_updated_at >= 75s ago OR location_updated_at IS NULL)
                     let query = supabase
                         .from("users")
                         .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true)
-                        .gte("last_seen_at", twoMinutesAgoCommission.toISOString())
-                        .or(`location_updated_at.gte.${presenceThresholdCommission.toISOString()},location_updated_at.is.null`);
+                        .gte("last_seen_at", seventyFiveSecondsAgoCommission.toISOString())
+                        .or(`location_updated_at.gte.${seventyFiveSecondsAgoCommission.toISOString()},location_updated_at.is.null`);
                     
                     // Exclude declined runner if exists (when caller declines)
                     if (commission.declined_runner_id) {
@@ -2276,7 +2278,7 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     
                     // STEP 2A: Presence filtering
                     console.log(`[QUEUE] STEP 2A — Presence filtering`);
-                    console.log(`Presence threshold: ${presenceThresholdCommission.toISOString()}`);
+                    console.log(`Presence threshold: ${seventyFiveSecondsAgoCommission.toISOString()}`);
                     console.log(`Runners before presence filter: ${runnersBeforePresenceCommission || 0}`);
                     const runnersAfterPresenceCommission = availableRunners?.length || 0;
                     console.log(`Runners after presence filter: ${runnersAfterPresenceCommission}`);
@@ -2448,8 +2450,9 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     
                     // Get all available runners except those who were already notified or timed out
                     // Calculate presence thresholds
-                    const presenceThresholdCommissionReassign = new Date(now.getTime() - 90000); // 90 seconds for GPS
-                    const twoMinutesAgoCommissionReassign = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes for app presence
+                    // Runner heartbeat updates: last_seen_at every ~60s
+                    // Thresholds: 75s (buffered to prevent flapping between heartbeats)
+                    const seventyFiveSecondsAgoCommissionReassign = new Date(now.getTime() - 75 * 1000); // 75 seconds for both presence checks
                     
                     // First, get count of runners before presence filter (for logging)
                     let countQueryCommissionReassign = supabase
@@ -2474,15 +2477,15 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     const { count: runnersBeforePresenceCommissionReassign } = await countQueryCommissionReassign;
                     
                     // Now fetch runners with presence filters applied
-                    // Eligibility: is_available = true AND last_seen_at >= 2 min ago AND (location_updated_at >= 90s ago OR location_updated_at IS NULL)
+                    // Eligibility: is_available = true AND last_seen_at >= 75s ago AND (location_updated_at >= 75s ago OR location_updated_at IS NULL)
                     let query = supabase
                         .from("users")
                         .select("id, first_name, last_name, latitude, longitude, average_rating, location_updated_at")
                         .eq("role", "BuddyRunner")
                         .eq("is_available", true)
                         .neq("id", commission.notified_runner_id)
-                        .gte("last_seen_at", twoMinutesAgoCommissionReassign.toISOString())
-                        .or(`location_updated_at.gte.${presenceThresholdCommissionReassign.toISOString()},location_updated_at.is.null`);
+                        .gte("last_seen_at", seventyFiveSecondsAgoCommissionReassign.toISOString())
+                        .or(`location_updated_at.gte.${seventyFiveSecondsAgoCommissionReassign.toISOString()},location_updated_at.is.null`);
                     
                     // Also exclude declined runner if exists (when caller declines)
                     if (commission.declined_runner_id) {
@@ -2512,7 +2515,7 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     
                     // STEP 2A: Presence filtering
                     console.log(`[QUEUE] STEP 2A — Presence filtering`);
-                    console.log(`Presence threshold: ${presenceThresholdCommissionReassign.toISOString()}`);
+                    console.log(`Presence threshold: ${seventyFiveSecondsAgoCommissionReassign.toISOString()}`);
                     console.log(`Runners before presence filter: ${runnersBeforePresenceCommissionReassign || 0}`);
                     const runnersAfterPresenceCommissionReassign = availableRunners?.length || 0;
                     console.log(`Runners after presence filter: ${runnersAfterPresenceCommissionReassign}`);

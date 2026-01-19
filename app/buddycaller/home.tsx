@@ -1912,7 +1912,11 @@ function HomeWeb() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        logCallerError("Commission monitor: Polling error", error);
+                        // Use warn instead of error for expected polling failures (network issues, etc.)
+                        const errorMsg = error instanceof Error 
+                            ? error.message 
+                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                        logCallerWarn("Commission monitor: Polling error", errorMsg);
                         return;
                     }
 
@@ -1930,7 +1934,13 @@ function HomeWeb() {
                         }
                     }
                 } catch (error) {
-                    logCallerError("Commission monitor: Polling error", error);
+                    // Use warn instead of error for expected polling failures (network issues, etc.)
+                    const errorMsg = error instanceof Error 
+                        ? error.message 
+                        : (error && typeof error === 'object' 
+                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                            : String(error));
+                    logCallerWarn("Commission monitor: Polling error", errorMsg);
                 }
             }, 3000);
 
@@ -2058,7 +2068,11 @@ function HomeWeb() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        logCallerError("Errand monitor: Polling error", error);
+                        // Use warn instead of error for expected polling failures (network issues, etc.)
+                        const errorMsg = error instanceof Error 
+                            ? error.message 
+                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                        logCallerWarn("Errand monitor: Polling error", errorMsg);
                         return;
                     }
 
@@ -2076,7 +2090,13 @@ function HomeWeb() {
                         }
                     }
                 } catch (error) {
-                    logCallerError("Errand monitor: Polling error", error);
+                    // Use warn instead of error for expected polling failures (network issues, etc.)
+                    const errorMsg = error instanceof Error 
+                        ? error.message 
+                        : (error && typeof error === 'object' 
+                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                            : String(error));
+                    logCallerWarn("Errand monitor: Polling error", errorMsg);
                 }
             }, 3000);
 
@@ -2829,7 +2849,11 @@ function HomeMobile() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        logCallerError("Commission monitor: Polling error", error);
+                        // Use warn instead of error for expected polling failures (network issues, etc.)
+                        const errorMsg = error instanceof Error 
+                            ? error.message 
+                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                        logCallerWarn("Commission monitor: Polling error", errorMsg);
                         return;
                     }
 
@@ -2846,7 +2870,13 @@ function HomeMobile() {
                         }
                     }
                 } catch (error) {
-                    logCallerError("Commission monitor: Polling error", error);
+                    // Use warn instead of error for expected polling failures (network issues, etc.)
+                    const errorMsg = error instanceof Error 
+                        ? error.message 
+                        : (error && typeof error === 'object' 
+                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                            : String(error));
+                    logCallerWarn("Commission monitor: Polling error", errorMsg);
                 }
             }, 3000);
 
@@ -2975,7 +3005,11 @@ function HomeMobile() {
                         .gte("accepted_at", fiveMinutesAgo); // Only recently accepted
 
                     if (error) {
-                        logCallerError("Errand monitor: Polling error", error);
+                        // Use warn instead of error for expected polling failures (network issues, etc.)
+                        const errorMsg = error instanceof Error 
+                            ? error.message 
+                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                        logCallerWarn("Errand monitor: Polling error", errorMsg);
                         return;
                     }
 
@@ -2992,7 +3026,13 @@ function HomeMobile() {
                         }
                     }
                 } catch (error) {
-                    logCallerError("Errand monitor: Polling error", error);
+                    // Use warn instead of error for expected polling failures (network issues, etc.)
+                    const errorMsg = error instanceof Error 
+                        ? error.message 
+                        : (error && typeof error === 'object' 
+                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                            : String(error));
+                    logCallerWarn("Errand monitor: Polling error", errorMsg);
                 }
             }, 3000);
 

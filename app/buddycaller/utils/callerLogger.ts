@@ -46,11 +46,25 @@ export function logCaller(event: string, details?: string | object) {
  * Log error helper for caller-side errors
  * Always reads the latest caller name from the mutable reference
  * Works on both web and mobile
+ * Handles Error instances, Supabase error objects, and other error types
  */
 export function logCallerError(event: string, error: any) {
     // Always read the current value from the mutable reference
     const prefix = `[CALLER][${callerNameRef.current}]`;
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    // Handle different error types to produce human-readable messages
+    let errorMessage: string;
+    if (error instanceof Error) {
+        errorMessage = error.message;
+    } else if (error && typeof error === 'object') {
+        // Handle Supabase error objects and other error-like objects
+        errorMessage = error.message || error.details || error.hint || JSON.stringify(error);
+    } else if (typeof error === 'string') {
+        errorMessage = error;
+    } else {
+        errorMessage = String(error);
+    }
+    
     console.error(`${prefix} ${event}:`, errorMessage);
 }
 

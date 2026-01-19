@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
     Alert,
     Modal,
@@ -197,8 +197,8 @@ function CategoryDropdown({
     const isWeb = Platform.OS === "web";
     const controlRef = useRef<View | null>(null);
 
-    // Fallback to CATEGORY_OPTIONS if categoryOptions is not provided
-    const options = categoryOptions ?? CATEGORY_OPTIONS;
+    // Use provided categoryOptions or empty array
+    const options = categoryOptions ?? [];
 
     // For web display: move "Printing" to the bottom
     const displayOptions = isWeb 
@@ -983,7 +983,7 @@ export default function ErrandForm() {
     const [estPrice, setEstPrice] = useState("");
     const [printingFiles, setPrintingFiles] = useState<Record<string, any[]>>({});
     const [campusLocations, setCampusLocations] = useState<CampusLocation[]>([]);
-    const [categoryOptions, setCategoryOptions] = useState<readonly string[]>(CATEGORY_OPTIONS);
+    const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
     const [deliveryLocationName, setDeliveryLocationName] = useState<string>("");
 
     const [isScheduled, setIsScheduled] = useState(false);
@@ -1018,24 +1018,29 @@ export default function ErrandForm() {
     };
     const [showLocationPermissionModal, setShowLocationPermissionModal] = useState(false);
 
-    // fetch errand categories from backend
+    // fetch errand categories from database - fetch when component mounts (modal opens)
     useEffect(() => {
         const fetchCategories = async () => {
             try {
-                const { data, error } = await supabase.functions.invoke('errand-categories');
+                const { data, error } = await supabase
+                    .from("errand_categories")
+                    .select("code, name")
+                    .eq("is_active", true)
+                    .order("order");
                 
                 if (error) {
                     throw error;
                 }
                 
-                if (data && data.categories && Array.isArray(data.categories)) {
-                    // Map API response to string[] using category.name
-                    const categoryNames = data.categories.map((cat: { code: string; name: string }) => cat.name);
+                if (data && Array.isArray(data)) {
+                    const categoryNames = data.map((cat: { code: string; name: string }) => cat.name);
                     setCategoryOptions(categoryNames);
+                } else {
+                    setCategoryOptions([]);
                 }
             } catch (err) {
-                console.error("Error fetching errand categories, using fallback:", err);
-                // Fallback to hardcoded array on error - already set as initial state
+                console.error("Error fetching errand categories:", err);
+                setCategoryOptions([]);
             }
         };
         fetchCategories();

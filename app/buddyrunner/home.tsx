@@ -1898,6 +1898,19 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
         };
     }, [refetch]); // Only depends on refetch, NOT availableMode
 
+    // Periodic timeout check - automatically advances queue when runners ignore errands for >60 seconds
+    // This interval re-executes queueing logic (shouldShowErrand) which contains passive timeout detection
+    // Timeout detection logic itself remains unchanged - this only triggers it periodically
+    React.useEffect(() => {
+        if (!availableMode) return;
+
+        const timeoutCheckInterval = setInterval(() => {
+            refetch();
+        }, 10000); // Check every 10 seconds
+
+        return () => clearInterval(timeoutCheckInterval);
+    }, [availableMode, refetch]);
+
     return { loading, rows, refetch };
 }
 
@@ -2868,6 +2881,19 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
             supabase.removeChannel(channel);
         };
     }, [refetch]); // Only depends on refetch, NOT availableMode
+
+    // Periodic timeout check - automatically advances queue when runners ignore commissions for >60 seconds
+    // This interval re-executes queueing logic (shouldShowCommission) which contains passive timeout detection
+    // Timeout detection logic itself remains unchanged - this only triggers it periodically
+    React.useEffect(() => {
+        if (!availableMode) return;
+
+        const timeoutCheckInterval = setInterval(() => {
+            refetch();
+        }, 10000); // Check every 10 seconds
+
+        return () => clearInterval(timeoutCheckInterval);
+    }, [availableMode, refetch]);
 
     return { loading, rows, errorText, refetch };
 }

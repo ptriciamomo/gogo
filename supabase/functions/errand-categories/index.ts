@@ -20,7 +20,10 @@ serve(async (req) => {
     if (!supabaseUrl || !anonKey) {
       return new Response(
         JSON.stringify({ error: "Missing environment variables" }),
-        { status: 500, headers: corsHeaders }
+        { 
+          status: 500, 
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     }
 
@@ -28,10 +31,14 @@ serve(async (req) => {
     if (req.method !== "GET") {
       return new Response(
         JSON.stringify({ error: "Method not allowed" }),
-        { status: 405, headers: corsHeaders }
+        { 
+          status: 405, 
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     }
 
+    // Use anon key (respects RLS policies)
     const supabase = createClient(supabaseUrl, anonKey, {
       auth: { persistSession: false },
     });
@@ -49,13 +56,19 @@ serve(async (req) => {
           error: "Database query failed",
           details: result?.error?.message ?? "Unknown error",
         }),
-        { status: 500, headers: corsHeaders }
+        { 
+          status: 500, 
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
       );
     }
 
     return new Response(
       JSON.stringify({ categories: result.data ?? [] }),
-      { status: 200, headers: corsHeaders }
+      { 
+        status: 200, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   } catch (e) {
     return new Response(
@@ -63,7 +76,10 @@ serve(async (req) => {
         error: "Unhandled exception",
         details: e instanceof Error ? e.message : String(e),
       }),
-      { status: 500, headers: corsHeaders }
+      { 
+        status: 500, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      }
     );
   }
 });

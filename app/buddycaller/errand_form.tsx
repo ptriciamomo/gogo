@@ -9,7 +9,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import * as Sharing from 'expo-sharing';
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
     Alert,
     Modal,
@@ -247,8 +247,8 @@ function CategoryDropdown({
     const controlRef = useRef<View | null>(null);
     const [anchor, setAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
-    // Fallback to CATEGORY_OPTIONS if categoryOptions is not provided
-    const options = categoryOptions ?? CATEGORY_OPTIONS;
+    // Use provided categoryOptions or empty array
+    const options = categoryOptions ?? [];
 
     const openDropdown = () => {
         if (isWeb) {
@@ -937,7 +937,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
     const [printingSize, setPrintingSize] = useState<string>(""); // A3 or A4
     const [printingColor, setPrintingColor] = useState<string>(""); // Colored or Not Colored
     const [campusLocations, setCampusLocations] = useState<CampusLocation[]>([]);
-    const [categoryOptions, setCategoryOptions] = useState<readonly string[]>(CATEGORY_OPTIONS);
+    const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
     const [deliveryLocationName, setDeliveryLocationName] = useState<string>("");
     const [items, setItems] = useState<ItemRow[]>([{ id: String(Date.now() + Math.random()), name: "", qty: "", files: [] }]);
     const [estPrice, setEstPrice] = useState("");
@@ -984,35 +984,29 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
         document.head.appendChild(style);
     }, []);
 
-    // fetch errand categories from backend
+    // fetch errand categories from database - fetch when component mounts (modal opens)
     useEffect(() => {
         const fetchCategories = async () => {
             try {
-                // Use GET request to match Edge Function's expected method
-                const functionUrl = `${supabaseUrl}/functions/v1/errand-categories`;
+                const { data, error } = await supabase
+                    .from("errand_categories")
+                    .select("code, name")
+                    .eq("is_active", true)
+                    .order("order");
                 
-                const response = await fetch(functionUrl, {
-                    method: 'GET',
-                    headers: {
-                        'apikey': supabaseAnonKey,
-                        'Authorization': `Bearer ${supabaseAnonKey}`,
-                    },
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                if (error) {
+                    throw error;
                 }
                 
-                const data = await response.json();
-                
-                if (data && data.categories && Array.isArray(data.categories)) {
-                    // Map API response to string[] using category.name
-                    const categoryNames = data.categories.map((cat: { code: string; name: string }) => cat.name);
+                if (data && Array.isArray(data)) {
+                    const categoryNames = data.map((cat: { code: string; name: string }) => cat.name);
                     setCategoryOptions(categoryNames);
+                } else {
+                    setCategoryOptions([]);
                 }
             } catch (err) {
-                console.error("Error fetching errand categories, using fallback:", err);
-                // Fallback to hardcoded array on error - already set as initial state
+                console.error("Error fetching errand categories:", err);
+                setCategoryOptions([]);
             }
         };
         fetchCategories();

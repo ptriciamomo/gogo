@@ -43,6 +43,15 @@ const CATEGORY_OPTIONS = [
     "Printing",
 ] as const;
 
+/* =============== PHASE 2: Category ID Mapping =============== */
+// Explicit mapping of category names to their database IDs
+// This avoids repeated database queries and makes dependencies clear
+const CATEGORY_NAME_TO_ID: Record<string, number> = {
+    "Food Delivery": 2,
+    "School Materials": 3,
+};
+/* =============== END PHASE 2 MAPPING =============== */
+
 const SCHOOL_MATERIALS = [
     { name: "Yellowpad", price: "₱10" },
     { name: "Ballpen", price: "₱10" },
@@ -54,6 +63,18 @@ type CampusLocation = {
     latitude: number;
     longitude: number;
 };
+
+/* =============== PHASE 1: PREPARATION TYPES =============== */
+// Future interface for database-driven errand items
+// NOTE: Not wired to database yet - preparation only
+export interface ErrandItem {
+    id?: string;
+    name: string;
+    price?: number;  // Numeric price from database (will replace string prices)
+    qty: number;
+    subcategory?: string | null;  // For Food Delivery subcategories (Canteen, Drinks)
+}
+/* =============== END PHASE 1 TYPES =============== */
 
 // Food and drink items for Food Delivery category
 const FOOD_ITEMS = {
@@ -74,6 +95,8 @@ const FOOD_ITEMS = {
 } as const;
 
 // Helper function to parse price from FOOD_ITEMS or School Materials
+// TODO (Phase 4): Replace duplicated parseItemPrice logic with shared utility from utils/errandItemPricing.ts
+// This function is duplicated in: view_errand.tsx, buddyrunner/view_errand.tsx, buddyrunner/view_errand_web.tsx
 function parseItemPrice(itemName: string): number {
     // Food Delivery items
     for (const category of Object.values(FOOD_ITEMS)) {
@@ -412,7 +435,7 @@ function CategoryDropdown({
                         ]}
                     >
                         <View style={s.dropdownPanelNative}>
-                            <ScrollView style={{ maxHeight: 260 }}>
+                            <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator={true}>
                                 <View style={s.categoryContainer}>
                                     {options.map((opt) => (
                                         <View key={opt} style={s.categorySection}>
@@ -464,44 +487,44 @@ function CategoryDropdown({
                                                             <Text style={[s.checkboxLabel, { marginBottom: rp(4) }]}>
                                                                 Color:
                                                             </Text>
-                                                <TouchableOpacity
-                                                    style={s.checkboxContainer}
-                                                    onPress={() => handlePrintingColorSelect("Colored")}
-                                                    activeOpacity={0.8}
-                                                >
-                                                    <View style={[s.checkbox, printingColor === "Colored" && s.checkboxSelected]}>
-                                                        {printingColor === "Colored" && (
-                                                            <Ionicons name="checkmark" size={12} color="white" />
-                                                        )}
-                                                    </View>
-                                                    <View style={{ flexDirection: "row", alignItems: "center", gap: rp(6) }}>
-                                                        <Text style={s.checkboxLabel}>Colored</Text>
-                                                        {printingSize === "A3" ? (
-                                                            <Text style={s.printingPrice}>₱25</Text>
-                                                        ) : printingSize === "A4" ? (
-                                                            <Text style={s.printingPrice}>₱5</Text>
-                                                        ) : null}
-                                                    </View>
-                                                </TouchableOpacity>
-                                                <TouchableOpacity
-                                                    style={[s.checkboxContainer, { marginTop: rp(4) }]}
-                                                    onPress={() => handlePrintingColorSelect("Not Colored")}
-                                                    activeOpacity={0.8}
-                                                >
-                                                    <View style={[s.checkbox, printingColor === "Not Colored" && s.checkboxSelected]}>
-                                                        {printingColor === "Not Colored" && (
-                                                            <Ionicons name="checkmark" size={12} color="white" />
-                                                        )}
-                                                    </View>
-                                                    <View style={{ flexDirection: "row", alignItems: "center", gap: rp(6) }}>
-                                                        <Text style={s.checkboxLabel}>Not Colored</Text>
-                                                        {printingSize === "A3" ? (
-                                                            <Text style={s.printingPrice}>₱15</Text>
-                                                        ) : printingSize === "A4" ? (
-                                                            <Text style={s.printingPrice}>₱2</Text>
-                                                        ) : null}
-                                                    </View>
-                                                </TouchableOpacity>
+                                                            <TouchableOpacity
+                                                                style={s.checkboxContainer}
+                                                                onPress={() => handlePrintingColorSelect("Colored")}
+                                                                activeOpacity={0.8}
+                                                            >
+                                                                <View style={[s.checkbox, printingColor === "Colored" && s.checkboxSelected]}>
+                                                                    {printingColor === "Colored" && (
+                                                                        <Ionicons name="checkmark" size={12} color="white" />
+                                                                    )}
+                                                                </View>
+                                                                <View style={{ flexDirection: "row", alignItems: "center", gap: rp(6) }}>
+                                                                    <Text style={s.checkboxLabel}>Colored</Text>
+                                                                    {printingSize === "A3" ? (
+                                                                        <Text style={s.printingPrice}>₱25</Text>
+                                                                    ) : printingSize === "A4" ? (
+                                                                        <Text style={s.printingPrice}>₱5</Text>
+                                                                    ) : null}
+                                                                </View>
+                                                            </TouchableOpacity>
+                                                            <TouchableOpacity
+                                                                style={[s.checkboxContainer, { marginTop: rp(4) }]}
+                                                                onPress={() => handlePrintingColorSelect("Not Colored")}
+                                                                activeOpacity={0.8}
+                                                            >
+                                                                <View style={[s.checkbox, printingColor === "Not Colored" && s.checkboxSelected]}>
+                                                                    {printingColor === "Not Colored" && (
+                                                                        <Ionicons name="checkmark" size={12} color="white" />
+                                                                    )}
+                                                                </View>
+                                                                <View style={{ flexDirection: "row", alignItems: "center", gap: rp(6) }}>
+                                                                    <Text style={s.checkboxLabel}>Not Colored</Text>
+                                                                    {printingSize === "A3" ? (
+                                                                        <Text style={s.printingPrice}>₱15</Text>
+                                                                    ) : printingSize === "A4" ? (
+                                                                        <Text style={s.printingPrice}>₱2</Text>
+                                                                    ) : null}
+                                                                </View>
+                                                            </TouchableOpacity>
                                                         </View>
                                                     ) : null}
                                                 </View>
@@ -523,15 +546,70 @@ function SchoolMaterialDropdown({
     value,
     onSelect,
     placeholder = "Select material",
+    category,
 }: {
     value: string;
-    onSelect: (item: string) => void;
+    onSelect: (item: string, price?: number) => void;  // Updated to pass price
     placeholder?: string;
+    category?: string;
 }) {
+    // PHASE 2: Database-driven items
+    const [items, setItems] = useState<Array<{ name: string; price: number }>>([]);
+    const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
     const isWeb = Platform.OS === "web";
     const controlRef = useRef<View | null>(null);
     const [anchor, setAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+    // PHASE 2: Fetch items from database
+    useEffect(() => {
+        // Only fetch if category is "School Materials"
+        if (category !== "School Materials") {
+            return; // Don't fetch for other categories (rendering is controlled by parent)
+        }
+
+        const fetchItems = async () => {
+            setLoading(true);
+            try {
+                const categoryId = CATEGORY_NAME_TO_ID["School Materials"];
+                if (!categoryId) {
+                    console.error("Category ID not found for School Materials");
+                    setItems([]);
+                    return;
+                }
+
+                // Fetch items from errand_items table
+                const { data: itemsData, error: itemsError } = await supabase
+                    .from("errand_items")
+                    .select("name, price")
+                    .eq("category_id", categoryId)
+                    .eq("is_active", true)
+                    .order("sort_order", { ascending: true });
+
+                if (itemsError) {
+                    console.error("Error fetching items:", itemsError);
+                    setItems([]); // Show empty state on error
+                    return;
+                }
+
+                if (itemsData && itemsData.length > 0) {
+                    setItems(itemsData.map(item => ({
+                        name: item.name,
+                        price: parseFloat(String(item.price || 0))
+                    })));
+                } else {
+                    setItems([]); // Show "No items available" when database is empty
+                }
+            } catch (err) {
+                console.error("Unexpected error fetching items:", err);
+                setItems([]); // Show empty state on error
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchItems();
+    }, [category]);
 
     const openDropdown = () => {
         if (isWeb) {
@@ -545,11 +623,11 @@ function SchoolMaterialDropdown({
     };
     const closeDropdown = () => setOpen(false);
 
-    const renderOption = (opt: { name: string; price: string }) => (
+    const renderOption = (opt: { name: string; price: number }) => (
         <TouchableOpacity
             key={opt.name}
             onPress={() => {
-                onSelect(opt.name);
+                onSelect(opt.name, opt.price);  // Pass price along with name
                 closeDropdown();
             }}
             style={[s.dropdownItem, { borderBottomWidth: 0 }]}
@@ -561,7 +639,7 @@ function SchoolMaterialDropdown({
                 </View>
                 <View style={{ flex: 1 }}>
                     <Text style={s.checkboxLabel}>{opt.name}</Text>
-                    <Text style={s.schoolItemPrice}>{opt.price}</Text>
+                    <Text style={s.schoolItemPrice}>₱{opt.price}</Text>
                 </View>
             </View>
         </TouchableOpacity>
@@ -589,7 +667,17 @@ function SchoolMaterialDropdown({
                 {isWeb && open && (
                     <View style={s.dropdownPanel}>
                         <ScrollView style={{ maxHeight: 220, backgroundColor: "transparent" }}>
-                            {SCHOOL_MATERIALS.map(renderOption)}
+                            {loading ? (
+                                <View style={{ padding: 16, alignItems: "center" }}>
+                                    <Text style={{ color: colors.text, opacity: 0.6 }}>Loading items...</Text>
+                                </View>
+                            ) : items.length === 0 ? (
+                                <View style={{ padding: 16, alignItems: "center" }}>
+                                    <Text style={{ color: colors.text, opacity: 0.6 }}>No items available</Text>
+                                </View>
+                            ) : (
+                                items.map(renderOption)
+                            )}
                         </ScrollView>
                     </View>
                 )}
@@ -611,7 +699,17 @@ function SchoolMaterialDropdown({
                     >
                         <View style={s.dropdownPanelNative}>
                             <ScrollView style={{ maxHeight: 260 }}>
-                                {SCHOOL_MATERIALS.map(renderOption)}
+                                {loading ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>Loading items...</Text>
+                                    </View>
+                                ) : items.length === 0 ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>No items available</Text>
+                                    </View>
+                                ) : (
+                                    items.map(renderOption)
+                                )}
                             </ScrollView>
                         </View>
                     </View>
@@ -626,20 +724,86 @@ function FoodItemDropdown({
     value,
     onSelect,
     placeholder = "Select item",
+    category,
 }: {
     value: string;
-    onSelect: (item: string) => void;
+    onSelect: (item: string, price?: number) => void;  // Updated to pass price
     placeholder?: string;
+    category?: string;
 }) {
+    // PHASE 2: Database-driven items grouped by subcategory
+    const [itemsBySubcategory, setItemsBySubcategory] = useState<Record<string, Array<{ name: string; price: number }>>>({});
+    const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
-    const [expandedSections, setExpandedSections] = useState<{ [key: string]: boolean }>({
-        "Canteen": true,
-        "Drinks": true
-    });
+    const [expandedSections, setExpandedSections] = useState<{ [key: string]: boolean }>({});
     const isWeb = Platform.OS === "web";
 
     const controlRef = useRef<View | null>(null);
     const [anchor, setAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+    // PHASE 2: Fetch items from database
+    useEffect(() => {
+        // Only fetch if category is "Food Delivery"
+        if (category !== "Food Delivery") {
+            return; // Don't fetch for other categories (rendering is controlled by parent)
+        }
+
+        const fetchItems = async () => {
+            setLoading(true);
+            try {
+                const categoryId = CATEGORY_NAME_TO_ID["Food Delivery"];
+                if (!categoryId) {
+                    console.error("Category ID not found for Food Delivery");
+                    setItemsBySubcategory({});
+                    return;
+                }
+
+                // Fetch items from errand_items table
+                const { data: itemsData, error: itemsError } = await supabase
+                    .from("errand_items")
+                    .select("name, price, subcategory")
+                    .eq("category_id", categoryId)
+                    .eq("is_active", true)
+                    .order("subcategory", { ascending: true })
+                    .order("sort_order", { ascending: true });
+
+                if (itemsError) {
+                    console.error("Error fetching items:", itemsError);
+                    setItemsBySubcategory({}); // Show empty state on error
+                    return;
+                }
+
+                if (itemsData && itemsData.length > 0) {
+                    // Group items by subcategory
+                    const grouped: Record<string, Array<{ name: string; price: number }>> = {};
+                    itemsData.forEach(item => {
+                        const subcat = item.subcategory || "Other";
+                        if (!grouped[subcat]) {
+                            grouped[subcat] = [];
+                        }
+                        grouped[subcat].push({
+                            name: item.name,
+                            price: parseFloat(String(item.price || 0))
+                        });
+                    });
+                    setItemsBySubcategory(grouped);
+                    // Expand all sections by default
+                    const expanded: { [key: string]: boolean } = {};
+                    Object.keys(grouped).forEach(key => { expanded[key] = true; });
+                    setExpandedSections(expanded);
+                } else {
+                    setItemsBySubcategory({}); // Show "No items available" when database is empty
+                }
+            } catch (err) {
+                console.error("Unexpected error fetching items:", err);
+                setItemsBySubcategory({}); // Show empty state on error
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchItems();
+    }, [category]);
 
     const openDropdown = () => {
         if (isWeb) {
@@ -660,9 +824,8 @@ function FoodItemDropdown({
         }));
     };
 
-    const toggleItem = (itemName: string) => {
-        // For now, just select the item (you can modify this to handle multiple selections)
-        onSelect(itemName);
+    const toggleItem = (itemName: string, itemPrice: number) => {
+        onSelect(itemName, itemPrice);  // Pass price along with name
         closeDropdown();
     };
 
@@ -688,45 +851,55 @@ function FoodItemDropdown({
                     {isWeb ? (
                         <View style={s.foodDropdownPanel}>
                             <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={false}>
-                                {Object.entries(FOOD_ITEMS).map(([category, items]) => (
-                                    <View key={category} style={s.foodSection}>
-                                        <TouchableOpacity
-                                            style={s.foodSectionHeader}
-                                            onPress={() => toggleSection(category)}
-                                        >
-                                            <View style={s.foodSectionTitle}>
-                                                <Text style={s.foodSectionText}>{category}</Text>
-                                            </View>
-                                            <Ionicons
-                                                name={expandedSections[category] ? "chevron-down" : "chevron-forward"} 
-                                                size={16}
-                                                color={colors.maroon}
-                                            />
-                                        </TouchableOpacity>
-                                        
-                                        {expandedSections[category] && (
-                                            <View style={s.foodSectionContent}>
-                                                {items.map((item, idx) => (
-                                                    <TouchableOpacity
-                                                        key={idx}
-                                                        style={s.foodItemRow}
-                                                        onPress={() => toggleItem(item.name)}
-                                                    >
-                                                        <View style={s.foodCheckbox}>
-                                                            {value === item.name && (
-                                                                <Ionicons name="checkmark" size={12} color="white" />
-                                                            )}
-                                                        </View>
-                                                        <View style={s.foodItemInfo}>
-                                                            <Text style={s.foodItemName}>{item.name}</Text>
-                                                            <Text style={s.foodItemPrice}>{item.price}</Text>
-                                                        </View>
-                                                    </TouchableOpacity>
-                                                ))}
-                                            </View>
-                                        )}
+                                {loading ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>Loading items...</Text>
                                     </View>
-                                ))}
+                                ) : Object.keys(itemsBySubcategory).length === 0 ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>No items available</Text>
+                                    </View>
+                                ) : (
+                                    Object.entries(itemsBySubcategory).map(([subcategory, items]) => (
+                                        <View key={subcategory} style={s.foodSection}>
+                                            <TouchableOpacity
+                                                style={s.foodSectionHeader}
+                                                onPress={() => toggleSection(subcategory)}
+                                            >
+                                                <View style={s.foodSectionTitle}>
+                                                    <Text style={s.foodSectionText}>{subcategory}</Text>
+                                                </View>
+                                                <Ionicons
+                                                    name={expandedSections[subcategory] ? "chevron-down" : "chevron-forward"} 
+                                                    size={16}
+                                                    color={colors.maroon}
+                                                />
+                                            </TouchableOpacity>
+                                            
+                                            {expandedSections[subcategory] && (
+                                                <View style={s.foodSectionContent}>
+                                                    {items.map((item, idx) => (
+                                                        <TouchableOpacity
+                                                            key={idx}
+                                                            style={s.foodItemRow}
+                                                            onPress={() => toggleItem(item.name, item.price)}
+                                                        >
+                                                            <View style={s.foodCheckbox}>
+                                                                {value === item.name && (
+                                                                    <Ionicons name="checkmark" size={12} color="white" />
+                                                                )}
+                                                            </View>
+                                                            <View style={s.foodItemInfo}>
+                                                                <Text style={s.foodItemName}>{item.name}</Text>
+                                                                <Text style={s.foodItemPrice}>₱{item.price}</Text>
+                                                            </View>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            )}
+                                        </View>
+                                    ))
+                                )}
                             </ScrollView>
                         </View>
                     ) : (
@@ -735,45 +908,55 @@ function FoodItemDropdown({
                             <View style={[s.modalRoot, anchor && { left: anchor.x, top: anchor.y + anchor.h }]}>
                                 <View style={[s.foodDropdownPanelNative, anchor && { width: anchor.w }]}>
                                     <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={false}>
-                                {Object.entries(FOOD_ITEMS).map(([category, items]) => (
-                                    <View key={category} style={s.foodSection}>
-                                                <TouchableOpacity
-                                                    style={s.foodSectionHeader}
-                                                    onPress={() => toggleSection(category)}
-                                                >
-                                                    <View style={s.foodSectionTitle}>
-                                                <Text style={s.foodSectionText}>{category}</Text>
+                                        {loading ? (
+                                            <View style={{ padding: 16, alignItems: "center" }}>
+                                                <Text style={{ color: colors.text, opacity: 0.6 }}>Loading items...</Text>
                                             </View>
-                                            <Ionicons
-                                                name={expandedSections[category] ? "chevron-down" : "chevron-forward"}
-                                                size={16}
-                                                color={colors.maroon}
-                                            />
-                                        </TouchableOpacity>
-
-                                        {expandedSections[category] && (
-                                            <View style={s.foodSectionContent}>
-                                                {items.map((item, idx) => (
-                                                            <TouchableOpacity
-                                                                key={idx}
-                                                                style={s.foodItemRow}
-                                                                onPress={() => toggleItem(item.name)}
-                                                            >
-                                                        <View style={s.foodCheckbox}>
-                                                                    {value === item.name && (
-                                                                        <Ionicons name="checkmark" size={12} color="white" />
-                                                                    )}
+                                        ) : Object.keys(itemsBySubcategory).length === 0 ? (
+                                            <View style={{ padding: 16, alignItems: "center" }}>
+                                                <Text style={{ color: colors.text, opacity: 0.6 }}>No items available</Text>
+                                            </View>
+                                        ) : (
+                                            Object.entries(itemsBySubcategory).map(([subcategory, items]) => (
+                                                <View key={subcategory} style={s.foodSection}>
+                                                    <TouchableOpacity
+                                                        style={s.foodSectionHeader}
+                                                        onPress={() => toggleSection(subcategory)}
+                                                    >
+                                                        <View style={s.foodSectionTitle}>
+                                                            <Text style={s.foodSectionText}>{subcategory}</Text>
                                                         </View>
-                                                        <View style={s.foodItemInfo}>
-                                                            <Text style={s.foodItemName}>{item.name}</Text>
-                                                            <Text style={s.foodItemPrice}>{item.price}</Text>
-                                                        </View>
+                                                        <Ionicons
+                                                            name={expandedSections[subcategory] ? "chevron-down" : "chevron-forward"}
+                                                            size={16}
+                                                            color={colors.maroon}
+                                                        />
                                                     </TouchableOpacity>
-                                                ))}
-                                            </View>
+
+                                                    {expandedSections[subcategory] && (
+                                                        <View style={s.foodSectionContent}>
+                                                            {items.map((item, idx) => (
+                                                                <TouchableOpacity
+                                                                    key={idx}
+                                                                    style={s.foodItemRow}
+                                                                    onPress={() => toggleItem(item.name, item.price)}
+                                                                >
+                                                                    <View style={s.foodCheckbox}>
+                                                                        {value === item.name && (
+                                                                            <Ionicons name="checkmark" size={12} color="white" />
+                                                                        )}
+                                                                    </View>
+                                                                    <View style={s.foodItemInfo}>
+                                                                        <Text style={s.foodItemName}>{item.name}</Text>
+                                                                        <Text style={s.foodItemPrice}>₱{item.price}</Text>
+                                                                    </View>
+                                                                </TouchableOpacity>
+                                                            ))}
+                                                        </View>
+                                                    )}
+                                                </View>
+                                            ))
                                         )}
-                                    </View>
-                                ))}
                             </ScrollView>
                         </View>
                     </View>
@@ -913,6 +1096,7 @@ type ItemRow = {
     id: string; 
     name: string; 
     qty: string;
+    price?: number;  // Price from database (added in Phase 2)
     files?: (DocumentPicker.DocumentPickerAsset | ImagePicker.ImagePickerAsset)[];
 };
 
@@ -1066,13 +1250,16 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
         let subtotal = 0;
 
         // Calculate item prices for all categories (Food Delivery has prices, Printing uses size/color pricing)
+        // FUTURE: Price calculation will use database prices when available, with parseItemPrice() as fallback
         items.forEach((item) => {
             if (item.name && item.qty) {
                 let itemPrice = 0;
                 if (category === "Printing") {
+                    // 🔒 PROTECTED: Printing price calculation - DO NOT MODIFY
                     itemPrice = getPrintingColorPrice(printingSize, printingColor);
                 } else {
-                    itemPrice = parseItemPrice(item.name); // Returns 0 if no price found
+                    // PHASE 2: Use item.price from database if available, otherwise fallback to parseItemPrice()
+                    itemPrice = item.price !== undefined ? item.price : parseItemPrice(item.name); // Returns 0 if no price found
                 }
                 const quantity = parseFloat(String(item.qty)) || 0;
                 const itemTotal = itemPrice * quantity;
@@ -2335,7 +2522,8 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                             onSelect={setCategory} 
                             onPrintingSizeSelect={setPrintingSize}
                             onPrintingColorSelect={setPrintingColor}
-                            placeholder="Select Category" 
+                            placeholder="Select Category"
+                            categoryOptions={categoryOptions}
                         />
                     </View>
 
@@ -2354,6 +2542,8 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
 
                     {/*Diri Jade sa items*/}
                     {/* 📦 ITEMS SECTION */}
+                    {/* FUTURE: Item selection logic will be enhanced with database-driven items for Food Delivery and School Materials */}
+                    {/* NOTE: Printing category MUST remain unchanged - uses FileUpload component, not database items */}
                     <View style={s.formGroup}>
                         <Text style={s.label}>Items:</Text>
                         {items.map((it) => (
@@ -2363,7 +2553,8 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                     <View style={{ flex: 3, marginRight: 8 }}>
                                         <FoodItemDropdown
                                             value={it.name}
-                                            onSelect={(itemName) => updateItem(it.id, { name: itemName })}
+                                            category={category}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
                                             placeholder="Select food item"
                                         />
                                     </View>
@@ -2371,11 +2562,13 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                     <View style={{ flex: 3, marginRight: 8 }}>
                                         <SchoolMaterialDropdown
                                             value={it.name}
-                                            onSelect={(itemName) => updateItem(it.id, { name: itemName })}
+                                            category={category}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
                                             placeholder="Select material"
                                         />
                                     </View>
                                 ) : category === "Printing" ? (
+                                    // 🔒 PROTECTED: Printing category uses FileUpload - DO NOT MODIFY
                                     <FileUpload
                                         files={it.files || []}
                                         onFilesChange={(newFiles) =>

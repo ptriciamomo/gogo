@@ -105,6 +105,8 @@ const SCHOOL_MATERIALS = [
 ] as const;
 
 // Helper function to parse price from FOOD_ITEMS or School Materials
+// TODO (Phase 4): Replace duplicated parseItemPrice logic with shared utility from utils/errandItemPricing.ts
+// This function is duplicated in: errand_form.tsx, view_errand.tsx, view_errand_web.tsx
 function parseItemPrice(itemName: string): number {
     // Food Delivery items
     for (const category of Object.values(FOOD_ITEMS)) {

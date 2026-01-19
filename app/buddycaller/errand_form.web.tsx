@@ -36,6 +36,13 @@ const CATEGORY_OPTIONS = [
     "Printing",
 ] as const;
 
+/* =============== PHASE 2: CATEGORY ID MAPPING =============== */
+const CATEGORY_NAME_TO_ID: Record<string, number> = {
+    "Food Delivery": 2,
+    "School Materials": 3,
+};
+/* =============== END PHASE 2 MAPPING =============== */
+
 type CampusLocation = {
     id: string;
     name: string;
@@ -182,6 +189,7 @@ function CategoryDropdown({
     onPrintingColorSelect,
     placeholder = "Select Category",
     categoryOptions,
+    categoriesLoading = false,
 }: {
     value?: string;
     printingSize?: string;
@@ -191,6 +199,7 @@ function CategoryDropdown({
     onPrintingColorSelect: (color: string) => void;
     placeholder?: string;
     categoryOptions?: readonly string[];
+    categoriesLoading?: boolean;
 }) {
     const [open, setOpen] = useState(false);
     const [printingExpanded, setPrintingExpanded] = useState(false);
@@ -208,6 +217,7 @@ function CategoryDropdown({
     const { anchor, panelMaxH, measure } = useAnchoredPanel(controlRef, open);
 
     const openDropdown = () => {
+        if (categoriesLoading) return;
         setOpen((prev) => !prev);
         requestAnimationFrame(measure);
     };
@@ -257,7 +267,12 @@ function CategoryDropdown({
                     activeOpacity={0.8}
                     onPress={openDropdown}
                     accessibilityRole="button"
-                    style={[s.input as any, (s.selectInput as any)]}
+                    disabled={categoriesLoading}
+                    style={[
+                        s.input as any,
+                        s.selectInput as any,
+                        categoriesLoading && { opacity: 0.6, cursor: 'not-allowed' }
+                    ]}
                 >
                     <Text style={{ color: value ? colors.text : "#999" }}>
                         {displayValue}
@@ -450,7 +465,13 @@ function CategoryDropdown({
 
 /* Mobile confirm bar and related styles removed */
 
-type ItemRow = { id: string; name: string; qty: string; files?: any[] };
+type ItemRow = { 
+    id: string; 
+    name: string; 
+    qty: string;
+    price?: number;  // Price from database (added in Phase 2)
+    files?: any[];
+};
 
 /* ------------------------------------------------------------------ */
 /* Success modal (unchanged visuals)                                   */
@@ -611,16 +632,71 @@ function SchoolMaterialDropdown({
     value,
     onSelect,
     placeholder = "Select material",
+    category,
 }: {
     value: string;
-    onSelect: (item: string) => void;
+    onSelect: (item: string, price?: number) => void;  // Updated to pass price
     placeholder?: string;
+    category?: string;
 }) {
+    // PHASE 2: Database-driven items
+    const [items, setItems] = useState<Array<{ name: string; price: number }>>([]);
+    const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
     const isWeb = Platform.OS === "web";
     const controlRef = useRef<View | null>(null);
 
     const { anchor, panelMaxH, measure } = useAnchoredPanel(controlRef, open);
+
+    // PHASE 2: Fetch items from database
+    useEffect(() => {
+        // Only fetch if category is "School Materials"
+        if (category !== "School Materials") {
+            return; // Don't fetch for other categories (rendering is controlled by parent)
+        }
+
+        const fetchItems = async () => {
+            setLoading(true);
+            try {
+                const categoryId = CATEGORY_NAME_TO_ID["School Materials"];
+                if (!categoryId) {
+                    console.error("Category ID not found for School Materials");
+                    setItems([]);
+                    return;
+                }
+
+                // Fetch items from errand_items table
+                const { data: itemsData, error: itemsError } = await supabase
+                    .from("errand_items")
+                    .select("name, price")
+                    .eq("category_id", categoryId)
+                    .eq("is_active", true)
+                    .order("sort_order", { ascending: true });
+
+                if (itemsError) {
+                    console.error("Error fetching items:", itemsError);
+                    setItems([]); // Show empty state on error
+                    return;
+                }
+
+                if (itemsData && itemsData.length > 0) {
+                    setItems(itemsData.map(item => ({
+                        name: item.name,
+                        price: parseFloat(String(item.price || 0))
+                    })));
+                } else {
+                    setItems([]); // Show "No items available" when database is empty
+                }
+            } catch (err) {
+                console.error("Unexpected error fetching items:", err);
+                setItems([]); // Show empty state on error
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchItems();
+    }, [category]);
 
     const openDropdown = () => {
         setOpen((prev) => !prev);
@@ -637,11 +713,11 @@ function SchoolMaterialDropdown({
         return () => window.removeEventListener("keydown", onKey);
     }, [isWeb, open]);
 
-    const renderOption = (opt: { name: string; price: string }) => (
+    const renderOption = (opt: { name: string; price: number }) => (
         <TouchableOpacity
             key={opt.name}
             onPress={() => {
-                onSelect(opt.name);
+                onSelect(opt.name, opt.price);  // Pass price along with name
                 closeDropdown();
             }}
             style={[s.dropdownItem, { borderBottomWidth: 0 }]}
@@ -653,7 +729,7 @@ function SchoolMaterialDropdown({
                 </View>
                 <View style={{ flex: 1 }}>
                     <Text style={s.checkboxLabel}>{opt.name}</Text>
-                    <Text style={s.schoolItemPrice}>{opt.price}</Text>
+                    <Text style={s.schoolItemPrice}>₱{opt.price}</Text>
                 </View>
             </View>
         </TouchableOpacity>
@@ -698,7 +774,17 @@ function SchoolMaterialDropdown({
                                 nestedScrollEnabled
                                 scrollEnabled
                             >
-                                {SCHOOL_MATERIALS.map(renderOption)}
+                                {loading ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>Loading items...</Text>
+                                    </View>
+                                ) : items.length === 0 ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>No items available</Text>
+                                    </View>
+                                ) : (
+                                    items.map(renderOption)
+                                )}
                             </ScrollView>
                         </View>
                     </View>
@@ -712,20 +798,86 @@ function FoodItemDropdown({
     value,
     onSelect,
     placeholder = "Select item",
+    category,
 }: {
     value: string;
-    onSelect: (item: string) => void;
+    onSelect: (item: string, price?: number) => void;  // Updated to pass price
     placeholder?: string;
+    category?: string;
 }) {
+    // PHASE 2: Database-driven items
+    const [itemsBySubcategory, setItemsBySubcategory] = useState<Record<string, Array<{ name: string; price: number }>>>({});
+    const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
-    const [expandedSections, setExpandedSections] = useState<{ [key: string]: boolean }>({
-        Canteen: true,
-        Drinks: true,
-    });
+    const [expandedSections, setExpandedSections] = useState<{ [key: string]: boolean }>({});
 
     const controlRef = useRef<View | null>(null);
     const isWeb = Platform.OS === "web";
     const { anchor, panelMaxH, measure } = useAnchoredPanel(controlRef, open);
+
+    // PHASE 2: Fetch items from database
+    useEffect(() => {
+        // Only fetch if category is "Food Delivery"
+        if (category !== "Food Delivery") {
+            return; // Don't fetch for other categories (rendering is controlled by parent)
+        }
+
+        const fetchItems = async () => {
+            setLoading(true);
+            try {
+                const categoryId = CATEGORY_NAME_TO_ID["Food Delivery"];
+                if (!categoryId) {
+                    console.error("Category ID not found for Food Delivery");
+                    setItemsBySubcategory({});
+                    return;
+                }
+
+                // Fetch items from errand_items table
+                const { data: itemsData, error: itemsError } = await supabase
+                    .from("errand_items")
+                    .select("name, price, subcategory")
+                    .eq("category_id", categoryId)
+                    .eq("is_active", true)
+                    .order("subcategory", { ascending: true })
+                    .order("sort_order", { ascending: true });
+
+                if (itemsError) {
+                    console.error("Error fetching items:", itemsError);
+                    setItemsBySubcategory({}); // Show empty state on error
+                    return;
+                }
+
+                if (itemsData && itemsData.length > 0) {
+                    // Group items by subcategory
+                    const grouped: Record<string, Array<{ name: string; price: number }>> = {};
+                    itemsData.forEach(item => {
+                        const subcat = item.subcategory || "Other";
+                        if (!grouped[subcat]) {
+                            grouped[subcat] = [];
+                        }
+                        grouped[subcat].push({
+                            name: item.name,
+                            price: parseFloat(String(item.price || 0))
+                        });
+                    });
+                    setItemsBySubcategory(grouped);
+                    // Expand all sections by default
+                    const expanded: { [key: string]: boolean } = {};
+                    Object.keys(grouped).forEach(key => { expanded[key] = true; });
+                    setExpandedSections(expanded);
+                } else {
+                    setItemsBySubcategory({}); // Show "No items available" when database is empty
+                }
+            } catch (err) {
+                console.error("Unexpected error fetching items:", err);
+                setItemsBySubcategory({}); // Show empty state on error
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchItems();
+    }, [category]);
 
     const openDropdown = () => {
         setOpen(true);
@@ -736,8 +888,8 @@ function FoodItemDropdown({
     const toggleSection = (sectionName: string) =>
         setExpandedSections((prev) => ({ ...prev, [sectionName]: !prev[sectionName] }));
 
-    const toggleItem = (itemName: string) => {
-        onSelect(itemName);
+    const toggleItem = (itemName: string, itemPrice: number) => {
+        onSelect(itemName, itemPrice);  // Pass price along with name
         closeDropdown();
     };
 
@@ -776,36 +928,46 @@ function FoodItemDropdown({
                                 nestedScrollEnabled
                                 scrollEnabled
                             >
-                                {Object.entries(FOOD_ITEMS).map(([category, items]) => (
-                                    <View key={category} style={s.foodSection}>
-                                        <TouchableOpacity style={s.foodSectionHeader} onPress={() => toggleSection(category)}>
-                                            <View style={s.foodSection}>
-                                                <Text style={s.foodSectionText}>{category}</Text>
-                                            </View>
-                                            <Ionicons
-                                                name={expandedSections[category] ? "chevron-down" : "chevron-forward"}
-                                                size={16}
-                                                color={colors.maroon}
-                                            />
-                                        </TouchableOpacity>
-
-                                        {expandedSections[category] && (
-                                            <View style={s.foodSectionContent}>
-                                                {items.map((item, idx) => (
-                                                    <TouchableOpacity key={idx} style={s.foodItemRow} onPress={() => toggleItem(item.name)}>
-                                                        <View style={s.foodCheckbox}>
-                                                            {value === item.name && <Ionicons name="checkmark" size={12} color="white" />}
-                                                        </View>
-                                                        <View style={s.foodItemInfo}>
-                                                            <Text style={s.foodItemName}>{item.name}</Text>
-                                                            <Text style={s.foodItemPrice}>{item.price}</Text>
-                                                        </View>
-                                                    </TouchableOpacity>
-                                                ))}
-                                            </View>
-                                        )}
+                                {loading ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>Loading items...</Text>
                                     </View>
-                                ))}
+                                ) : Object.keys(itemsBySubcategory).length === 0 ? (
+                                    <View style={{ padding: 16, alignItems: "center" }}>
+                                        <Text style={{ color: colors.text, opacity: 0.6 }}>No items available</Text>
+                                    </View>
+                                ) : (
+                                    Object.entries(itemsBySubcategory).map(([subcategory, items]) => (
+                                        <View key={subcategory} style={s.foodSection}>
+                                            <TouchableOpacity style={s.foodSectionHeader} onPress={() => toggleSection(subcategory)}>
+                                                <View style={s.foodSection}>
+                                                    <Text style={s.foodSectionText}>{subcategory}</Text>
+                                                </View>
+                                                <Ionicons
+                                                    name={expandedSections[subcategory] ? "chevron-down" : "chevron-forward"}
+                                                    size={16}
+                                                    color={colors.maroon}
+                                                />
+                                            </TouchableOpacity>
+
+                                            {expandedSections[subcategory] && (
+                                                <View style={s.foodSectionContent}>
+                                                    {items.map((item) => (
+                                                        <TouchableOpacity key={item.name} style={s.foodItemRow} onPress={() => toggleItem(item.name, item.price)}>
+                                                            <View style={s.foodCheckbox}>
+                                                                {value === item.name && <Ionicons name="checkmark" size={12} color="white" />}
+                                                            </View>
+                                                            <View style={s.foodItemInfo}>
+                                                                <Text style={s.foodItemName}>{item.name}</Text>
+                                                                <Text style={s.foodItemPrice}>₱{item.price}</Text>
+                                                            </View>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            )}
+                                        </View>
+                                    ))
+                                )}
                             </ScrollView>
                         </View>
                     </View>
@@ -984,6 +1146,7 @@ export default function ErrandForm() {
     const [printingFiles, setPrintingFiles] = useState<Record<string, any[]>>({});
     const [campusLocations, setCampusLocations] = useState<CampusLocation[]>([]);
     const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+    const [categoriesLoading, setCategoriesLoading] = useState(true);
     const [deliveryLocationName, setDeliveryLocationName] = useState<string>("");
 
     const [isScheduled, setIsScheduled] = useState(false);
@@ -1021,6 +1184,7 @@ export default function ErrandForm() {
     // fetch errand categories from database - fetch when component mounts (modal opens)
     useEffect(() => {
         const fetchCategories = async () => {
+            setCategoriesLoading(true);
             try {
                 const { data, error } = await supabase
                     .from("errand_categories")
@@ -1041,6 +1205,8 @@ export default function ErrandForm() {
             } catch (err) {
                 console.error("Error fetching errand categories:", err);
                 setCategoryOptions([]);
+            } finally {
+                setCategoriesLoading(false);
             }
         };
         fetchCategories();
@@ -1151,13 +1317,16 @@ export default function ErrandForm() {
         let subtotal = 0;
 
         // Calculate item prices for all categories (Food Delivery has prices, Printing uses size/color pricing)
+        // FUTURE: Price calculation will use database prices when available, with parseItemPrice() as fallback
         items.forEach((item) => {
             if (item.name && item.qty) {
                 let itemPrice = 0;
                 if (category === "Printing") {
+                    // 🔒 PROTECTED: Printing price calculation - DO NOT MODIFY
                     itemPrice = getPrintingColorPrice(printingSize, printingColor);
                 } else {
-                    itemPrice = parseItemPrice(item.name); // Returns 0 if no price found
+                    // PHASE 2: Use item.price from database if available, otherwise fallback to parseItemPrice()
+                    itemPrice = item.price !== undefined ? item.price : parseItemPrice(item.name); // Returns 0 if no price found
                 }
                 const quantity = parseFloat(String(item.qty)) || 0;
                 const itemTotal = itemPrice * quantity;
@@ -1940,8 +2109,9 @@ export default function ErrandForm() {
                             onSelect={setCategory}
                             onPrintingSizeSelect={setPrintingSize}
                             onPrintingColorSelect={setPrintingColor}
-                            placeholder="Select Category"
+                            placeholder={categoriesLoading ? "Loading categories…" : "Select Category"}
                             categoryOptions={categoryOptions}
+                            categoriesLoading={categoriesLoading}
                         />
                     </View>
 
@@ -1967,7 +2137,8 @@ export default function ErrandForm() {
                                     <View style={{ flex: 1 }}>
                                         <FoodItemDropdown
                                             value={it.name}
-                                            onSelect={(itemName) => updateItem(it.id, { name: itemName })}
+                                            category={category}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
                                             placeholder="Select food item"
                                         />
                                     </View>
@@ -1975,7 +2146,8 @@ export default function ErrandForm() {
                                     <View style={{ flex: 1 }}>
                                         <SchoolMaterialDropdown
                                             value={it.name}
-                                            onSelect={(itemName) => updateItem(it.id, { name: itemName })}
+                                            category={category}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
                                             placeholder="Select material"
                                         />
                                     </View>

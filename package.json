@@ -4,7 +4,10 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start --lan",
+    "start:clear": "expo start --lan --clear",
+    "start:tunnel": "expo start --tunnel",
     "start:https": "expo start --lan --https",
+    "fix:connection": "powershell -ExecutionPolicy Bypass -File ./fix-connection.ps1",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",

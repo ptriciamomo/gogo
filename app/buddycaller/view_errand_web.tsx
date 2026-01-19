@@ -266,7 +266,8 @@ export default function ViewErrandWeb() {
         // Calculate item prices for all categories
         items.forEach((item) => {
             if (item.name && item.qty) {
-                const itemPrice = parseItemPrice(item.name); // Returns 0 if no price found
+                // PHASE 2: Use stored price if available, otherwise fallback to parseItemPrice for backward compatibility
+                const itemPrice = (item as any).price ?? parseItemPrice(item.name); // Returns 0 if no price found
                 const quantity = parseFloat(String(item.qty)) || 0;
                 const itemTotal = itemPrice * quantity;
                 

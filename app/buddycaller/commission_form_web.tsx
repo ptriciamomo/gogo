@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     KeyboardAvoidingView,
@@ -206,26 +206,69 @@ const PostCommission: React.FC = () => {
     const [locationPromptVisible, setLocationPromptVisible] = useState(false);
     const [locationPromptLoading, setLocationPromptLoading] = useState(false);
 
-    const [categories, setCategories] = useState<Category[]>([
-        {
-            id: 'visual-media', title: 'Visual Media Services', isExpanded: true, types: [
-                { id: 'photography', label: 'Photography', value: 'photography' },
-                { id: 'videography', label: 'Videography', value: 'videography' },
-            ]
-        },
-        {
-            id: 'graphic-design', title: 'Graphic Design', isExpanded: true, types: [
-                { id: 'posters', label: 'Posters', value: 'posters' },
-                { id: 'logos', label: 'Logos', value: 'logos' },
-            ]
-        },
-        {
-            id: 'editing', title: 'Editing', isExpanded: true, types: [
-                { id: 'photo-editing', label: 'Photo Editing', value: 'photo-editing' },
-                { id: 'video-editing', label: 'Video Editing', value: 'video-editing' },
-            ]
-        },
-    ]);
+    const [categories, setCategories] = useState<Category[]>([]);
+    const [categoriesLoading, setCategoriesLoading] = useState(true);
+
+    // Fetch commission categories and types from database
+    useEffect(() => {
+        const fetchCommissionCategories = async () => {
+            try {
+                setCategoriesLoading(true);
+
+                // Fetch active commission categories
+                const { data: categoriesData, error: categoriesError } = await supabase
+                    .from('commission_categories')
+                    .select('id, name, sort_order')
+                    .eq('is_active', true)
+                    .order('sort_order', { ascending: true });
+
+                if (categoriesError) throw categoriesError;
+
+                if (!categoriesData || categoriesData.length === 0) {
+                    setCategories([]);
+                    setCategoriesLoading(false);
+                    return;
+                }
+
+                // Fetch active commission types for each category
+                const { data: typesData, error: typesError } = await supabase
+                    .from('commission_types')
+                    .select('id, category_id, name, value, sort_order')
+                    .eq('is_active', true)
+                    .order('sort_order', { ascending: true, nullsFirst: false })
+                    .order('name', { ascending: true });
+
+                if (typesError) throw typesError;
+
+                // Transform data to match Category structure
+                const transformedCategories: Category[] = categoriesData.map(cat => {
+                    const categoryTypes = (typesData || [])
+                        .filter(t => t.category_id === cat.id)
+                        .map(t => ({
+                            id: t.id,
+                            label: t.name,
+                            value: t.value,
+                        }));
+
+                    return {
+                        id: cat.id,
+                        title: cat.name,
+                        isExpanded: true,
+                        types: categoryTypes,
+                    };
+                });
+
+                setCategories(transformedCategories);
+            } catch (err) {
+                console.error('Error fetching commission categories:', err);
+                setCategories([]);
+            } finally {
+                setCategoriesLoading(false);
+            }
+        };
+
+        fetchCommissionCategories();
+    }, []);
 
     /* utils */
     const getMonthNumber = (m: string) => MONTHS.indexOf(m) + 1;
@@ -796,8 +839,17 @@ const PostCommission: React.FC = () => {
 
                                 {showCommissionTypes && (
                                     <View style={styles.commissionTypeContainer}>
-                                        {categories.map((cat) => (
-                                            <View key={cat.id} style={styles.categorySection}>
+                                        {categoriesLoading ? (
+                                            <View style={{ padding: 20, alignItems: 'center' }}>
+                                                <Text style={{ color: '#666', fontSize: 14 }}>Loading commission types...</Text>
+                                            </View>
+                                        ) : categories.length === 0 ? (
+                                            <View style={{ padding: 20, alignItems: 'center' }}>
+                                                <Text style={{ color: '#666', fontSize: 14 }}>No commission types available</Text>
+                                            </View>
+                                        ) : (
+                                            categories.map((cat) => (
+                                                <View key={cat.id} style={styles.categorySection}>
                                                 <TouchableOpacity style={styles.categoryHeader} onPress={() => toggleCategory(cat.id)}>
                                                     <Ionicons name={cat.isExpanded ? 'chevron-down' : 'chevron-forward'} size={16} color="#8B2323" />
                                                     <Text style={styles.categoryTitle}>{cat.title}</Text>
@@ -822,7 +874,8 @@ const PostCommission: React.FC = () => {
                                                     </View>
                                                 )}
                                             </View>
-                                        ))}
+                                            ))
+                                        )}
                                     </View>
                                 )}
                             </View>

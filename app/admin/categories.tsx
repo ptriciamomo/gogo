@@ -103,6 +103,23 @@ type CampusLocation = {
     sort_order?: number | null;
 };
 
+type CommissionCategory = {
+    id: string;
+    code: string;
+    name: string;
+    is_active: boolean;
+    sort_order: number;
+    isNew?: boolean;
+};
+
+type CommissionType = {
+    id: string;
+    name: string;
+    value: string;
+    is_active: boolean;
+    sort_order: number | null;
+};
+
 export default function AdminCategories() {
     const router = useRouter();
     const { loading, fullName } = useAuthProfile();
@@ -157,6 +174,29 @@ export default function AdminCategories() {
     const [editCampusLocationDraft, setEditCampusLocationDraft] = useState<{ name: string; latitude: string; longitude: string; is_active: boolean }>({ name: "", latitude: "", longitude: "", is_active: true });
     const [campusLocationSaving, setCampusLocationSaving] = useState(false);
     const [campusLocationSaveError, setCampusLocationSaveError] = useState<string | null>(null);
+
+    // Commission categories state
+    const [commissionCategories, setCommissionCategories] = useState<CommissionCategory[]>([]);
+    const [commissionCategoriesLoading, setCommissionCategoriesLoading] = useState(true);
+    const [commissionCategoriesError, setCommissionCategoriesError] = useState<string | null>(null);
+    const [localCommissionCategories, setLocalCommissionCategories] = useState<CommissionCategory[]>([]);
+    const [hasUnsavedCommissionChanges, setHasUnsavedCommissionChanges] = useState(false);
+    const [commissionSaving, setCommissionSaving] = useState(false);
+    const [commissionSaveError, setCommissionSaveError] = useState<string | null>(null);
+    const [commissionSaveSuccess, setCommissionSaveSuccess] = useState(false);
+    const [showAddCommissionModal, setShowAddCommissionModal] = useState(false);
+    const [showEditCommissionModal, setShowEditCommissionModal] = useState(false);
+    const [editingCommissionCategory, setEditingCommissionCategory] = useState<CommissionCategory | null>(null);
+    const [newCommissionCategoryName, setNewCommissionCategoryName] = useState("");
+    const [editCommissionCategoryName, setEditCommissionCategoryName] = useState("");
+    const [expandedCommissionCategories, setExpandedCommissionCategories] = useState<Set<string>>(new Set());
+    const [commissionTypes, setCommissionTypes] = useState<Record<string, { items: CommissionType[]; loading: boolean; error: string | null }>>({});
+    const [editingCommissionType, setEditingCommissionType] = useState<{ item: CommissionType; categoryId: string } | null>(null);
+    const [showAddCommissionTypeModal, setShowAddCommissionTypeModal] = useState<{ categoryId: string; categoryName: string } | null>(null);
+    const [newCommissionTypeDraft, setNewCommissionTypeDraft] = useState<{ name: string; value: string; sort_order: string }>({ name: "", value: "", sort_order: "" });
+    const [editCommissionTypeDraft, setEditCommissionTypeDraft] = useState<{ name: string; value: string; sort_order: string; is_active: boolean }>({ name: "", value: "", sort_order: "", is_active: true });
+    const [commissionTypeSaving, setCommissionTypeSaving] = useState(false);
+    const [commissionTypeSaveError, setCommissionTypeSaveError] = useState<string | null>(null);
 
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
@@ -887,6 +927,356 @@ export default function AdminCategories() {
         fetchCategories();
     }, []);
 
+    // Fetch commission categories from database
+    useEffect(() => {
+        const fetchCommissionCategories = async () => {
+            try {
+                setCommissionCategoriesLoading(true);
+                setCommissionCategoriesError(null);
+
+                const { data, error } = await supabase
+                    .from('commission_categories')
+                    .select('id, code, name, is_active, sort_order')
+                    .order('sort_order', { ascending: true });
+
+                if (error) {
+                    console.error('Error fetching commission categories:', error);
+                    setCommissionCategoriesError(error.message || 'Failed to load commission categories');
+                    setCommissionCategories([]);
+                    return;
+                }
+
+                const fetchedCategories = data || [];
+                setCommissionCategories(fetchedCategories);
+                setLocalCommissionCategories(fetchedCategories);
+                setHasUnsavedCommissionChanges(false);
+            } catch (err) {
+                console.error('Unexpected error fetching commission categories:', err);
+                setCommissionCategoriesError(err instanceof Error ? err.message : 'An unexpected error occurred');
+                setCommissionCategories([]);
+                setLocalCommissionCategories([]);
+            } finally {
+                setCommissionCategoriesLoading(false);
+            }
+        };
+
+        fetchCommissionCategories();
+    }, []);
+
+    // Fetch commission types for a specific category
+    const fetchCommissionTypes = async (categoryId: string) => {
+        setCommissionTypes(prev => ({
+            ...prev,
+            [categoryId]: { items: prev[categoryId]?.items || [], loading: true, error: null }
+        }));
+
+        try {
+            const { data, error } = await supabase
+                .from('commission_types')
+                .select('id, name, value, is_active, sort_order')
+                .eq('category_id', categoryId)
+                .order('sort_order', { ascending: true, nullsFirst: false })
+                .order('name', { ascending: true });
+
+            if (error) throw error;
+
+            setCommissionTypes(prev => ({
+                ...prev,
+                [categoryId]: { items: (data || []) as CommissionType[], loading: false, error: null }
+            }));
+        } catch (err) {
+            console.error('Error fetching commission types:', err);
+            setCommissionTypes(prev => ({
+                ...prev,
+                [categoryId]: { items: prev[categoryId]?.items || [], loading: false, error: err instanceof Error ? err.message : 'Failed to load commission types' }
+            }));
+        }
+    };
+
+    // Handle commission category expand/collapse
+    const toggleCommissionCategoryExpand = (categoryId: string) => {
+        const isExpanded = expandedCommissionCategories.has(categoryId);
+        if (isExpanded) {
+            setExpandedCommissionCategories(prev => {
+                const next = new Set(prev);
+                next.delete(categoryId);
+                return next;
+            });
+        } else {
+            setExpandedCommissionCategories(prev => new Set(prev).add(categoryId));
+            if (!commissionTypes[categoryId]) {
+                fetchCommissionTypes(categoryId);
+            }
+        }
+    };
+
+    // Commission category handlers
+    const handleCommissionMoveUp = (categoryId: string) => {
+        setLocalCommissionCategories((prev) => {
+            const index = prev.findIndex((c) => c.id === categoryId);
+            if (index <= 0) return prev;
+            const newCategories = [...prev];
+            [newCategories[index - 1], newCategories[index]] = [newCategories[index], newCategories[index - 1]];
+            setHasUnsavedCommissionChanges(true);
+            return newCategories;
+        });
+    };
+
+    const handleCommissionMoveDown = (categoryId: string) => {
+        setLocalCommissionCategories((prev) => {
+            const index = prev.findIndex((c) => c.id === categoryId);
+            if (index < 0 || index >= prev.length - 1) return prev;
+            const newCategories = [...prev];
+            [newCategories[index], newCategories[index + 1]] = [newCategories[index + 1], newCategories[index]];
+            setHasUnsavedCommissionChanges(true);
+            return newCategories;
+        });
+    };
+
+    const handleCommissionToggleActive = (categoryId: string) => {
+        setLocalCommissionCategories((prev) => {
+            const newCategories = prev.map((c) =>
+                c.id === categoryId ? { ...c, is_active: !c.is_active } : c
+            );
+            setHasUnsavedCommissionChanges(true);
+            return newCategories;
+        });
+    };
+
+    const handleCommissionAddCategory = () => {
+        if (!newCommissionCategoryName.trim()) {
+            Alert.alert('Error', 'Category name cannot be empty');
+            return;
+        }
+        const maxOrder = localCommissionCategories.length > 0 
+            ? Math.max(...localCommissionCategories.map(c => c.sort_order))
+            : 0;
+        const newCategory: CommissionCategory = {
+            id: `temp-${Date.now()}-${Math.random()}`,
+            code: newCommissionCategoryName.trim().toLowerCase().replace(/\s+/g, '_'),
+            name: newCommissionCategoryName.trim(),
+            is_active: true,
+            sort_order: maxOrder + 1,
+            isNew: true,
+        };
+        setLocalCommissionCategories((prev) => [...prev, newCategory]);
+        setHasUnsavedCommissionChanges(true);
+        setNewCommissionCategoryName("");
+        setShowAddCommissionModal(false);
+    };
+
+    const handleCommissionEditClick = (categoryId: string) => {
+        const category = localCommissionCategories.find((c) => c.id === categoryId);
+        if (category) {
+            setEditingCommissionCategory(category);
+            setEditCommissionCategoryName(category.name);
+            setShowEditCommissionModal(true);
+        }
+    };
+
+    const handleCommissionSaveEdit = () => {
+        if (!editingCommissionCategory) return;
+        if (!editCommissionCategoryName.trim()) {
+            Alert.alert('Error', 'Category name cannot be empty');
+            return;
+        }
+        setLocalCommissionCategories((prev) =>
+            prev.map((c) =>
+                c.id === editingCommissionCategory.id
+                    ? { ...c, name: editCommissionCategoryName.trim() }
+                    : c
+            )
+        );
+        setHasUnsavedCommissionChanges(true);
+        setEditingCommissionCategory(null);
+        setEditCommissionCategoryName("");
+        setShowEditCommissionModal(false);
+    };
+
+    const hasActualCommissionChanges = () => {
+        if (localCommissionCategories.length !== commissionCategories.length) return true;
+        for (let i = 0; i < localCommissionCategories.length; i++) {
+            const local = localCommissionCategories[i];
+            const original = commissionCategories.find(c => c.id === local.id);
+            if (!original) return true;
+            if (local.name !== original.name || local.is_active !== original.is_active || local.sort_order !== i + 1) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const handleCommissionSaveChanges = async () => {
+        if (!hasUnsavedCommissionChanges || commissionSaving || !hasActualCommissionChanges()) return;
+        try {
+            setCommissionSaving(true);
+            setCommissionSaveError(null);
+            setCommissionSaveSuccess(false);
+            for (let i = 0; i < localCommissionCategories.length; i++) {
+                const category = localCommissionCategories[i];
+                const newOrder = i + 1;
+                if (category.isNew) {
+                    const { error } = await supabase
+                        .from('commission_categories')
+                        .insert({
+                            code: category.code,
+                            name: category.name,
+                            is_active: category.is_active,
+                            sort_order: newOrder,
+                        });
+                    if (error) {
+                        console.error('Error inserting commission category:', error);
+                        setCommissionSaveError(`Failed to add category "${category.name}": ${error.message}`);
+                        setCommissionSaving(false);
+                        return;
+                    }
+                } else {
+                    const { error } = await supabase
+                        .from('commission_categories')
+                        .update({
+                            name: category.name,
+                            sort_order: newOrder,
+                            is_active: category.is_active,
+                        })
+                        .eq('id', category.id);
+                    if (error) {
+                        console.error('Error updating commission category:', error);
+                        setCommissionSaveError(`Failed to update category "${category.name}": ${error.message}`);
+                        setCommissionSaving(false);
+                        return;
+                    }
+                }
+            }
+            const { data, error } = await supabase
+                .from('commission_categories')
+                .select('id, code, name, is_active, sort_order')
+                .order('sort_order', { ascending: true });
+            if (error) throw error;
+            const fetchedCategories = data || [];
+            setCommissionCategories(fetchedCategories);
+            setLocalCommissionCategories(fetchedCategories);
+            setHasUnsavedCommissionChanges(false);
+            setCommissionSaveSuccess(true);
+            setTimeout(() => setCommissionSaveSuccess(false), 3000);
+        } catch (err) {
+            console.error('Error saving commission categories:', err);
+            setCommissionSaveError(err instanceof Error ? err.message : 'Failed to save changes');
+        } finally {
+            setCommissionSaving(false);
+        }
+    };
+
+    // Commission type handlers
+    const handleCommissionToggleTypeActive = async (typeId: string, categoryId: string, currentActive: boolean) => {
+        try {
+            setCommissionTypeSaving(true);
+            setCommissionTypeSaveError(null);
+            const { error } = await supabase
+                .from('commission_types')
+                .update({ is_active: !currentActive })
+                .eq('id', typeId);
+            if (error) throw error;
+            await fetchCommissionTypes(categoryId);
+        } catch (err) {
+            console.error('Error toggling commission type active status:', err);
+            setCommissionTypeSaveError(err instanceof Error ? err.message : 'Failed to update type');
+            Alert.alert('Error', `Failed to update type: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setCommissionTypeSaving(false);
+        }
+    };
+
+    const handleCommissionOpenEditType = (type: CommissionType, categoryId: string) => {
+        setEditingCommissionType({ item: type, categoryId });
+        setEditCommissionTypeDraft({
+            name: type.name,
+            value: type.value,
+            sort_order: type.sort_order !== null ? String(type.sort_order) : "",
+            is_active: type.is_active,
+        });
+    };
+
+    const handleCommissionSaveEditType = async () => {
+        if (!editingCommissionType) return;
+        if (!editCommissionTypeDraft.name.trim()) {
+            Alert.alert('Error', 'Type name cannot be empty');
+            return;
+        }
+        try {
+            setCommissionTypeSaving(true);
+            setCommissionTypeSaveError(null);
+            const updateData: any = {
+                name: editCommissionTypeDraft.name.trim(),
+                value: editCommissionTypeDraft.value.trim(),
+                is_active: editCommissionTypeDraft.is_active,
+            };
+            if (editCommissionTypeDraft.sort_order.trim()) {
+                const sortOrderNum = parseInt(editCommissionTypeDraft.sort_order, 10);
+                if (!isNaN(sortOrderNum)) {
+                    updateData.sort_order = sortOrderNum;
+                }
+            } else {
+                updateData.sort_order = null;
+            }
+            const { error } = await supabase
+                .from('commission_types')
+                .update(updateData)
+                .eq('id', editingCommissionType.item.id);
+            if (error) throw error;
+            await fetchCommissionTypes(editingCommissionType.categoryId);
+            setEditingCommissionType(null);
+            setEditCommissionTypeDraft({ name: "", value: "", sort_order: "", is_active: true });
+        } catch (err) {
+            console.error('Error updating commission type:', err);
+            setCommissionTypeSaveError(err instanceof Error ? err.message : 'Failed to update type');
+            Alert.alert('Error', `Failed to update type: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setCommissionTypeSaving(false);
+        }
+    };
+
+    const handleCommissionOpenAddType = (categoryId: string, categoryName: string) => {
+        setShowAddCommissionTypeModal({ categoryId, categoryName });
+        setNewCommissionTypeDraft({ name: "", value: "", sort_order: "" });
+    };
+
+    const handleCommissionAddType = async () => {
+        if (!showAddCommissionTypeModal) return;
+        if (!newCommissionTypeDraft.name.trim()) {
+            Alert.alert('Error', 'Type name cannot be empty');
+            return;
+        }
+        try {
+            setCommissionTypeSaving(true);
+            setCommissionTypeSaveError(null);
+            const insertData: any = {
+                category_id: showAddCommissionTypeModal.categoryId,
+                name: newCommissionTypeDraft.name.trim(),
+                value: newCommissionTypeDraft.value.trim() || newCommissionTypeDraft.name.trim().toLowerCase().replace(/\s+/g, '-'),
+                is_active: true,
+            };
+            if (newCommissionTypeDraft.sort_order.trim()) {
+                const sortOrderNum = parseInt(newCommissionTypeDraft.sort_order, 10);
+                if (!isNaN(sortOrderNum)) {
+                    insertData.sort_order = sortOrderNum;
+                }
+            }
+            const { error } = await supabase
+                .from('commission_types')
+                .insert([insertData]);
+            if (error) throw error;
+            await fetchCommissionTypes(showAddCommissionTypeModal.categoryId);
+            setShowAddCommissionTypeModal(null);
+            setNewCommissionTypeDraft({ name: "", value: "", sort_order: "" });
+        } catch (err) {
+            console.error('Error adding commission type:', err);
+            setCommissionTypeSaveError(err instanceof Error ? err.message : 'Failed to add type');
+            Alert.alert('Error', `Failed to add type: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setCommissionTypeSaving(false);
+        }
+    };
+
     const handleLogout = async () => {
         setConfirmLogout(false);
         // UI only - no actual logout
@@ -1252,10 +1642,127 @@ export default function AdminCategories() {
 
                             {/* Section 2: Commissions */}
                             <View style={styles.section}>
-                                <Text style={styles.sectionHeader}>Commissions</Text>
-                                <View style={styles.comingSoonContainer}>
-                                    <Text style={styles.comingSoonText}>Coming soon</Text>
+                                <View style={styles.sectionHeaderRow}>
+                                    <Text style={styles.sectionHeader}>Commissions</Text>
+                                    <View style={styles.headerButtons}>
+                                        <TouchableOpacity
+                                            style={styles.addButton}
+                                            onPress={() => {
+                                                setNewCommissionCategoryName("");
+                                                setShowAddCommissionModal(true);
+                                            }}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="add-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
+                                            <Text style={styles.addButtonText}>Add Category</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.saveButton,
+                                                (!hasUnsavedCommissionChanges || commissionSaving || !hasActualCommissionChanges()) ? styles.saveButtonDisabled : null,
+                                            ]}
+                                            onPress={handleCommissionSaveChanges}
+                                            disabled={!hasUnsavedCommissionChanges || commissionSaving || !hasActualCommissionChanges()}
+                                            activeOpacity={0.7}
+                                        >
+                                            {commissionSaving ? (
+                                                <View style={styles.saveButtonContent}>
+                                                    <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+                                                    <Text style={styles.saveButtonText}>Saving...</Text>
+                                                </View>
+                                            ) : (
+                                                <Text style={styles.saveButtonText}>Save Changes</Text>
+                                            )}
+                                        </TouchableOpacity>
+                                    </View>
                                 </View>
+                                {commissionSaveError && (
+                                    <View style={styles.saveErrorContainer}>
+                                        <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                        <Text style={styles.saveErrorText}>{commissionSaveError}</Text>
+                                    </View>
+                                )}
+                                {commissionSaveSuccess && (
+                                    <View style={styles.saveSuccessContainer}>
+                                        <Ionicons name="checkmark-circle-outline" size={16} color="#10B981" />
+                                        <Text style={styles.saveSuccessText}>Changes saved successfully!</Text>
+                                    </View>
+                                )}
+                                <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                                    <View style={styles.tableContainer}>
+                                        <View style={styles.tableHeader}>
+                                            <Text style={[styles.tableHeaderText, styles.tableCellOrder]}>Order</Text>
+                                            <Text style={[styles.tableHeaderText, styles.tableCellCategory]}>Category</Text>
+                                            <Text style={[styles.tableHeaderText, styles.tableCellActive]}>Active</Text>
+                                            <Text style={[styles.tableHeaderText, styles.tableCellActions]}>Actions</Text>
+                                        </View>
+                                        {commissionCategoriesLoading ? (
+                                            <View style={styles.tableRow}>
+                                                <View style={[styles.tableCellOrder, { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 }]}>
+                                                    <ActivityIndicator size="small" color={colors.maroon} />
+                                                    <Text style={[styles.tableCellText, { marginTop: 8, opacity: 0.6 }]}>Loading categories...</Text>
+                                                </View>
+                                            </View>
+                                        ) : commissionCategoriesError ? (
+                                            <View style={styles.tableRow}>
+                                                <View style={[styles.tableCellOrder, { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 }]}>
+                                                    <Ionicons name="alert-circle-outline" size={20} color="#EF4444" />
+                                                    <Text style={[styles.tableCellText, { marginTop: 8, color: "#EF4444" }]}>Error: {commissionCategoriesError}</Text>
+                                                </View>
+                                            </View>
+                                        ) : localCommissionCategories.length === 0 ? (
+                                            <View style={styles.tableRow}>
+                                                <View style={[styles.tableCellOrder, { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 }]}>
+                                                    <Text style={[styles.tableCellText, { opacity: 0.6 }]}>No categories found</Text>
+                                                </View>
+                                            </View>
+                                        ) : (
+                                            localCommissionCategories.map((category, index) => (
+                                                <React.Fragment key={category.id}>
+                                                    <CategoryTableRow
+                                                        categoryId={category.id}
+                                                        order={index + 1}
+                                                        category={category.name}
+                                                        active={category.is_active}
+                                                        index={index}
+                                                        totalItems={localCommissionCategories.length}
+                                                        onMoveUp={handleCommissionMoveUp}
+                                                        onMoveDown={handleCommissionMoveDown}
+                                                        onToggleActive={handleCommissionToggleActive}
+                                                        onEdit={handleCommissionEditClick}
+                                                        isExpanded={expandedCommissionCategories.has(category.id)}
+                                                        onToggleExpand={() => toggleCommissionCategoryExpand(category.id)}
+                                                        itemsData={commissionTypes[category.id] ? {
+                                                            items: commissionTypes[category.id].items.map(t => ({
+                                                                id: t.id,
+                                                                name: t.name,
+                                                                price: 0,
+                                                                subcategory: null,
+                                                                is_active: t.is_active,
+                                                                sort_order: t.sort_order
+                                                            })),
+                                                            loading: commissionTypes[category.id].loading,
+                                                            error: commissionTypes[category.id].error
+                                                        } : undefined}
+                                                        onToggleItemActive={(itemId, categoryId, currentActive) => {
+                                                            const type = commissionTypes[categoryId]?.items.find(t => t.id === itemId);
+                                                            if (type) {
+                                                                handleCommissionToggleTypeActive(itemId, categoryId, currentActive);
+                                                            }
+                                                        }}
+                                                        onEditItem={(item, categoryId) => {
+                                                            const type = commissionTypes[categoryId]?.items.find(t => t.id === item.id);
+                                                            if (type) {
+                                                                handleCommissionOpenEditType(type, categoryId);
+                                                            }
+                                                        }}
+                                                        onAddItem={handleCommissionOpenAddType}
+                                                    />
+                                                </React.Fragment>
+                                            ))
+                                        )}
+                                    </View>
+                                </ScrollView>
                             </View>
                         </View>
                     </ScrollView>
@@ -1931,6 +2438,217 @@ export default function AdminCategories() {
                                 disabled={campusLocationSaving}
                             >
                                 {campusLocationSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Save</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Add Commission Category Modal */}
+            {showAddCommissionModal && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Add Commission Category</Text>
+                        <Text style={styles.modalMessage}>Category name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCommissionCategoryName}
+                            onChangeText={setNewCommissionCategoryName}
+                            placeholder="Category name"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowAddCommissionModal(false);
+                                    setNewCommissionCategoryName("");
+                                }}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm]}
+                                onPress={handleCommissionAddCategory}
+                            >
+                                <Text style={styles.modalButtonConfirmText}>Add</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Edit Commission Category Modal */}
+            {showEditCommissionModal && editingCommissionCategory && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Edit Commission Category</Text>
+                        <Text style={styles.modalMessage}>Category name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCommissionCategoryName}
+                            onChangeText={setEditCommissionCategoryName}
+                            placeholder="Category name"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowEditCommissionModal(false);
+                                    setEditingCommissionCategory(null);
+                                    setEditCommissionCategoryName("");
+                                }}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm]}
+                                onPress={handleCommissionSaveEdit}
+                            >
+                                <Text style={styles.modalButtonConfirmText}>Save</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Add Commission Type Modal */}
+            {showAddCommissionTypeModal && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Add Commission Type</Text>
+                        {commissionTypeSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{commissionTypeSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Type name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCommissionTypeDraft.name}
+                            onChangeText={(text) => setNewCommissionTypeDraft(prev => ({ ...prev, name: text }))}
+                            placeholder="Type name"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Value (optional):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCommissionTypeDraft.value}
+                            onChangeText={(text) => setNewCommissionTypeDraft(prev => ({ ...prev, value: text }))}
+                            placeholder="Auto-generated if empty"
+                            placeholderTextColor={colors.border}
+                        />
+                        <Text style={styles.modalMessage}>Sort order (optional):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCommissionTypeDraft.sort_order}
+                            onChangeText={(text) => setNewCommissionTypeDraft(prev => ({ ...prev, sort_order: text }))}
+                            placeholder="0"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowAddCommissionTypeModal(null);
+                                    setNewCommissionTypeDraft({ name: "", value: "", sort_order: "" });
+                                    setCommissionTypeSaveError(null);
+                                }}
+                                disabled={commissionTypeSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, commissionTypeSaving && { opacity: 0.6 }]}
+                                onPress={handleCommissionAddType}
+                                disabled={commissionTypeSaving}
+                            >
+                                {commissionTypeSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Add</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Edit Commission Type Modal */}
+            {editingCommissionType && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Edit Commission Type</Text>
+                        {commissionTypeSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{commissionTypeSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Type name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCommissionTypeDraft.name}
+                            onChangeText={(text) => setEditCommissionTypeDraft(prev => ({ ...prev, name: text }))}
+                            placeholder="Type name"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Value:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCommissionTypeDraft.value}
+                            onChangeText={(text) => setEditCommissionTypeDraft(prev => ({ ...prev, value: text }))}
+                            placeholder="Value"
+                            placeholderTextColor={colors.border}
+                        />
+                        <Text style={styles.modalMessage}>Sort order (optional):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCommissionTypeDraft.sort_order}
+                            onChangeText={(text) => setEditCommissionTypeDraft(prev => ({ ...prev, sort_order: text }))}
+                            placeholder="0"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <TouchableOpacity
+                            style={styles.checkboxContainer}
+                            onPress={() => setEditCommissionTypeDraft(prev => ({ ...prev, is_active: !prev.is_active }))}
+                            activeOpacity={0.7}
+                        >
+                            <View style={[styles.checkbox, editCommissionTypeDraft.is_active && styles.checkboxSelected]}>
+                                {editCommissionTypeDraft.is_active && <Ionicons name="checkmark" size={12} color="white" />}
+                            </View>
+                            <Text style={styles.checkboxLabel}>Active</Text>
+                        </TouchableOpacity>
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setEditingCommissionType(null);
+                                    setEditCommissionTypeDraft({ name: "", value: "", sort_order: "", is_active: true });
+                                    setCommissionTypeSaveError(null);
+                                }}
+                                disabled={commissionTypeSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, commissionTypeSaving && { opacity: 0.6 }]}
+                                onPress={handleCommissionSaveEditType}
+                                disabled={commissionTypeSaving}
+                            >
+                                {commissionTypeSaving ? (
                                     <ActivityIndicator size="small" color="#fff" />
                                 ) : (
                                     <Text style={styles.modalButtonConfirmText}>Save</Text>

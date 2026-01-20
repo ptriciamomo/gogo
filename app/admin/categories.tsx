@@ -78,6 +78,22 @@ type ErrandItem = {
     sort_order: number | null;
 };
 
+type PrintingSize = {
+    id: string;
+    label: string;
+    price: number;
+    is_active: boolean;
+    sort_order: number | null;
+};
+
+type PrintingColorMode = {
+    id: string;
+    label: string;
+    price: number;
+    is_active: boolean;
+    sort_order: number | null;
+};
+
 export default function AdminCategories() {
     const router = useRouter();
     const { loading, fullName } = useAuthProfile();
@@ -109,6 +125,20 @@ export default function AdminCategories() {
     const [editItemDraft, setEditItemDraft] = useState<{ name: string; price: string; subcategory: string; sort_order: string; is_active: boolean }>({ name: "", price: "", subcategory: "", sort_order: "", is_active: true });
     const [itemSaving, setItemSaving] = useState(false);
     const [itemSaveError, setItemSaveError] = useState<string | null>(null);
+
+    // Printing options state
+    const [printingSizes, setPrintingSizes] = useState<{ items: PrintingSize[]; loading: boolean; error: string | null }>({ items: [], loading: false, error: null });
+    const [printingColorModes, setPrintingColorModes] = useState<{ items: PrintingColorMode[]; loading: boolean; error: string | null }>({ items: [], loading: false, error: null });
+    const [editingPrintingSize, setEditingPrintingSize] = useState<{ item: PrintingSize } | null>(null);
+    const [editingPrintingColorMode, setEditingPrintingColorMode] = useState<{ item: PrintingColorMode } | null>(null);
+    const [showAddPrintingSizeModal, setShowAddPrintingSizeModal] = useState(false);
+    const [showAddPrintingColorModeModal, setShowAddPrintingColorModeModal] = useState(false);
+    const [newPrintingSizeDraft, setNewPrintingSizeDraft] = useState<{ label: string; price: string; sort_order: string }>({ label: "", price: "", sort_order: "" });
+    const [editPrintingSizeDraft, setEditPrintingSizeDraft] = useState<{ label: string; price: string; sort_order: string; is_active: boolean }>({ label: "", price: "", sort_order: "", is_active: true });
+    const [newPrintingColorModeDraft, setNewPrintingColorModeDraft] = useState<{ label: string; price: string; sort_order: string }>({ label: "", price: "", sort_order: "" });
+    const [editPrintingColorModeDraft, setEditPrintingColorModeDraft] = useState<{ label: string; price: string; sort_order: string; is_active: boolean }>({ label: "", price: "", sort_order: "", is_active: true });
+    const [printingOptionsSaving, setPrintingOptionsSaving] = useState(false);
+    const [printingOptionsSaveError, setPrintingOptionsSaveError] = useState<string | null>(null);
 
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
@@ -183,9 +213,47 @@ export default function AdminCategories() {
         } else {
             // Expand - fetch items if not already loaded
             setExpandedCategories(prev => new Set(prev).add(categoryId));
-            if (!categoryItems[categoryId]) {
+            if (categoryName === "Printing") {
+                // Fetch printing options when Printing category is expanded
+                fetchPrintingOptions();
+            } else if (!categoryItems[categoryId]) {
                 fetchCategoryItems(categoryId, categoryName);
             }
+        }
+    };
+
+    // Fetch printing options (sizes and color modes)
+    const fetchPrintingOptions = async () => {
+        // Fetch printing sizes - show all items for admin management (both active and inactive)
+        setPrintingSizes(prev => ({ ...prev, loading: true, error: null }));
+        try {
+            const { data: sizesData, error: sizesError } = await supabase
+                .from('printing_sizes')
+                .select('id, label, price, is_active, sort_order')
+                .order('sort_order', { ascending: true, nullsFirst: false });
+
+            if (sizesError) throw sizesError;
+
+            setPrintingSizes({ items: sizesData || [], loading: false, error: null });
+        } catch (err) {
+            console.error('Error fetching printing sizes:', err);
+            setPrintingSizes({ items: [], loading: false, error: err instanceof Error ? err.message : 'Failed to load printing sizes' });
+        }
+
+        // Fetch printing color modes - show all items for admin management (both active and inactive)
+        setPrintingColorModes(prev => ({ ...prev, loading: true, error: null }));
+        try {
+            const { data: colorModesData, error: colorModesError } = await supabase
+                .from('printing_color_modes')
+                .select('id, label, price, is_active, sort_order')
+                .order('sort_order', { ascending: true, nullsFirst: false });
+
+            if (colorModesError) throw colorModesError;
+
+            setPrintingColorModes({ items: colorModesData || [], loading: false, error: null });
+        } catch (err) {
+            console.error('Error fetching printing color modes:', err);
+            setPrintingColorModes({ items: [], loading: false, error: err instanceof Error ? err.message : 'Failed to load printing color modes' });
         }
     };
 
@@ -297,6 +365,269 @@ export default function AdminCategories() {
         }
         setShowAddItemModal({ categoryId, categoryName });
         setNewItemDraft({ name: "", price: "", subcategory: "", sort_order: "" });
+    };
+
+    // Printing options CRUD handlers
+    const handleTogglePrintingSizeActive = async (sizeId: string, currentActive: boolean) => {
+        try {
+            setPrintingOptionsSaving(true);
+            setPrintingOptionsSaveError(null);
+
+            const { error } = await supabase
+                .from('printing_sizes')
+                .update({ is_active: !currentActive })
+                .eq('id', sizeId);
+
+            if (error) throw error;
+
+            await fetchPrintingOptions();
+        } catch (err) {
+            console.error('Error toggling printing size active status:', err);
+            setPrintingOptionsSaveError(err instanceof Error ? err.message : 'Failed to update printing size');
+            Alert.alert('Error', `Failed to update printing size: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setPrintingOptionsSaving(false);
+        }
+    };
+
+    const handleTogglePrintingColorModeActive = async (colorModeId: string, currentActive: boolean) => {
+        try {
+            setPrintingOptionsSaving(true);
+            setPrintingOptionsSaveError(null);
+
+            const { error } = await supabase
+                .from('printing_color_modes')
+                .update({ is_active: !currentActive })
+                .eq('id', colorModeId);
+
+            if (error) throw error;
+
+            await fetchPrintingOptions();
+        } catch (err) {
+            console.error('Error toggling printing color mode active status:', err);
+            setPrintingOptionsSaveError(err instanceof Error ? err.message : 'Failed to update printing color mode');
+            Alert.alert('Error', `Failed to update printing color mode: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setPrintingOptionsSaving(false);
+        }
+    };
+
+    const handleOpenEditPrintingSize = (size: PrintingSize) => {
+        setEditingPrintingSize({ item: size });
+        setEditPrintingSizeDraft({
+            label: size.label,
+            price: size.price.toString(),
+            sort_order: size.sort_order?.toString() || "",
+            is_active: size.is_active,
+        });
+    };
+
+    const handleOpenEditPrintingColorMode = (colorMode: PrintingColorMode) => {
+        setEditingPrintingColorMode({ item: colorMode });
+        setEditPrintingColorModeDraft({
+            label: colorMode.label,
+            price: colorMode.price.toString(),
+            sort_order: colorMode.sort_order?.toString() || "",
+            is_active: colorMode.is_active,
+        });
+    };
+
+    const handleSaveEditPrintingSize = async () => {
+        if (!editingPrintingSize) return;
+
+        if (!editPrintingSizeDraft.label.trim()) {
+            Alert.alert('Error', 'Label cannot be empty');
+            return;
+        }
+
+        const priceNum = parseFloat(editPrintingSizeDraft.price);
+        if (isNaN(priceNum) || priceNum < 0) {
+            Alert.alert('Error', 'Price must be a valid number');
+            return;
+        }
+
+        try {
+            setPrintingOptionsSaving(true);
+            setPrintingOptionsSaveError(null);
+
+            const updateData: any = {
+                label: editPrintingSizeDraft.label.trim(),
+                price: priceNum,
+                is_active: editPrintingSizeDraft.is_active,
+            };
+
+            if (editPrintingSizeDraft.sort_order.trim()) {
+                const sortOrderNum = parseInt(editPrintingSizeDraft.sort_order, 10);
+                if (!isNaN(sortOrderNum)) {
+                    updateData.sort_order = sortOrderNum;
+                }
+            }
+
+            const { error } = await supabase
+                .from('printing_sizes')
+                .update(updateData)
+                .eq('id', editingPrintingSize.item.id);
+
+            if (error) throw error;
+
+            await fetchPrintingOptions();
+
+            setEditingPrintingSize(null);
+            setEditPrintingSizeDraft({ label: "", price: "", sort_order: "", is_active: true });
+        } catch (err) {
+            console.error('Error updating printing size:', err);
+            setPrintingOptionsSaveError(err instanceof Error ? err.message : 'Failed to update printing size');
+            Alert.alert('Error', `Failed to update printing size: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setPrintingOptionsSaving(false);
+        }
+    };
+
+    const handleSaveEditPrintingColorMode = async () => {
+        if (!editingPrintingColorMode) return;
+
+        if (!editPrintingColorModeDraft.label.trim()) {
+            Alert.alert('Error', 'Label cannot be empty');
+            return;
+        }
+
+        const priceNum = parseFloat(editPrintingColorModeDraft.price);
+        if (isNaN(priceNum) || priceNum < 0) {
+            Alert.alert('Error', 'Price must be a valid number');
+            return;
+        }
+
+        try {
+            setPrintingOptionsSaving(true);
+            setPrintingOptionsSaveError(null);
+
+            const updateData: any = {
+                label: editPrintingColorModeDraft.label.trim(),
+                price: priceNum,
+                is_active: editPrintingColorModeDraft.is_active,
+            };
+
+            if (editPrintingColorModeDraft.sort_order.trim()) {
+                const sortOrderNum = parseInt(editPrintingColorModeDraft.sort_order, 10);
+                if (!isNaN(sortOrderNum)) {
+                    updateData.sort_order = sortOrderNum;
+                }
+            }
+
+            const { error } = await supabase
+                .from('printing_color_modes')
+                .update(updateData)
+                .eq('id', editingPrintingColorMode.item.id);
+
+            if (error) throw error;
+
+            await fetchPrintingOptions();
+
+            setEditingPrintingColorMode(null);
+            setEditPrintingColorModeDraft({ label: "", price: "", sort_order: "", is_active: true });
+        } catch (err) {
+            console.error('Error updating printing color mode:', err);
+            setPrintingOptionsSaveError(err instanceof Error ? err.message : 'Failed to update printing color mode');
+            Alert.alert('Error', `Failed to update printing color mode: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setPrintingOptionsSaving(false);
+        }
+    };
+
+    const handleAddPrintingSize = async () => {
+        if (!newPrintingSizeDraft.label.trim()) {
+            Alert.alert('Error', 'Label cannot be empty');
+            return;
+        }
+
+        const priceNum = parseFloat(newPrintingSizeDraft.price);
+        if (isNaN(priceNum) || priceNum < 0) {
+            Alert.alert('Error', 'Price must be a valid number');
+            return;
+        }
+
+        try {
+            setPrintingOptionsSaving(true);
+            setPrintingOptionsSaveError(null);
+
+            const insertData: any = {
+                label: newPrintingSizeDraft.label.trim(),
+                price: priceNum,
+                is_active: true,
+            };
+
+            if (newPrintingSizeDraft.sort_order.trim()) {
+                const sortOrderNum = parseInt(newPrintingSizeDraft.sort_order, 10);
+                if (!isNaN(sortOrderNum)) {
+                    insertData.sort_order = sortOrderNum;
+                }
+            }
+
+            const { error } = await supabase
+                .from('printing_sizes')
+                .insert([insertData]);
+
+            if (error) throw error;
+
+            await fetchPrintingOptions();
+
+            setShowAddPrintingSizeModal(false);
+            setNewPrintingSizeDraft({ label: "", price: "", sort_order: "" });
+        } catch (err) {
+            console.error('Error adding printing size:', err);
+            setPrintingOptionsSaveError(err instanceof Error ? err.message : 'Failed to add printing size');
+            Alert.alert('Error', `Failed to add printing size: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setPrintingOptionsSaving(false);
+        }
+    };
+
+    const handleAddPrintingColorMode = async () => {
+        if (!newPrintingColorModeDraft.label.trim()) {
+            Alert.alert('Error', 'Label cannot be empty');
+            return;
+        }
+
+        const priceNum = parseFloat(newPrintingColorModeDraft.price);
+        if (isNaN(priceNum) || priceNum < 0) {
+            Alert.alert('Error', 'Price must be a valid number');
+            return;
+        }
+
+        try {
+            setPrintingOptionsSaving(true);
+            setPrintingOptionsSaveError(null);
+
+            const insertData: any = {
+                label: newPrintingColorModeDraft.label.trim(),
+                price: priceNum,
+                is_active: true,
+            };
+
+            if (newPrintingColorModeDraft.sort_order.trim()) {
+                const sortOrderNum = parseInt(newPrintingColorModeDraft.sort_order, 10);
+                if (!isNaN(sortOrderNum)) {
+                    insertData.sort_order = sortOrderNum;
+                }
+            }
+
+            const { error } = await supabase
+                .from('printing_color_modes')
+                .insert([insertData]);
+
+            if (error) throw error;
+
+            await fetchPrintingOptions();
+
+            setShowAddPrintingColorModeModal(false);
+            setNewPrintingColorModeDraft({ label: "", price: "", sort_order: "" });
+        } catch (err) {
+            console.error('Error adding printing color mode:', err);
+            setPrintingOptionsSaveError(err instanceof Error ? err.message : 'Failed to add printing color mode');
+            Alert.alert('Error', `Failed to add printing color mode: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setPrintingOptionsSaving(false);
+        }
     };
 
     const handleAddItem = async () => {
@@ -736,6 +1067,14 @@ export default function AdminCategories() {
                                                         onToggleItemActive={handleToggleItemActive}
                                                         onEditItem={handleOpenEditItem}
                                                         onAddItem={handleOpenAddItem}
+                                                        printingSizes={category.name === "Printing" ? printingSizes : undefined}
+                                                        printingColorModes={category.name === "Printing" ? printingColorModes : undefined}
+                                                        onTogglePrintingSizeActive={category.name === "Printing" ? handleTogglePrintingSizeActive : undefined}
+                                                        onTogglePrintingColorModeActive={category.name === "Printing" ? handleTogglePrintingColorModeActive : undefined}
+                                                        onEditPrintingSize={category.name === "Printing" ? handleOpenEditPrintingSize : undefined}
+                                                        onEditPrintingColorMode={category.name === "Printing" ? handleOpenEditPrintingColorMode : undefined}
+                                                        onAddPrintingSize={category.name === "Printing" ? () => setShowAddPrintingSizeModal(true) : undefined}
+                                                        onAddPrintingColorMode={category.name === "Printing" ? () => setShowAddPrintingColorModeModal(true) : undefined}
                                                     />
                                                 </React.Fragment>
                                             ))
@@ -1008,6 +1347,290 @@ export default function AdminCategories() {
                     </View>
                 </View>
             )}
+
+            {/* Add Printing Size Modal */}
+            {showAddPrintingSizeModal && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Add Printing Size</Text>
+                        {printingOptionsSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{printingOptionsSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Label:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newPrintingSizeDraft.label}
+                            onChangeText={(text) => setNewPrintingSizeDraft(prev => ({ ...prev, label: text }))}
+                            placeholder="e.g., A3, A4"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Price per page (₱):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newPrintingSizeDraft.price}
+                            onChangeText={(text) => setNewPrintingSizeDraft(prev => ({ ...prev, price: text }))}
+                            placeholder="0.00"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <Text style={styles.modalMessage}>Sort order (optional):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newPrintingSizeDraft.sort_order}
+                            onChangeText={(text) => setNewPrintingSizeDraft(prev => ({ ...prev, sort_order: text }))}
+                            placeholder="0"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowAddPrintingSizeModal(false);
+                                    setNewPrintingSizeDraft({ label: "", price: "", sort_order: "" });
+                                    setPrintingOptionsSaveError(null);
+                                }}
+                                disabled={printingOptionsSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, printingOptionsSaving && { opacity: 0.6 }]}
+                                onPress={handleAddPrintingSize}
+                                disabled={printingOptionsSaving}
+                            >
+                                {printingOptionsSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Add</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Edit Printing Size Modal */}
+            {editingPrintingSize && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Edit Printing Size</Text>
+                        {printingOptionsSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{printingOptionsSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Label:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editPrintingSizeDraft.label}
+                            onChangeText={(text) => setEditPrintingSizeDraft(prev => ({ ...prev, label: text }))}
+                            placeholder="e.g., A3, A4"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Price per page (₱):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editPrintingSizeDraft.price}
+                            onChangeText={(text) => setEditPrintingSizeDraft(prev => ({ ...prev, price: text }))}
+                            placeholder="0.00"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <Text style={styles.modalMessage}>Sort order (optional):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editPrintingSizeDraft.sort_order}
+                            onChangeText={(text) => setEditPrintingSizeDraft(prev => ({ ...prev, sort_order: text }))}
+                            placeholder="0"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <TouchableOpacity
+                            style={styles.checkboxContainer}
+                            onPress={() => setEditPrintingSizeDraft(prev => ({ ...prev, is_active: !prev.is_active }))}
+                            activeOpacity={0.7}
+                        >
+                            <View style={[styles.checkbox, editPrintingSizeDraft.is_active && styles.checkboxSelected]}>
+                                {editPrintingSizeDraft.is_active && <Ionicons name="checkmark" size={12} color="white" />}
+                            </View>
+                            <Text style={styles.checkboxLabel}>Active</Text>
+                        </TouchableOpacity>
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setEditingPrintingSize(null);
+                                    setEditPrintingSizeDraft({ label: "", price: "", sort_order: "", is_active: true });
+                                    setPrintingOptionsSaveError(null);
+                                }}
+                                disabled={printingOptionsSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, printingOptionsSaving && { opacity: 0.6 }]}
+                                onPress={handleSaveEditPrintingSize}
+                                disabled={printingOptionsSaving}
+                            >
+                                {printingOptionsSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Save</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Add Printing Color Mode Modal */}
+            {showAddPrintingColorModeModal && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Add Printing Color Mode</Text>
+                        {printingOptionsSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{printingOptionsSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Label:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newPrintingColorModeDraft.label}
+                            onChangeText={(text) => setNewPrintingColorModeDraft(prev => ({ ...prev, label: text }))}
+                            placeholder="e.g., Colored, Not Colored"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Additional price (₱):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newPrintingColorModeDraft.price}
+                            onChangeText={(text) => setNewPrintingColorModeDraft(prev => ({ ...prev, price: text }))}
+                            placeholder="0.00"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <Text style={styles.modalMessage}>Sort order (optional):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newPrintingColorModeDraft.sort_order}
+                            onChangeText={(text) => setNewPrintingColorModeDraft(prev => ({ ...prev, sort_order: text }))}
+                            placeholder="0"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowAddPrintingColorModeModal(false);
+                                    setNewPrintingColorModeDraft({ label: "", price: "", sort_order: "" });
+                                    setPrintingOptionsSaveError(null);
+                                }}
+                                disabled={printingOptionsSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, printingOptionsSaving && { opacity: 0.6 }]}
+                                onPress={handleAddPrintingColorMode}
+                                disabled={printingOptionsSaving}
+                            >
+                                {printingOptionsSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Add</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Edit Printing Color Mode Modal */}
+            {editingPrintingColorMode && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Edit Printing Color Mode</Text>
+                        {printingOptionsSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{printingOptionsSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Label:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editPrintingColorModeDraft.label}
+                            onChangeText={(text) => setEditPrintingColorModeDraft(prev => ({ ...prev, label: text }))}
+                            placeholder="e.g., Colored, Not Colored"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Additional price (₱):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editPrintingColorModeDraft.price}
+                            onChangeText={(text) => setEditPrintingColorModeDraft(prev => ({ ...prev, price: text }))}
+                            placeholder="0.00"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <Text style={styles.modalMessage}>Sort order (optional):</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editPrintingColorModeDraft.sort_order}
+                            onChangeText={(text) => setEditPrintingColorModeDraft(prev => ({ ...prev, sort_order: text }))}
+                            placeholder="0"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <TouchableOpacity
+                            style={styles.checkboxContainer}
+                            onPress={() => setEditPrintingColorModeDraft(prev => ({ ...prev, is_active: !prev.is_active }))}
+                            activeOpacity={0.7}
+                        >
+                            <View style={[styles.checkbox, editPrintingColorModeDraft.is_active && styles.checkboxSelected]}>
+                                {editPrintingColorModeDraft.is_active && <Ionicons name="checkmark" size={12} color="white" />}
+                            </View>
+                            <Text style={styles.checkboxLabel}>Active</Text>
+                        </TouchableOpacity>
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setEditingPrintingColorMode(null);
+                                    setEditPrintingColorModeDraft({ label: "", price: "", sort_order: "", is_active: true });
+                                    setPrintingOptionsSaveError(null);
+                                }}
+                                disabled={printingOptionsSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, printingOptionsSaving && { opacity: 0.6 }]}
+                                onPress={handleSaveEditPrintingColorMode}
+                                disabled={printingOptionsSaving}
+                            >
+                                {printingOptionsSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Save</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
@@ -1168,6 +1791,14 @@ function CategoryTableRow({
     onToggleItemActive,
     onEditItem,
     onAddItem,
+    printingSizes,
+    printingColorModes,
+    onTogglePrintingSizeActive,
+    onTogglePrintingColorModeActive,
+    onEditPrintingSize,
+    onEditPrintingColorMode,
+    onAddPrintingSize,
+    onAddPrintingColorMode,
 }: {
     categoryId: string;
     order: number;
@@ -1185,6 +1816,14 @@ function CategoryTableRow({
     onToggleItemActive?: (itemId: string, categoryId: string, currentActive: boolean) => void;
     onEditItem?: (item: ErrandItem, categoryId: string) => void;
     onAddItem?: (categoryId: string, categoryName: string) => void;
+    printingSizes?: { items: PrintingSize[]; loading: boolean; error: string | null };
+    printingColorModes?: { items: PrintingColorMode[]; loading: boolean; error: string | null };
+    onTogglePrintingSizeActive?: (sizeId: string, currentActive: boolean) => void;
+    onTogglePrintingColorModeActive?: (colorModeId: string, currentActive: boolean) => void;
+    onEditPrintingSize?: (size: PrintingSize) => void;
+    onEditPrintingColorMode?: (colorMode: PrintingColorMode) => void;
+    onAddPrintingSize?: () => void;
+    onAddPrintingColorMode?: () => void;
 }) {
     const rowStyle = index % 2 === 0 ? styles.tableRow : styles.tableRowAlternate;
     const canMoveUp = index > 0;
@@ -1248,6 +1887,14 @@ function CategoryTableRow({
                 onToggleItemActive={onToggleItemActive}
                 onEditItem={onEditItem}
                 onAddItem={onAddItem}
+                printingSizes={printingSizes}
+                printingColorModes={printingColorModes}
+                onTogglePrintingSizeActive={onTogglePrintingSizeActive}
+                onTogglePrintingColorModeActive={onTogglePrintingColorModeActive}
+                onEditPrintingSize={onEditPrintingSize}
+                onEditPrintingColorMode={onEditPrintingColorMode}
+                onAddPrintingSize={onAddPrintingSize}
+                onAddPrintingColorMode={onAddPrintingColorMode}
             />
         )}
         </>
@@ -1261,6 +1908,14 @@ type CategoryItemsPreviewProps = {
     onToggleItemActive?: (itemId: string, categoryId: string, currentActive: boolean) => void;
     onEditItem?: (item: ErrandItem, categoryId: string) => void;
     onAddItem?: (categoryId: string, categoryName: string) => void;
+    printingSizes?: { items: PrintingSize[]; loading: boolean; error: string | null };
+    printingColorModes?: { items: PrintingColorMode[]; loading: boolean; error: string | null };
+    onTogglePrintingSizeActive?: (sizeId: string, currentActive: boolean) => void;
+    onTogglePrintingColorModeActive?: (colorModeId: string, currentActive: boolean) => void;
+    onEditPrintingSize?: (size: PrintingSize) => void;
+    onEditPrintingColorMode?: (colorMode: PrintingColorMode) => void;
+    onAddPrintingSize?: () => void;
+    onAddPrintingColorMode?: () => void;
 };
 
 function CategoryItemsPreview({
@@ -1270,18 +1925,30 @@ function CategoryItemsPreview({
     onToggleItemActive,
     onEditItem,
     onAddItem,
+    printingSizes,
+    printingColorModes,
+    onTogglePrintingSizeActive,
+    onTogglePrintingColorModeActive,
+    onEditPrintingSize,
+    onEditPrintingColorMode,
+    onAddPrintingSize,
+    onAddPrintingColorMode,
 }: CategoryItemsPreviewProps) {
     // Special handling for categories that don't use errand_items
     if (category === "Printing") {
+        // Always render PrintingOptionsPreviewWithData for Printing category
+        // It will handle loading/empty/error states internally
         return (
-            <View style={styles.itemsPreviewContainer}>
-                <View style={styles.itemsPreviewNote}>
-                    <Ionicons name="information-circle-outline" size={16} color={colors.text} style={{ opacity: 0.6, marginRight: 8 }} />
-                    <Text style={styles.itemsPreviewNoteText}>
-                        Printing uses file upload and size/color pricing.
-                    </Text>
-                </View>
-            </View>
+            <PrintingOptionsPreviewWithData
+                printingSizes={printingSizes || { items: [], loading: false, error: null }}
+                printingColorModes={printingColorModes || { items: [], loading: false, error: null }}
+                onToggleSizeActive={onTogglePrintingSizeActive || (() => {})}
+                onToggleColorModeActive={onTogglePrintingColorModeActive || (() => {})}
+                onEditSize={onEditPrintingSize || (() => {})}
+                onEditColorMode={onEditPrintingColorMode || (() => {})}
+                onAddSize={onAddPrintingSize || (() => {})}
+                onAddColorMode={onAddPrintingColorMode || (() => {})}
+            />
         );
     }
 
@@ -1445,6 +2112,207 @@ function ItemRow({
                 <TouchableOpacity
                     style={styles.itemsPreviewEditButton}
                     onPress={() => onEdit(item, categoryId)}
+                    activeOpacity={0.7}
+                >
+                    <Ionicons name="create-outline" size={14} color={colors.text} />
+                </TouchableOpacity>
+            )}
+        </View>
+    );
+}
+
+// Printing Options Preview Component
+type PrintingOptionsPreviewProps = {};
+
+function PrintingOptionsPreview({}: PrintingOptionsPreviewProps) {
+    // This will use context or props passed from parent
+    // For now, we'll need to pass props through CategoryItemsPreview
+    return null; // Will be implemented below
+}
+
+type PrintingOptionsPreviewWithDataProps = {
+    printingSizes: { items: PrintingSize[]; loading: boolean; error: string | null };
+    printingColorModes: { items: PrintingColorMode[]; loading: boolean; error: string | null };
+    onToggleSizeActive: (sizeId: string, currentActive: boolean) => void;
+    onToggleColorModeActive: (colorModeId: string, currentActive: boolean) => void;
+    onEditSize: (size: PrintingSize) => void;
+    onEditColorMode: (colorMode: PrintingColorMode) => void;
+    onAddSize: () => void;
+    onAddColorMode: () => void;
+};
+
+function PrintingOptionsPreviewWithData({
+    printingSizes,
+    printingColorModes,
+    onToggleSizeActive,
+    onToggleColorModeActive,
+    onEditSize,
+    onEditColorMode,
+    onAddSize,
+    onAddColorMode,
+}: PrintingOptionsPreviewWithDataProps) {
+    return (
+        <View style={styles.itemsPreviewContainer}>
+            {/* Printing Sizes Section */}
+            <View style={styles.printingOptionsSection}>
+                <View style={styles.printingOptionsHeader}>
+                    <Text style={styles.printingOptionsTitle}>Printing Sizes</Text>
+                    <TouchableOpacity
+                        style={styles.addItemButton}
+                        onPress={onAddSize}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="add-outline" size={14} color="#fff" style={{ marginRight: 6 }} />
+                        <Text style={styles.addItemButtonText}>Add Size</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {printingSizes.loading ? (
+                    <View style={styles.itemsPreviewLoading}>
+                        <ActivityIndicator size="small" color={colors.maroon} />
+                        <Text style={styles.itemsPreviewLoadingText}>Loading sizes...</Text>
+                    </View>
+                ) : printingSizes.error ? (
+                    <View style={styles.itemsPreviewError}>
+                        <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                        <Text style={styles.itemsPreviewErrorText}>{printingSizes.error}</Text>
+                    </View>
+                ) : printingSizes.items.length === 0 ? (
+                    <View style={styles.itemsPreviewEmpty}>
+                        <Text style={styles.itemsPreviewEmptyText}>No sizes configured</Text>
+                    </View>
+                ) : (
+                    <View style={styles.itemsPreviewContent}>
+                        {printingSizes.items.map((size) => (
+                            <PrintingSizeRow
+                                key={size.id}
+                                size={size}
+                                onToggleActive={onToggleSizeActive}
+                                onEdit={onEditSize}
+                            />
+                        ))}
+                    </View>
+                )}
+            </View>
+
+            {/* Printing Color Modes Section */}
+            <View style={styles.printingOptionsSection}>
+                <View style={styles.printingOptionsHeader}>
+                    <Text style={styles.printingOptionsTitle}>Printing Color Modes</Text>
+                    <TouchableOpacity
+                        style={styles.addItemButton}
+                        onPress={onAddColorMode}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="add-outline" size={14} color="#fff" style={{ marginRight: 6 }} />
+                        <Text style={styles.addItemButtonText}>Add Color Mode</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {printingColorModes.loading ? (
+                    <View style={styles.itemsPreviewLoading}>
+                        <ActivityIndicator size="small" color={colors.maroon} />
+                        <Text style={styles.itemsPreviewLoadingText}>Loading color modes...</Text>
+                    </View>
+                ) : printingColorModes.error ? (
+                    <View style={styles.itemsPreviewError}>
+                        <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                        <Text style={styles.itemsPreviewErrorText}>{printingColorModes.error}</Text>
+                    </View>
+                ) : printingColorModes.items.length === 0 ? (
+                    <View style={styles.itemsPreviewEmpty}>
+                        <Text style={styles.itemsPreviewEmptyText}>No color modes configured</Text>
+                    </View>
+                ) : (
+                    <View style={styles.itemsPreviewContent}>
+                        {printingColorModes.items.map((colorMode) => (
+                            <PrintingColorModeRow
+                                key={colorMode.id}
+                                colorMode={colorMode}
+                                onToggleActive={onToggleColorModeActive}
+                                onEdit={onEditColorMode}
+                            />
+                        ))}
+                    </View>
+                )}
+            </View>
+        </View>
+    );
+}
+
+type PrintingSizeRowProps = {
+    size: PrintingSize;
+    onToggleActive?: (sizeId: string, currentActive: boolean) => void;
+    onEdit?: (size: PrintingSize) => void;
+};
+
+function PrintingSizeRow({
+    size,
+    onToggleActive,
+    onEdit,
+}: PrintingSizeRowProps) {
+    return (
+        <View style={styles.itemsPreviewRow}>
+            <Text style={styles.itemsPreviewItemName}>{size.label}</Text>
+            <Text style={styles.itemsPreviewPrice}>₱{size.price}</Text>
+            <TouchableOpacity
+                onPress={() => onToggleActive?.(size.id, size.is_active)}
+                activeOpacity={0.7}
+            >
+                <View style={[styles.itemsPreviewBadge, !size.is_active && styles.itemsPreviewBadgeInactive]}>
+                    <Text style={styles.itemsPreviewBadgeText}>
+                        {size.is_active ? 'Active' : 'Inactive'}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+            {size.sort_order !== null && (
+                <Text style={styles.itemsPreviewOrder}>Order: {size.sort_order}</Text>
+            )}
+            {onEdit && (
+                <TouchableOpacity
+                    style={styles.itemsPreviewEditButton}
+                    onPress={() => onEdit(size)}
+                    activeOpacity={0.7}
+                >
+                    <Ionicons name="create-outline" size={14} color={colors.text} />
+                </TouchableOpacity>
+            )}
+        </View>
+    );
+}
+
+type PrintingColorModeRowProps = {
+    colorMode: PrintingColorMode;
+    onToggleActive?: (colorModeId: string, currentActive: boolean) => void;
+    onEdit?: (colorMode: PrintingColorMode) => void;
+};
+
+function PrintingColorModeRow({
+    colorMode,
+    onToggleActive,
+    onEdit,
+}: PrintingColorModeRowProps) {
+    return (
+        <View style={styles.itemsPreviewRow}>
+            <Text style={styles.itemsPreviewItemName}>{colorMode.label}</Text>
+            <Text style={styles.itemsPreviewPrice}>₱{colorMode.price}</Text>
+            <TouchableOpacity
+                onPress={() => onToggleActive?.(colorMode.id, colorMode.is_active)}
+                activeOpacity={0.7}
+            >
+                <View style={[styles.itemsPreviewBadge, !colorMode.is_active && styles.itemsPreviewBadgeInactive]}>
+                    <Text style={styles.itemsPreviewBadgeText}>
+                        {colorMode.is_active ? 'Active' : 'Inactive'}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+            {colorMode.sort_order !== null && (
+                <Text style={styles.itemsPreviewOrder}>Order: {colorMode.sort_order}</Text>
+            )}
+            {onEdit && (
+                <TouchableOpacity
+                    style={styles.itemsPreviewEditButton}
+                    onPress={() => onEdit(colorMode)}
                     activeOpacity={0.7}
                 >
                     <Ionicons name="create-outline" size={14} color={colors.text} />
@@ -2051,5 +2919,22 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: colors.text,
         fontWeight: "500",
+    },
+    printingOptionsSection: {
+        marginTop: 16,
+        paddingTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+    },
+    printingOptionsHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    printingOptionsTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: colors.text,
     },
 });

@@ -11,6 +11,7 @@ import * as Sharing from 'expo-sharing';
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
+    ActivityIndicator,
     Alert,
     Modal,
     Platform,
@@ -115,16 +116,9 @@ function parseItemPrice(itemName: string): number {
     return 0;
 }
 
-// Helper for Printing prices (only when size is A3)
-function getPrintingColorPrice(size?: string, color?: string): number {
-    if (size === "A3") {
-        if (color === "Colored") return 25;
-        if (color === "Not Colored") return 15;
-    } else if (size === "A4") {
-        if (color === "Colored") return 5;
-        if (color === "Not Colored") return 2;
-    }
-    return 0;
+// Helper for Printing prices - uses database prices
+function getPrintingColorPrice(sizePrice: number, colorPrice: number): number {
+    return sizePrice + colorPrice;
 }
 
 /* ---------- Tiny dropdown: web inline; native anchored modal ---------- */
@@ -254,15 +248,21 @@ function CategoryDropdown({
     onPrintingColorSelect,
     placeholder = "Select Category",
     categoryOptions,
+    printingSizes = [],
+    printingColorModes = [],
+    printingOptionsLoading = false,
 }: {
     value?: string;
     printingSize?: string;
     printingColor?: string;
     onSelect: (v: string) => void;
-    onPrintingSizeSelect: (size: string) => void;
-    onPrintingColorSelect: (color: string) => void;
+    onPrintingSizeSelect: (size: string, sizeId: string, price: number) => void;
+    onPrintingColorSelect: (color: string, colorId: string, price: number) => void;
     placeholder?: string;
     categoryOptions?: readonly string[];
+    printingSizes?: Array<{ id: string; label: string; price: number }>;
+    printingColorModes?: Array<{ id: string; label: string; price: number }>;
+    printingOptionsLoading?: boolean;
 }) {
     const [open, setOpen] = useState(false);
     const [printingExpanded, setPrintingExpanded] = useState(false);
@@ -290,24 +290,26 @@ function CategoryDropdown({
 
     const handleCategorySelect = (cat: string) => {
         if (cat === "Printing") {
+            // Set category to "Printing" immediately to trigger fetch
+            onSelect("Printing");
             setPrintingExpanded(true);
         } else {
             onSelect(cat);
-            onPrintingSizeSelect(""); // Clear printing size when selecting other category
-            onPrintingColorSelect(""); // Clear printing color when selecting other category
+            onPrintingSizeSelect("", "", 0); // Clear printing size when selecting other category
+            onPrintingColorSelect("", "", 0); // Clear printing color when selecting other category
             closeDropdown();
         }
     };
 
-    const handlePrintingSizeSelect = (size: string) => {
-        onPrintingSizeSelect(size);
+    const handlePrintingSizeSelect = (size: { id: string; label: string; price: number }) => {
+        onPrintingSizeSelect(size.label, size.id, size.price);
         onSelect("Printing");
         // Do not auto-close so user can still pick color
         setPrintingExpanded(true);
     };
 
-    const handlePrintingColorSelect = (color: string) => {
-        onPrintingColorSelect(color);
+    const handlePrintingColorSelect = (color: { id: string; label: string; price: number }) => {
+        onPrintingColorSelect(color.label, color.id, color.price);
         closeDropdown();
     };
 
@@ -359,26 +361,38 @@ function CategoryDropdown({
                                 {opt === "Printing" && printingExpanded && (
                                     <View style={s.categoryContent}>
                                         {/* Size selection */}
-                                        <TouchableOpacity
-                                            style={s.checkboxContainer}
-                                            onPress={() => handlePrintingSizeSelect("A3")}
-                                            activeOpacity={0.8}
-                                        >
-                                            <View style={[s.checkbox, printingSize === "A3" && s.checkboxSelected]}>
-                                                {printingSize === "A3" && <Ionicons name="checkmark" size={12} color="white" />}
+                                        {printingOptionsLoading ? (
+                                            <View style={{ padding: rp(8), alignItems: 'center' }}>
+                                                <ActivityIndicator size="small" color="#8B2323" />
+                                                <Text style={[s.checkboxLabel, { marginTop: rp(4), opacity: 0.6 }]}>Loading sizes...</Text>
                                             </View>
-                                            <Text style={s.checkboxLabel}>A3</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                            style={s.checkboxContainer}
-                                            onPress={() => handlePrintingSizeSelect("A4")}
-                                            activeOpacity={0.8}
-                                        >
-                                            <View style={[s.checkbox, printingSize === "A4" && s.checkboxSelected]}>
-                                                {printingSize === "A4" && <Ionicons name="checkmark" size={12} color="white" />}
+                                        ) : printingSizes.length === 0 ? (
+                                            <View style={{ padding: rp(8) }}>
+                                                <Text style={[s.checkboxLabel, { opacity: 0.6 }]}>No sizes available</Text>
                                             </View>
-                                            <Text style={s.checkboxLabel}>A4</Text>
-                                        </TouchableOpacity>
+                                        ) : !printingOptionsLoading && printingSizes.length === 0 ? (
+                                            <View style={{ padding: rp(8) }}>
+                                                <Text style={[s.checkboxLabel, { opacity: 0.6 }]}>No sizes available</Text>
+                                            </View>
+                                        ) : printingSizes.length > 0 ? (
+                                            printingSizes.map((size) => (
+                                                <TouchableOpacity
+                                                    key={size.id}
+                                                    style={s.checkboxContainer}
+                                                    onPress={() => handlePrintingSizeSelect(size)}
+                                                    activeOpacity={0.8}
+                                                    disabled={printingOptionsLoading}
+                                                >
+                                                    <View style={[s.checkbox, printingSize === size.label && s.checkboxSelected]}>
+                                                        {printingSize === size.label && <Ionicons name="checkmark" size={12} color="white" />}
+                                                    </View>
+                                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                                        <Text style={s.checkboxLabel}>{size.label}</Text>
+                                                        <Text style={s.printingPrice}>₱{size.price}</Text>
+                                                    </View>
+                                                </TouchableOpacity>
+                                            ))
+                                        ) : null}
 
                                         {/* Color selection, shown after size is chosen */}
                                         {printingSize ? (
@@ -386,30 +400,36 @@ function CategoryDropdown({
                                                 <Text style={[s.checkboxLabel, { marginBottom: rp(4) }]}>
                                                     Color:
                                                 </Text>
-                                                <TouchableOpacity
-                                                    style={s.checkboxContainer}
-                                                    onPress={() => handlePrintingColorSelect("Colored")}
-                                                    activeOpacity={0.8}
-                                                >
-                                                    <View style={[s.checkbox, printingColor === "Colored" && s.checkboxSelected]}>
-                                                        {printingColor === "Colored" && (
-                                                            <Ionicons name="checkmark" size={12} color="white" />
-                                                        )}
+                                                {printingOptionsLoading ? (
+                                                    <View style={{ padding: rp(8), alignItems: 'center' }}>
+                                                        <ActivityIndicator size="small" color="#8B2323" />
+                                                        <Text style={[s.checkboxLabel, { marginTop: rp(4), opacity: 0.6 }]}>Loading color modes...</Text>
                                                     </View>
-                                                    <Text style={s.checkboxLabel}>Colored</Text>
-                                                </TouchableOpacity>
-                                                <TouchableOpacity
-                                                    style={s.checkboxContainer}
-                                                    onPress={() => handlePrintingColorSelect("Not Colored")}
-                                                    activeOpacity={0.8}
-                                                >
-                                                    <View style={[s.checkbox, printingColor === "Not Colored" && s.checkboxSelected]}>
-                                                        {printingColor === "Not Colored" && (
-                                                            <Ionicons name="checkmark" size={12} color="white" />
-                                                        )}
+                                                ) : printingColorModes.length === 0 ? (
+                                                    <View style={{ padding: rp(8) }}>
+                                                        <Text style={[s.checkboxLabel, { opacity: 0.6 }]}>No color modes available</Text>
                                                     </View>
-                                                    <Text style={s.checkboxLabel}>Not Colored</Text>
-                                                </TouchableOpacity>
+                                                ) : (
+                                                    printingColorModes.map((color) => (
+                                                        <TouchableOpacity
+                                                            key={color.id}
+                                                            style={s.checkboxContainer}
+                                                            onPress={() => handlePrintingColorSelect(color)}
+                                                            activeOpacity={0.8}
+                                                            disabled={printingOptionsLoading}
+                                                        >
+                                                            <View style={[s.checkbox, printingColor === color.label && s.checkboxSelected]}>
+                                                                {printingColor === color.label && (
+                                                                    <Ionicons name="checkmark" size={12} color="white" />
+                                                                )}
+                                                            </View>
+                                                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                                                <Text style={s.checkboxLabel}>{color.label}</Text>
+                                                                <Text style={s.printingPrice}>₱{color.price}</Text>
+                                                            </View>
+                                                        </TouchableOpacity>
+                                                    ))
+                                                )}
                                             </View>
                                         ) : null}
                                     </View>
@@ -460,26 +480,34 @@ function CategoryDropdown({
                                             {opt === "Printing" && printingExpanded && (
                                                 <View style={s.categoryContent}>
                                                     {/* Size selection */}
-                                                    <TouchableOpacity
-                                                        style={s.checkboxContainer}
-                                                        onPress={() => handlePrintingSizeSelect("A3")}
-                                                        activeOpacity={0.8}
-                                                    >
-                                                        <View style={[s.checkbox, printingSize === "A3" && s.checkboxSelected]}>
-                                                            {printingSize === "A3" && <Ionicons name="checkmark" size={12} color="white" />}
+                                                    {printingOptionsLoading ? (
+                                                        <View style={{ padding: rp(8), alignItems: 'center' }}>
+                                                            <ActivityIndicator size="small" color="#8B2323" />
+                                                            <Text style={[s.checkboxLabel, { marginTop: rp(4), opacity: 0.6 }]}>Loading sizes...</Text>
                                                         </View>
-                                                        <Text style={s.checkboxLabel}>A3</Text>
-                                                    </TouchableOpacity>
-                                                    <TouchableOpacity
-                                                        style={[s.checkboxContainer, { marginTop: rp(4) }]}
-                                                        onPress={() => handlePrintingSizeSelect("A4")}
-                                                        activeOpacity={0.8}
-                                                    >
-                                                        <View style={[s.checkbox, printingSize === "A4" && s.checkboxSelected]}>
-                                                            {printingSize === "A4" && <Ionicons name="checkmark" size={12} color="white" />}
+                                                    ) : !printingOptionsLoading && printingSizes.length === 0 ? (
+                                                        <View style={{ padding: rp(8) }}>
+                                                            <Text style={[s.checkboxLabel, { opacity: 0.6 }]}>No sizes available</Text>
                                                         </View>
-                                                        <Text style={s.checkboxLabel}>A4</Text>
-                                                    </TouchableOpacity>
+                                                    ) : printingSizes.length > 0 ? (
+                                                        printingSizes.map((size, idx) => (
+                                                            <TouchableOpacity
+                                                                key={size.id}
+                                                                style={[s.checkboxContainer, idx > 0 && { marginTop: rp(4) }]}
+                                                                onPress={() => handlePrintingSizeSelect(size)}
+                                                                activeOpacity={0.8}
+                                                                disabled={printingOptionsLoading}
+                                                            >
+                                                                <View style={[s.checkbox, printingSize === size.label && s.checkboxSelected]}>
+                                                                    {printingSize === size.label && <Ionicons name="checkmark" size={12} color="white" />}
+                                                                </View>
+                                                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                                                    <Text style={s.checkboxLabel}>{size.label}</Text>
+                                                                    <Text style={s.printingPrice}>₱{size.price}</Text>
+                                                                </View>
+                                                            </TouchableOpacity>
+                                                        ))
+                                                    ) : null}
 
                                                     {/* Color selection, shown after size is chosen */}
                                                     {printingSize ? (
@@ -487,44 +515,36 @@ function CategoryDropdown({
                                                             <Text style={[s.checkboxLabel, { marginBottom: rp(4) }]}>
                                                                 Color:
                                                             </Text>
-                                                            <TouchableOpacity
-                                                                style={s.checkboxContainer}
-                                                                onPress={() => handlePrintingColorSelect("Colored")}
-                                                                activeOpacity={0.8}
-                                                            >
-                                                                <View style={[s.checkbox, printingColor === "Colored" && s.checkboxSelected]}>
-                                                                    {printingColor === "Colored" && (
-                                                                        <Ionicons name="checkmark" size={12} color="white" />
-                                                                    )}
+                                                            {printingOptionsLoading ? (
+                                                                <View style={{ padding: rp(8), alignItems: 'center' }}>
+                                                                    <ActivityIndicator size="small" color="#8B2323" />
+                                                                    <Text style={[s.checkboxLabel, { marginTop: rp(4), opacity: 0.6 }]}>Loading color modes...</Text>
                                                                 </View>
-                                                                <View style={{ flexDirection: "row", alignItems: "center", gap: rp(6) }}>
-                                                                    <Text style={s.checkboxLabel}>Colored</Text>
-                                                                    {printingSize === "A3" ? (
-                                                                        <Text style={s.printingPrice}>₱25</Text>
-                                                                    ) : printingSize === "A4" ? (
-                                                                        <Text style={s.printingPrice}>₱5</Text>
-                                                                    ) : null}
+                                                            ) : printingColorModes.length === 0 ? (
+                                                                <View style={{ padding: rp(8) }}>
+                                                                    <Text style={[s.checkboxLabel, { opacity: 0.6 }]}>No color modes available</Text>
                                                                 </View>
-                                                            </TouchableOpacity>
-                                                            <TouchableOpacity
-                                                                style={[s.checkboxContainer, { marginTop: rp(4) }]}
-                                                                onPress={() => handlePrintingColorSelect("Not Colored")}
-                                                                activeOpacity={0.8}
-                                                            >
-                                                                <View style={[s.checkbox, printingColor === "Not Colored" && s.checkboxSelected]}>
-                                                                    {printingColor === "Not Colored" && (
-                                                                        <Ionicons name="checkmark" size={12} color="white" />
-                                                                    )}
-                                                                </View>
-                                                                <View style={{ flexDirection: "row", alignItems: "center", gap: rp(6) }}>
-                                                                    <Text style={s.checkboxLabel}>Not Colored</Text>
-                                                                    {printingSize === "A3" ? (
-                                                                        <Text style={s.printingPrice}>₱15</Text>
-                                                                    ) : printingSize === "A4" ? (
-                                                                        <Text style={s.printingPrice}>₱2</Text>
-                                                                    ) : null}
-                                                                </View>
-                                                            </TouchableOpacity>
+                                                            ) : (
+                                                                printingColorModes.map((color, idx) => (
+                                                                    <TouchableOpacity
+                                                                        key={color.id}
+                                                                        style={[s.checkboxContainer, idx > 0 && { marginTop: rp(4) }]}
+                                                                        onPress={() => handlePrintingColorSelect(color)}
+                                                                        activeOpacity={0.8}
+                                                                        disabled={printingOptionsLoading}
+                                                                    >
+                                                                        <View style={[s.checkbox, printingColor === color.label && s.checkboxSelected]}>
+                                                                            {printingColor === color.label && (
+                                                                                <Ionicons name="checkmark" size={12} color="white" />
+                                                                            )}
+                                                                        </View>
+                                                                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                                                            <Text style={s.checkboxLabel}>{color.label}</Text>
+                                                                            <Text style={s.printingPrice}>₱{color.price}</Text>
+                                                                        </View>
+                                                                    </TouchableOpacity>
+                                                                ))
+                                                            )}
                                                         </View>
                                                     ) : null}
                                                 </View>
@@ -1118,8 +1138,15 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
     const [title, setTitle] = useState("");
     const [desc, setDesc] = useState("");
     const [category, setCategory] = useState<string>("");
-    const [printingSize, setPrintingSize] = useState<string>(""); // A3 or A4
-    const [printingColor, setPrintingColor] = useState<string>(""); // Colored or Not Colored
+    const [printingSize, setPrintingSize] = useState<string>(""); // Size label (e.g., "A3", "A4")
+    const [printingColor, setPrintingColor] = useState<string>(""); // Color mode label (e.g., "Colored", "Not Colored")
+    const [printingSizeId, setPrintingSizeId] = useState<string>(""); // Size ID from database
+    const [printingColorModeId, setPrintingColorModeId] = useState<string>(""); // Color mode ID from database
+    const [printingSizePrice, setPrintingSizePrice] = useState<number>(0); // Size price from database
+    const [printingColorModePrice, setPrintingColorModePrice] = useState<number>(0); // Color mode price from database
+    const [printingSizes, setPrintingSizes] = useState<Array<{ id: string; label: string; price: number }>>([]);
+    const [printingColorModes, setPrintingColorModes] = useState<Array<{ id: string; label: string; price: number }>>([]);
+    const [printingOptionsLoading, setPrintingOptionsLoading] = useState(false);
     const [campusLocations, setCampusLocations] = useState<CampusLocation[]>([]);
     const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
     const [deliveryLocationName, setDeliveryLocationName] = useState<string>("");
@@ -1196,6 +1223,76 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
         fetchCategories();
     }, []);
 
+    // Clear printing state when category changes away from Printing
+    useEffect(() => {
+        if (category !== "Printing") {
+            setPrintingSize("");
+            setPrintingColor("");
+            setPrintingSizeId("");
+            setPrintingColorModeId("");
+            setPrintingSizePrice(0);
+            setPrintingColorModePrice(0);
+        }
+    }, [category]);
+
+    // fetch printing options when category is Printing
+    useEffect(() => {
+        const fetchPrintingOptions = async () => {
+            // Check if category is exactly "Printing" (handle potential string variations)
+            const isPrinting = category === "Printing" || category?.trim() === "Printing";
+            
+            if (!isPrinting) {
+                // Clear printing options when not Printing category
+                setPrintingSizes([]);
+                setPrintingColorModes([]);
+                return;
+            }
+
+            setPrintingOptionsLoading(true);
+            try {
+                // Fetch printing sizes
+                const { data: sizesData, error: sizesError } = await supabase
+                    .from("printing_sizes")
+                    .select("id, label, price")
+                    .eq("is_active", true)
+                    .order("sort_order", { ascending: true, nullsFirst: false });
+
+                if (sizesError) throw sizesError;
+
+                const sizes = (sizesData || []).map((s: any) => ({
+                    id: String(s.id),
+                    label: s.label,
+                    price: s.price,
+                }));
+                setPrintingSizes(sizes);
+
+                // Fetch printing color modes
+                const { data: colorModesData, error: colorModesError } = await supabase
+                    .from("printing_color_modes")
+                    .select("id, label, price")
+                    .eq("is_active", true)
+                    .order("sort_order", { ascending: true, nullsFirst: false });
+
+                if (colorModesError) throw colorModesError;
+
+                const colorModes = (colorModesData || []).map((c: any) => ({
+                    id: String(c.id),
+                    label: c.label,
+                    price: c.price,
+                }));
+                setPrintingColorModes(colorModes);
+            } catch (err) {
+                console.error("[MOBILE] Error fetching printing options:", err);
+                setPrintingSizes([]);
+                setPrintingColorModes([]);
+            } finally {
+                setPrintingOptionsLoading(false);
+            }
+        };
+
+        fetchPrintingOptions();
+    }, [category]);
+
     // fetch campus delivery locations once
     useEffect(() => {
         const fetchLocations = async () => {
@@ -1255,8 +1352,8 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             if (item.name && item.qty) {
                 let itemPrice = 0;
                 if (category === "Printing") {
-                    // 🔒 PROTECTED: Printing price calculation - DO NOT MODIFY
-                    itemPrice = getPrintingColorPrice(printingSize, printingColor);
+                    // Use database prices for printing
+                    itemPrice = getPrintingColorPrice(printingSizePrice, printingColorModePrice);
                 } else {
                     // PHASE 2: Use item.price from database if available, otherwise fallback to parseItemPrice()
                     itemPrice = item.price !== undefined ? item.price : parseItemPrice(item.name); // Returns 0 if no price found
@@ -2315,10 +2412,24 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                     printingSize={printingSize}
                                     printingColor={printingColor}
                                     onSelect={setCategory} 
-                                    onPrintingSizeSelect={setPrintingSize}
-                                    onPrintingColorSelect={setPrintingColor}
+                                    onPrintingSizeSelect={(label, id, price) => {
+                                        setPrintingSize(label);
+                                        setPrintingSizeId(id);
+                                        setPrintingSizePrice(price);
+                                        setPrintingColor(""); // Clear color when size changes
+                                        setPrintingColorModeId("");
+                                        setPrintingColorModePrice(0);
+                                    }}
+                                    onPrintingColorSelect={(label, id, price) => {
+                                        setPrintingColor(label);
+                                        setPrintingColorModeId(id);
+                                        setPrintingColorModePrice(price);
+                                    }}
                                     placeholder="Select Category"
                                     categoryOptions={categoryOptions}
+                                    printingSizes={printingSizes}
+                                    printingColorModes={printingColorModes}
+                                    printingOptionsLoading={printingOptionsLoading}
                                 />
                             </View>
 
@@ -2520,10 +2631,24 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                             printingSize={printingSize}
                             printingColor={printingColor}
                             onSelect={setCategory} 
-                            onPrintingSizeSelect={setPrintingSize}
-                            onPrintingColorSelect={setPrintingColor}
+                            onPrintingSizeSelect={(label, id, price) => {
+                                setPrintingSize(label);
+                                setPrintingSizeId(id);
+                                setPrintingSizePrice(price);
+                                setPrintingColor(""); // Clear color when size changes
+                                setPrintingColorModeId("");
+                                setPrintingColorModePrice(0);
+                            }}
+                            onPrintingColorSelect={(label, id, price) => {
+                                setPrintingColor(label);
+                                setPrintingColorModeId(id);
+                                setPrintingColorModePrice(price);
+                            }}
                             placeholder="Select Category"
                             categoryOptions={categoryOptions}
+                            printingSizes={printingSizes}
+                            printingColorModes={printingColorModes}
+                            printingOptionsLoading={printingOptionsLoading}
                         />
                     </View>
 

@@ -94,6 +94,15 @@ type PrintingColorMode = {
     sort_order: number | null;
 };
 
+type CampusLocation = {
+    id: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+    is_active?: boolean;
+    sort_order?: number | null;
+};
+
 export default function AdminCategories() {
     const router = useRouter();
     const { loading, fullName } = useAuthProfile();
@@ -139,6 +148,15 @@ export default function AdminCategories() {
     const [editPrintingColorModeDraft, setEditPrintingColorModeDraft] = useState<{ label: string; price: string; sort_order: string; is_active: boolean }>({ label: "", price: "", sort_order: "", is_active: true });
     const [printingOptionsSaving, setPrintingOptionsSaving] = useState(false);
     const [printingOptionsSaveError, setPrintingOptionsSaveError] = useState<string | null>(null);
+
+    // Campus locations state
+    const [campusLocations, setCampusLocations] = useState<{ items: CampusLocation[]; loading: boolean; error: string | null }>({ items: [], loading: false, error: null });
+    const [editingCampusLocation, setEditingCampusLocation] = useState<{ item: CampusLocation } | null>(null);
+    const [showAddCampusLocationModal, setShowAddCampusLocationModal] = useState(false);
+    const [newCampusLocationDraft, setNewCampusLocationDraft] = useState<{ name: string; latitude: string; longitude: string }>({ name: "", latitude: "", longitude: "" });
+    const [editCampusLocationDraft, setEditCampusLocationDraft] = useState<{ name: string; latitude: string; longitude: string; is_active: boolean }>({ name: "", latitude: "", longitude: "", is_active: true });
+    const [campusLocationSaving, setCampusLocationSaving] = useState(false);
+    const [campusLocationSaveError, setCampusLocationSaveError] = useState<string | null>(null);
 
     // Responsive breakpoints
     const isSmall = screenWidth < 768;
@@ -216,6 +234,9 @@ export default function AdminCategories() {
             if (categoryName === "Printing") {
                 // Fetch printing options when Printing category is expanded
                 fetchPrintingOptions();
+            } else if (categoryName === "Deliver Items") {
+                // Always fetch campus locations when Deliver Items category is expanded
+                fetchCampusLocations();
             } else if (!categoryItems[categoryId]) {
                 fetchCategoryItems(categoryId, categoryName);
             }
@@ -254,6 +275,26 @@ export default function AdminCategories() {
         } catch (err) {
             console.error('Error fetching printing color modes:', err);
             setPrintingColorModes({ items: [], loading: false, error: err instanceof Error ? err.message : 'Failed to load printing color modes' });
+        }
+    };
+
+    // Fetch campus locations
+    const fetchCampusLocations = async () => {
+        setCampusLocations(prev => ({ ...prev, loading: true, error: null }));
+        try {
+            const { data, error } = await supabase
+                .from('campus_locations')
+                .select('id, name, latitude, longitude, is_active, sort_order')
+                .order('sort_order', { ascending: true, nullsFirst: false })
+                .order('name', { ascending: true });
+
+            if (error) throw error;
+
+            console.log('[Admin] Fetched campus locations:', data);
+            setCampusLocations({ items: (data || []) as CampusLocation[], loading: false, error: null });
+        } catch (err) {
+            console.error('Error fetching campus locations:', err);
+            setCampusLocations({ items: [], loading: false, error: err instanceof Error ? err.message : 'Failed to load campus locations' });
         }
     };
 
@@ -627,6 +668,128 @@ export default function AdminCategories() {
             Alert.alert('Error', `Failed to add printing color mode: ${err instanceof Error ? err.message : 'Unknown error'}`);
         } finally {
             setPrintingOptionsSaving(false);
+        }
+    };
+
+    // Campus location CRUD handlers
+    const handleToggleCampusLocationActive = async (locationId: string, currentActive: boolean) => {
+        try {
+            setCampusLocationSaving(true);
+            setCampusLocationSaveError(null);
+
+            const { error } = await supabase
+                .from('campus_locations')
+                .update({ is_active: !currentActive })
+                .eq('id', locationId);
+
+            if (error) throw error;
+
+            await fetchCampusLocations();
+        } catch (err) {
+            console.error('Error toggling campus location active:', err);
+            setCampusLocationSaveError(err instanceof Error ? err.message : 'Failed to toggle location');
+            Alert.alert('Error', `Failed to toggle location: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setCampusLocationSaving(false);
+        }
+    };
+
+    const handleOpenEditCampusLocation = (location: CampusLocation) => {
+        setEditingCampusLocation({ item: location });
+        setEditCampusLocationDraft({
+            name: location.name,
+            latitude: location.latitude.toString(),
+            longitude: location.longitude.toString(),
+            is_active: location.is_active ?? true,
+        });
+    };
+
+    const handleSaveEditCampusLocation = async () => {
+        if (!editingCampusLocation) return;
+
+        if (!editCampusLocationDraft.name.trim()) {
+            Alert.alert('Error', 'Location name cannot be empty');
+            return;
+        }
+
+        const latNum = parseFloat(editCampusLocationDraft.latitude);
+        const lonNum = parseFloat(editCampusLocationDraft.longitude);
+        if (isNaN(latNum) || isNaN(lonNum)) {
+            Alert.alert('Error', 'Latitude and longitude must be valid numbers');
+            return;
+        }
+
+        try {
+            setCampusLocationSaving(true);
+            setCampusLocationSaveError(null);
+
+            const updateData: any = {
+                name: editCampusLocationDraft.name.trim(),
+                latitude: latNum,
+                longitude: lonNum,
+                is_active: editCampusLocationDraft.is_active,
+            };
+
+            const { error } = await supabase
+                .from('campus_locations')
+                .update(updateData)
+                .eq('id', editingCampusLocation.item.id);
+
+            if (error) throw error;
+
+            await fetchCampusLocations();
+
+            setEditingCampusLocation(null);
+            setEditCampusLocationDraft({ name: "", latitude: "", longitude: "", is_active: true });
+        } catch (err) {
+            console.error('Error updating campus location:', err);
+            setCampusLocationSaveError(err instanceof Error ? err.message : 'Failed to update location');
+            Alert.alert('Error', `Failed to update location: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setCampusLocationSaving(false);
+        }
+    };
+
+    const handleAddCampusLocation = async () => {
+        if (!newCampusLocationDraft.name.trim()) {
+            Alert.alert('Error', 'Location name cannot be empty');
+            return;
+        }
+
+        const latNum = parseFloat(newCampusLocationDraft.latitude);
+        const lonNum = parseFloat(newCampusLocationDraft.longitude);
+        if (isNaN(latNum) || isNaN(lonNum)) {
+            Alert.alert('Error', 'Latitude and longitude must be valid numbers');
+            return;
+        }
+
+        try {
+            setCampusLocationSaving(true);
+            setCampusLocationSaveError(null);
+
+            const insertData: any = {
+                name: newCampusLocationDraft.name.trim(),
+                latitude: latNum,
+                longitude: lonNum,
+                is_active: true,
+            };
+
+            const { error } = await supabase
+                .from('campus_locations')
+                .insert([insertData]);
+
+            if (error) throw error;
+
+            await fetchCampusLocations();
+
+            setShowAddCampusLocationModal(false);
+            setNewCampusLocationDraft({ name: "", latitude: "", longitude: "" });
+        } catch (err) {
+            console.error('Error adding campus location:', err);
+            setCampusLocationSaveError(err instanceof Error ? err.message : 'Failed to add location');
+            Alert.alert('Error', `Failed to add location: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            setCampusLocationSaving(false);
         }
     };
 
@@ -1075,6 +1238,10 @@ export default function AdminCategories() {
                                                         onEditPrintingColorMode={category.name === "Printing" ? handleOpenEditPrintingColorMode : undefined}
                                                         onAddPrintingSize={category.name === "Printing" ? () => setShowAddPrintingSizeModal(true) : undefined}
                                                         onAddPrintingColorMode={category.name === "Printing" ? () => setShowAddPrintingColorModeModal(true) : undefined}
+                                                        campusLocations={category.name === "Deliver Items" ? campusLocations : undefined}
+                                                        onToggleCampusLocationActive={category.name === "Deliver Items" ? handleToggleCampusLocationActive : undefined}
+                                                        onEditCampusLocation={category.name === "Deliver Items" ? handleOpenEditCampusLocation : undefined}
+                                                        onAddCampusLocation={category.name === "Deliver Items" ? () => setShowAddCampusLocationModal(true) : undefined}
                                                     />
                                                 </React.Fragment>
                                             ))
@@ -1631,6 +1798,148 @@ export default function AdminCategories() {
                     </View>
                 </View>
             )}
+
+            {/* Add Campus Location Modal */}
+            {showAddCampusLocationModal && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Add Campus Location</Text>
+                        {campusLocationSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{campusLocationSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Location name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCampusLocationDraft.name}
+                            onChangeText={(text) => setNewCampusLocationDraft(prev => ({ ...prev, name: text }))}
+                            placeholder="e.g., Main Library"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Latitude:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCampusLocationDraft.latitude}
+                            onChangeText={(text) => setNewCampusLocationDraft(prev => ({ ...prev, latitude: text }))}
+                            placeholder="7.1234"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <Text style={styles.modalMessage}>Longitude:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newCampusLocationDraft.longitude}
+                            onChangeText={(text) => setNewCampusLocationDraft(prev => ({ ...prev, longitude: text }))}
+                            placeholder="125.5678"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setShowAddCampusLocationModal(false);
+                                    setNewCampusLocationDraft({ name: "", latitude: "", longitude: "" });
+                                    setCampusLocationSaveError(null);
+                                }}
+                                disabled={campusLocationSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, campusLocationSaving && { opacity: 0.6 }]}
+                                onPress={handleAddCampusLocation}
+                                disabled={campusLocationSaving}
+                            >
+                                {campusLocationSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Add</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Edit Campus Location Modal */}
+            {editingCampusLocation && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Edit Campus Location</Text>
+                        {campusLocationSaveError && (
+                            <View style={styles.saveErrorContainer}>
+                                <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                                <Text style={styles.saveErrorText}>{campusLocationSaveError}</Text>
+                            </View>
+                        )}
+                        <Text style={styles.modalMessage}>Location name:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCampusLocationDraft.name}
+                            onChangeText={(text) => setEditCampusLocationDraft(prev => ({ ...prev, name: text }))}
+                            placeholder="e.g., Main Library"
+                            placeholderTextColor={colors.border}
+                            autoFocus
+                        />
+                        <Text style={styles.modalMessage}>Latitude:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCampusLocationDraft.latitude}
+                            onChangeText={(text) => setEditCampusLocationDraft(prev => ({ ...prev, latitude: text }))}
+                            placeholder="7.1234"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <Text style={styles.modalMessage}>Longitude:</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={editCampusLocationDraft.longitude}
+                            onChangeText={(text) => setEditCampusLocationDraft(prev => ({ ...prev, longitude: text }))}
+                            placeholder="125.5678"
+                            placeholderTextColor={colors.border}
+                            keyboardType="numeric"
+                        />
+                        <TouchableOpacity
+                            style={styles.checkboxContainer}
+                            onPress={() => setEditCampusLocationDraft(prev => ({ ...prev, is_active: !prev.is_active }))}
+                            activeOpacity={0.7}
+                        >
+                            <View style={[styles.checkbox, editCampusLocationDraft.is_active && styles.checkboxSelected]}>
+                                {editCampusLocationDraft.is_active && <Ionicons name="checkmark" size={12} color="white" />}
+                            </View>
+                            <Text style={styles.checkboxLabel}>Active</Text>
+                        </TouchableOpacity>
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => {
+                                    setEditingCampusLocation(null);
+                                    setEditCampusLocationDraft({ name: "", latitude: "", longitude: "", is_active: true });
+                                    setCampusLocationSaveError(null);
+                                }}
+                                disabled={campusLocationSaving}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm, campusLocationSaving && { opacity: 0.6 }]}
+                                onPress={handleSaveEditCampusLocation}
+                                disabled={campusLocationSaving}
+                            >
+                                {campusLocationSaving ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.modalButtonConfirmText}>Save</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
@@ -1799,6 +2108,10 @@ function CategoryTableRow({
     onEditPrintingColorMode,
     onAddPrintingSize,
     onAddPrintingColorMode,
+    campusLocations,
+    onToggleCampusLocationActive,
+    onEditCampusLocation,
+    onAddCampusLocation,
 }: {
     categoryId: string;
     order: number;
@@ -1824,6 +2137,10 @@ function CategoryTableRow({
     onEditPrintingColorMode?: (colorMode: PrintingColorMode) => void;
     onAddPrintingSize?: () => void;
     onAddPrintingColorMode?: () => void;
+    campusLocations?: { items: CampusLocation[]; loading: boolean; error: string | null };
+    onToggleCampusLocationActive?: (locationId: string, currentActive: boolean) => void;
+    onEditCampusLocation?: (location: CampusLocation) => void;
+    onAddCampusLocation?: () => void;
 }) {
     const rowStyle = index % 2 === 0 ? styles.tableRow : styles.tableRowAlternate;
     const canMoveUp = index > 0;
@@ -1895,9 +2212,110 @@ function CategoryTableRow({
                 onEditPrintingColorMode={onEditPrintingColorMode}
                 onAddPrintingSize={onAddPrintingSize}
                 onAddPrintingColorMode={onAddPrintingColorMode}
+                campusLocations={campusLocations}
+                onToggleCampusLocationActive={onToggleCampusLocationActive}
+                onEditCampusLocation={onEditCampusLocation}
+                onAddCampusLocation={onAddCampusLocation}
             />
         )}
         </>
+    );
+}
+
+type CampusLocationsPreviewWithDataProps = {
+    campusLocations: { items: CampusLocation[]; loading: boolean; error: string | null };
+    onToggleActive: (locationId: string, currentActive: boolean) => void;
+    onEdit: (location: CampusLocation) => void;
+    onAdd: () => void;
+};
+
+function CampusLocationsPreviewWithData({
+    campusLocations,
+    onToggleActive,
+    onEdit,
+    onAdd,
+}: CampusLocationsPreviewWithDataProps) {
+    return (
+        <View style={styles.itemsPreviewContainer}>
+            <View style={styles.printingOptionsSection}>
+                <View style={styles.printingOptionsHeader}>
+                    <Text style={styles.printingOptionsTitle}>Campus Locations</Text>
+                    <TouchableOpacity
+                        style={styles.addItemButton}
+                        onPress={onAdd}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="add-outline" size={14} color="#fff" style={{ marginRight: 6 }} />
+                        <Text style={styles.addItemButtonText}>Add Location</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {campusLocations.loading ? (
+                    <View style={styles.itemsPreviewLoading}>
+                        <ActivityIndicator size="small" color={colors.maroon} />
+                        <Text style={styles.itemsPreviewLoadingText}>Loading locations...</Text>
+                    </View>
+                ) : campusLocations.error ? (
+                    <View style={styles.itemsPreviewError}>
+                        <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                        <Text style={styles.itemsPreviewErrorText}>{campusLocations.error}</Text>
+                    </View>
+                ) : campusLocations.items.length === 0 ? (
+                    <View style={styles.itemsPreviewEmpty}>
+                        <Text style={styles.itemsPreviewEmptyText}>No locations configured</Text>
+                    </View>
+                ) : (
+                    <View style={styles.itemsPreviewContent}>
+                        {campusLocations.items.map((location) => (
+                            <CampusLocationRow
+                                key={location.id}
+                                location={location}
+                                onToggleActive={onToggleActive}
+                                onEdit={onEdit}
+                            />
+                        ))}
+                    </View>
+                )}
+            </View>
+        </View>
+    );
+}
+
+type CampusLocationRowProps = {
+    location: CampusLocation;
+    onToggleActive?: (locationId: string, currentActive: boolean) => void;
+    onEdit?: (location: CampusLocation) => void;
+};
+
+function CampusLocationRow({
+    location,
+    onToggleActive,
+    onEdit,
+}: CampusLocationRowProps) {
+    return (
+        <View style={styles.itemsPreviewRow}>
+            <Text style={styles.itemsPreviewItemName}>{location.name}</Text>
+            <Text style={styles.itemsPreviewPrice}>{location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}</Text>
+            <TouchableOpacity
+                onPress={() => onToggleActive?.(location.id, location.is_active ?? true)}
+                activeOpacity={0.7}
+            >
+                <View style={[styles.itemsPreviewBadge, !(location.is_active ?? true) && styles.itemsPreviewBadgeInactive]}>
+                    <Text style={styles.itemsPreviewBadgeText}>
+                        {(location.is_active ?? true) ? 'Active' : 'Inactive'}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+            {onEdit && (
+                <TouchableOpacity
+                    style={styles.itemsPreviewEditButton}
+                    onPress={() => onEdit(location)}
+                    activeOpacity={0.7}
+                >
+                    <Ionicons name="create-outline" size={14} color={colors.text} />
+                </TouchableOpacity>
+            )}
+        </View>
     );
 }
 
@@ -1916,6 +2334,10 @@ type CategoryItemsPreviewProps = {
     onEditPrintingColorMode?: (colorMode: PrintingColorMode) => void;
     onAddPrintingSize?: () => void;
     onAddPrintingColorMode?: () => void;
+    campusLocations?: { items: CampusLocation[]; loading: boolean; error: string | null };
+    onToggleCampusLocationActive?: (locationId: string, currentActive: boolean) => void;
+    onEditCampusLocation?: (location: CampusLocation) => void;
+    onAddCampusLocation?: () => void;
 };
 
 function CategoryItemsPreview({
@@ -1933,6 +2355,10 @@ function CategoryItemsPreview({
     onEditPrintingColorMode,
     onAddPrintingSize,
     onAddPrintingColorMode,
+    campusLocations,
+    onToggleCampusLocationActive,
+    onEditCampusLocation,
+    onAddCampusLocation,
 }: CategoryItemsPreviewProps) {
     // Special handling for categories that don't use errand_items
     if (category === "Printing") {
@@ -1953,15 +2379,15 @@ function CategoryItemsPreview({
     }
 
     if (category === "Deliver Items") {
+        // Always render CampusLocationsPreviewWithData for Deliver Items category
+        // It will handle loading/empty/error states internally
         return (
-            <View style={styles.itemsPreviewContainer}>
-                <View style={styles.itemsPreviewNote}>
-                    <Ionicons name="information-circle-outline" size={16} color={colors.text} style={{ opacity: 0.6, marginRight: 8 }} />
-                    <Text style={styles.itemsPreviewNoteText}>
-                        Delivery Items use destinations from campus_locations.
-                    </Text>
-                </View>
-            </View>
+            <CampusLocationsPreviewWithData
+                campusLocations={campusLocations || { items: [], loading: false, error: null }}
+                onToggleActive={onToggleCampusLocationActive || (() => {})}
+                onEdit={onEditCampusLocation || (() => {})}
+                onAdd={onAddCampusLocation || (() => {})}
+            />
         );
     }
 

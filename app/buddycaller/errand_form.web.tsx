@@ -1294,6 +1294,8 @@ export default function ErrandForm() {
                 const { data, error } = await supabase
                     .from("campus_locations")
                     .select("id, name, latitude, longitude")
+                    .eq("is_active", true)
+                    .order("sort_order", { ascending: true, nullsFirst: false } as any)
                     .order("name", { ascending: true } as any);
                 if (error) {
                     console.error("Error loading campus locations:", error);

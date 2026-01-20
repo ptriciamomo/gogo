@@ -1352,8 +1352,8 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             if (item.name && item.qty) {
                 let itemPrice = 0;
                 if (category === "Printing") {
-                    // Use database prices for printing
-                    itemPrice = getPrintingColorPrice(printingSizePrice, printingColorModePrice);
+                    // Use database prices for printing: size price + color price
+                    itemPrice = printingSizePrice + printingColorModePrice;
                 } else {
                     // PHASE 2: Use item.price from database if available, otherwise fallback to parseItemPrice()
                     itemPrice = item.price !== undefined ? item.price : parseItemPrice(item.name); // Returns 0 if no price found
@@ -1418,7 +1418,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             serviceFee: serviceFeeWithVat, // Service fee including VAT
             total,
         };
-    }, [items, category, printingSize, printingColor]);
+    }, [items, category, printingSize, printingColor, printingSizePrice, printingColorModePrice]);
 
     // time validation function
     const isTimeInPast = (h: number, m: number, p: 'AM' | 'PM') => {

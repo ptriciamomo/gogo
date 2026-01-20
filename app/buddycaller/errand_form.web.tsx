@@ -1397,8 +1397,8 @@ export default function ErrandForm() {
             if (item.name && item.qty) {
                 let itemPrice = 0;
                 if (category === "Printing") {
-                    // Use database prices for printing
-                    itemPrice = getPrintingColorPrice(printingSizePrice, printingColorModePrice);
+                    // Use database prices for printing: size price + color price
+                    itemPrice = printingSizePrice + printingColorModePrice;
                 } else {
                     // PHASE 2: Use item.price from database if available, otherwise fallback to parseItemPrice()
                     itemPrice = item.price !== undefined ? item.price : parseItemPrice(item.name); // Returns 0 if no price found

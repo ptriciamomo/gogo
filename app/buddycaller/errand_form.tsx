@@ -376,21 +376,21 @@ function CategoryDropdown({
                                             </View>
                                         ) : printingSizes.length > 0 ? (
                                             printingSizes.map((size) => (
-                                                <TouchableOpacity
+                                        <TouchableOpacity
                                                     key={size.id}
-                                                    style={s.checkboxContainer}
+                                            style={s.checkboxContainer}
                                                     onPress={() => handlePrintingSizeSelect(size)}
-                                                    activeOpacity={0.8}
+                                            activeOpacity={0.8}
                                                     disabled={printingOptionsLoading}
-                                                >
+                                        >
                                                     <View style={[s.checkbox, printingSize === size.label && s.checkboxSelected]}>
                                                         {printingSize === size.label && <Ionicons name="checkmark" size={12} color="white" />}
-                                                    </View>
+                                            </View>
                                                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                                                         <Text style={s.checkboxLabel}>{size.label}</Text>
                                                         <Text style={s.printingPrice}>₱{size.price}</Text>
                                                     </View>
-                                                </TouchableOpacity>
+                                        </TouchableOpacity>
                                             ))
                                         ) : null}
 
@@ -411,23 +411,23 @@ function CategoryDropdown({
                                                     </View>
                                                 ) : (
                                                     printingColorModes.map((color) => (
-                                                        <TouchableOpacity
+                                                <TouchableOpacity
                                                             key={color.id}
-                                                            style={s.checkboxContainer}
+                                                    style={s.checkboxContainer}
                                                             onPress={() => handlePrintingColorSelect(color)}
-                                                            activeOpacity={0.8}
+                                                    activeOpacity={0.8}
                                                             disabled={printingOptionsLoading}
-                                                        >
+                                                >
                                                             <View style={[s.checkbox, printingColor === color.label && s.checkboxSelected]}>
                                                                 {printingColor === color.label && (
-                                                                    <Ionicons name="checkmark" size={12} color="white" />
-                                                                )}
-                                                            </View>
+                                                            <Ionicons name="checkmark" size={12} color="white" />
+                                                        )}
+                                                    </View>
                                                             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                                                                 <Text style={s.checkboxLabel}>{color.label}</Text>
                                                                 <Text style={s.printingPrice}>₱{color.price}</Text>
                                                             </View>
-                                                        </TouchableOpacity>
+                                                </TouchableOpacity>
                                                     ))
                                                 )}
                                             </View>
@@ -491,21 +491,21 @@ function CategoryDropdown({
                                                         </View>
                                                     ) : printingSizes.length > 0 ? (
                                                         printingSizes.map((size, idx) => (
-                                                            <TouchableOpacity
+                                                    <TouchableOpacity
                                                                 key={size.id}
                                                                 style={[s.checkboxContainer, idx > 0 && { marginTop: rp(4) }]}
                                                                 onPress={() => handlePrintingSizeSelect(size)}
-                                                                activeOpacity={0.8}
+                                                        activeOpacity={0.8}
                                                                 disabled={printingOptionsLoading}
-                                                            >
+                                                    >
                                                                 <View style={[s.checkbox, printingSize === size.label && s.checkboxSelected]}>
                                                                     {printingSize === size.label && <Ionicons name="checkmark" size={12} color="white" />}
-                                                                </View>
+                                                        </View>
                                                                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                                                                     <Text style={s.checkboxLabel}>{size.label}</Text>
                                                                     <Text style={s.printingPrice}>₱{size.price}</Text>
                                                                 </View>
-                                                            </TouchableOpacity>
+                                                    </TouchableOpacity>
                                                         ))
                                                     ) : null}
 
@@ -519,30 +519,30 @@ function CategoryDropdown({
                                                                 <View style={{ padding: rp(8), alignItems: 'center' }}>
                                                                     <ActivityIndicator size="small" color="#8B2323" />
                                                                     <Text style={[s.checkboxLabel, { marginTop: rp(4), opacity: 0.6 }]}>Loading color modes...</Text>
-                                                                </View>
+                                                    </View>
                                                             ) : printingColorModes.length === 0 ? (
                                                                 <View style={{ padding: rp(8) }}>
                                                                     <Text style={[s.checkboxLabel, { opacity: 0.6 }]}>No color modes available</Text>
-                                                                </View>
+                                                    </View>
                                                             ) : (
                                                                 printingColorModes.map((color, idx) => (
-                                                                    <TouchableOpacity
+                                                <TouchableOpacity
                                                                         key={color.id}
                                                                         style={[s.checkboxContainer, idx > 0 && { marginTop: rp(4) }]}
                                                                         onPress={() => handlePrintingColorSelect(color)}
-                                                                        activeOpacity={0.8}
+                                                    activeOpacity={0.8}
                                                                         disabled={printingOptionsLoading}
-                                                                    >
+                                                >
                                                                         <View style={[s.checkbox, printingColor === color.label && s.checkboxSelected]}>
                                                                             {printingColor === color.label && (
-                                                                                <Ionicons name="checkmark" size={12} color="white" />
-                                                                            )}
-                                                                        </View>
+                                                            <Ionicons name="checkmark" size={12} color="white" />
+                                                        )}
+                                                    </View>
                                                                         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                                                                             <Text style={s.checkboxLabel}>{color.label}</Text>
                                                                             <Text style={s.printingPrice}>₱{color.price}</Text>
-                                                                        </View>
-                                                                    </TouchableOpacity>
+                                                    </View>
+                                                </TouchableOpacity>
                                                                 ))
                                                             )}
                                                         </View>
@@ -882,42 +882,42 @@ function FoodItemDropdown({
                                 ) : (
                                     Object.entries(itemsBySubcategory).map(([subcategory, items]) => (
                                         <View key={subcategory} style={s.foodSection}>
-                                            <TouchableOpacity
-                                                style={s.foodSectionHeader}
+                                        <TouchableOpacity
+                                            style={s.foodSectionHeader}
                                                 onPress={() => toggleSection(subcategory)}
-                                            >
-                                                <View style={s.foodSectionTitle}>
+                                        >
+                                            <View style={s.foodSectionTitle}>
                                                     <Text style={s.foodSectionText}>{subcategory}</Text>
-                                                </View>
-                                                <Ionicons
+                                            </View>
+                                            <Ionicons
                                                     name={expandedSections[subcategory] ? "chevron-down" : "chevron-forward"} 
-                                                    size={16}
-                                                    color={colors.maroon}
-                                                />
-                                            </TouchableOpacity>
-                                            
+                                                size={16}
+                                                color={colors.maroon}
+                                            />
+                                        </TouchableOpacity>
+                                        
                                             {expandedSections[subcategory] && (
-                                                <View style={s.foodSectionContent}>
-                                                    {items.map((item, idx) => (
-                                                        <TouchableOpacity
-                                                            key={idx}
-                                                            style={s.foodItemRow}
+                                            <View style={s.foodSectionContent}>
+                                                {items.map((item, idx) => (
+                                                    <TouchableOpacity
+                                                        key={idx}
+                                                        style={s.foodItemRow}
                                                             onPress={() => toggleItem(item.name, item.price)}
-                                                        >
-                                                            <View style={s.foodCheckbox}>
-                                                                {value === item.name && (
-                                                                    <Ionicons name="checkmark" size={12} color="white" />
-                                                                )}
-                                                            </View>
-                                                            <View style={s.foodItemInfo}>
-                                                                <Text style={s.foodItemName}>{item.name}</Text>
+                                                    >
+                                                        <View style={s.foodCheckbox}>
+                                                            {value === item.name && (
+                                                                <Ionicons name="checkmark" size={12} color="white" />
+                                                            )}
+                                                        </View>
+                                                        <View style={s.foodItemInfo}>
+                                                            <Text style={s.foodItemName}>{item.name}</Text>
                                                                 <Text style={s.foodItemPrice}>₱{item.price}</Text>
-                                                            </View>
-                                                        </TouchableOpacity>
-                                                    ))}
-                                                </View>
-                                            )}
-                                        </View>
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        )}
+                                    </View>
                                     ))
                                 )}
                             </ScrollView>
@@ -939,42 +939,42 @@ function FoodItemDropdown({
                                         ) : (
                                             Object.entries(itemsBySubcategory).map(([subcategory, items]) => (
                                                 <View key={subcategory} style={s.foodSection}>
-                                                    <TouchableOpacity
-                                                        style={s.foodSectionHeader}
+                                                <TouchableOpacity
+                                                    style={s.foodSectionHeader}
                                                         onPress={() => toggleSection(subcategory)}
-                                                    >
-                                                        <View style={s.foodSectionTitle}>
+                                                >
+                                                    <View style={s.foodSectionTitle}>
                                                             <Text style={s.foodSectionText}>{subcategory}</Text>
-                                                        </View>
-                                                        <Ionicons
+                                            </View>
+                                            <Ionicons
                                                             name={expandedSections[subcategory] ? "chevron-down" : "chevron-forward"}
-                                                            size={16}
-                                                            color={colors.maroon}
-                                                        />
-                                                    </TouchableOpacity>
+                                                size={16}
+                                                color={colors.maroon}
+                                            />
+                                        </TouchableOpacity>
 
                                                     {expandedSections[subcategory] && (
-                                                        <View style={s.foodSectionContent}>
-                                                            {items.map((item, idx) => (
-                                                                <TouchableOpacity
-                                                                    key={idx}
-                                                                    style={s.foodItemRow}
+                                            <View style={s.foodSectionContent}>
+                                                {items.map((item, idx) => (
+                                                            <TouchableOpacity
+                                                                key={idx}
+                                                                style={s.foodItemRow}
                                                                     onPress={() => toggleItem(item.name, item.price)}
-                                                                >
-                                                                    <View style={s.foodCheckbox}>
-                                                                        {value === item.name && (
-                                                                            <Ionicons name="checkmark" size={12} color="white" />
-                                                                        )}
-                                                                    </View>
-                                                                    <View style={s.foodItemInfo}>
-                                                                        <Text style={s.foodItemName}>{item.name}</Text>
-                                                                        <Text style={s.foodItemPrice}>₱{item.price}</Text>
-                                                                    </View>
-                                                                </TouchableOpacity>
-                                                            ))}
+                                                            >
+                                                        <View style={s.foodCheckbox}>
+                                                                    {value === item.name && (
+                                                                        <Ionicons name="checkmark" size={12} color="white" />
+                                                                    )}
                                                         </View>
-                                                    )}
-                                                </View>
+                                                        <View style={s.foodItemInfo}>
+                                                            <Text style={s.foodItemName}>{item.name}</Text>
+                                                                        <Text style={s.foodItemPrice}>₱{item.price}</Text>
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        )}
+                                    </View>
                                             ))
                                         )}
                             </ScrollView>
@@ -2646,7 +2646,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                 setPrintingColorModeId(id);
                                 setPrintingColorModePrice(price);
                             }}
-                            placeholder="Select Category"
+                            placeholder="Select Category" 
                             categoryOptions={categoryOptions}
                             printingSizes={printingSizes}
                             printingColorModes={printingColorModes}

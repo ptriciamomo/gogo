@@ -157,6 +157,18 @@ export default function AdminSettlements() {
                     console.warn('⚠️ Exception running daily settlement account check (non-critical):', checkErr);
                 }
                 
+                // Update overdue settlements using database function (single source of truth)
+                try {
+                    const { error: updateOverdueError } = await supabase.rpc('update_overdue_settlements');
+                    if (updateOverdueError) {
+                        console.warn('⚠️ Error updating overdue settlements (non-critical):', updateOverdueError);
+                    } else {
+                        console.log('✅ Overdue settlements updated by database function');
+                    }
+                } catch (updateErr) {
+                    console.warn('⚠️ Exception updating overdue settlements (non-critical):', updateErr);
+                }
+                
                 // Fetch all users who are runners (they earn money)
                 const { data: allUsers, error: usersError } = await supabase
                     .from('users')
@@ -248,44 +260,8 @@ export default function AdminSettlements() {
                     console.warn('Error fetching existing settlements:', settlementsDbError);
                 }
                 
-                // Check and update overdue settlements (pending settlements where period_end_date has passed)
-                if (existingSettlements && existingSettlements.length > 0) {
-                    const today = new Date();
-                    today.setUTCHours(0, 0, 0, 0);
-                    
-                    const overdueSettlements = existingSettlements.filter((s: any) => {
-                        if (s.status !== 'pending') return false;
-                        const periodEndDate = new Date(s.period_end_date + 'T00:00:00Z');
-                        periodEndDate.setUTCHours(0, 0, 0, 0);
-                        return periodEndDate < today;
-                    });
-                    
-                    if (overdueSettlements.length > 0) {
-                        console.log(`🔄 Updating ${overdueSettlements.length} overdue settlements...`);
-                        const overdueIds = overdueSettlements.map((s: any) => s.id);
-                        
-                        const { error: updateError } = await supabase
-                            .from('settlements')
-                            .update({ 
-                                status: 'overdue',
-                                updated_at: new Date().toISOString()
-                            })
-                            .in('id', overdueIds)
-                            .eq('status', 'pending');
-                        
-                        if (updateError) {
-                            console.warn('Error updating overdue settlements:', updateError);
-                        } else {
-                            // Update the status in the existingSettlements array
-                            existingSettlements.forEach((s: any) => {
-                                if (overdueIds.includes(s.id)) {
-                                    s.status = 'overdue';
-                                }
-                            });
-                            console.log(`✅ Updated ${overdueSettlements.length} settlements to overdue status`);
-                        }
-                    }
-                }
+                // Note: Overdue status is now updated by database function (update_overdue_settlements)
+                // called earlier in this flow. No manual JavaScript logic needed.
                 
                 // Create a map of all tracked commission and errand IDs from existing settlements
                 // This prevents duplicates - a commission/errand should only be in ONE settlement
@@ -1482,21 +1458,8 @@ export default function AdminSettlements() {
             // Mark as processing immediately to disable button
             setProcessingSettlementId(settlementKey);
             
-            // Update local state immediately to show "paid" status
-            setSettlements(prevSettlements =>
-                prevSettlements.map(s =>
-                    s.user_id === settlement.user_id &&
-                    s.period_start_date === settlement.period_start_date &&
-                    s.period_end_date === settlement.period_end_date
-                        ? {
-                              ...s,
-                              status: 'paid' as const,
-                              paid_at: new Date().toISOString(),
-                              updated_at: new Date().toISOString(),
-                          }
-                        : s
-                )
-            );
+            // Note: Do NOT update local state here - wait for database confirmation
+            // This prevents UI showing "paid" status when database update fails
 
             // First, try to find the settlement in the database
             // Try multiple methods since period dates might not match due to calculation differences
@@ -1649,6 +1612,12 @@ export default function AdminSettlements() {
             let updateErr: any = null;
             
             if (settlementId) {
+                console.log('🔧 Attempting to update settlement by ID:', {
+                    settlementId,
+                    currentStatus: existingSettlement?.status,
+                    targetStatus: 'paid'
+                });
+                
                 const { data: updateById, error: errorById } = await supabase
                 .from('settlements')
                 .update({
@@ -1657,8 +1626,16 @@ export default function AdminSettlements() {
                     updated_at: paidAtTimestamp,
                 })
                     .eq('id', settlementId)
+                    .in('status', ['pending', 'overdue']) // Only allow updating from pending or overdue
                 .select('id, status, paid_at, updated_at, user_id, period_start_date, period_end_date')
                 .single();
+
+                console.log('🔧 Update by ID result:', {
+                    success: !!updateById,
+                    error: errorById,
+                    rowsAffected: updateById ? 1 : 0,
+                    updatedRow: updateById
+                });
 
                 updateResult = updateById;
                 updateErr = errorById;
@@ -1666,7 +1643,11 @@ export default function AdminSettlements() {
             
             // If ID-based update failed, try by unique constraint (period dates)
             if (updateErr || !updateResult) {
-                console.log('⚠️ Update by ID failed, trying by period dates...');
+                console.log('⚠️ Update by ID failed, trying by period dates...', {
+                    error: updateErr,
+                    hasResult: !!updateResult
+                });
+                
                 const { data: updateByPeriod, error: errorByPeriod } = await supabase
                         .from('settlements')
                         .update({
@@ -1677,8 +1658,15 @@ export default function AdminSettlements() {
                     .eq('user_id', settlement.user_id)
                     .eq('period_start_date', settlement.period_start_date)
                     .eq('period_end_date', settlement.period_end_date)
+                    .in('status', ['pending', 'overdue']) // Only allow updating from pending or overdue
                         .select('id, status, paid_at, updated_at, user_id, period_start_date, period_end_date')
                         .single();
+                    
+                console.log('🔧 Update by period dates result:', {
+                    success: !!updateByPeriod,
+                    error: errorByPeriod,
+                    updatedRow: updateByPeriod
+                });
                     
                 if (!errorByPeriod && updateByPeriod) {
                     updateResult = updateByPeriod;
@@ -1686,6 +1674,7 @@ export default function AdminSettlements() {
                     settlementId = updateByPeriod.id; // Update settlementId for later use
                 } else {
                     updateErr = errorByPeriod || updateErr;
+                    console.error('❌ Update by period dates also failed:', errorByPeriod || updateErr);
                 }
             }
 
@@ -1874,8 +1863,10 @@ export default function AdminSettlements() {
                 settlementId = updatedSettlement.id;
             }
 
-            // Update local state with the settlement ID if it was just created
-            if (settlementId) {
+            // Update local state ONLY after database update succeeds
+            // This ensures UI reflects database truth
+            if (updatedSettlement && updatedSettlement.status === 'paid') {
+                console.log('✅ Updating local state with confirmed paid status');
                 setSettlements(prevSettlements =>
                     prevSettlements.map(s =>
                         s.user_id === settlement.user_id &&
@@ -1883,14 +1874,16 @@ export default function AdminSettlements() {
                         s.period_end_date === settlement.period_end_date
                             ? {
                                   ...s,
-                                  id: settlementId || s.id,
+                                  id: updatedSettlement.id || s.id,
                                   status: 'paid' as const,
-                                  paid_at: new Date().toISOString(),
-                                  updated_at: new Date().toISOString(),
+                                  paid_at: updatedSettlement.paid_at || new Date().toISOString(),
+                                  updated_at: updatedSettlement.updated_at || new Date().toISOString(),
                               }
                             : s
                     )
                 );
+            } else {
+                console.warn('⚠️ Not updating local state - settlement status is not confirmed as paid');
             }
 
             // Final check: Warn admin if user has multiple settlements
@@ -1939,23 +1932,15 @@ export default function AdminSettlements() {
                 );
             }
         } catch (error) {
-            console.error('Error marking settlement as paid:', error);
+            console.error('❌ Error marking settlement as paid:', error);
             
-            // Revert status back to pending on error
-            setSettlements(prevSettlements =>
-                prevSettlements.map(s =>
-                    s.user_id === settlement.user_id &&
-                    s.period_start_date === settlement.period_start_date &&
-                    s.period_end_date === settlement.period_end_date
-                        ? {
-                              ...s,
-                              status: 'pending' as const,
-                          }
-                        : s
-                )
+            // Note: No need to revert local state since we never optimistically updated it
+            // The UI will continue to show the current database state
+            
+            Alert.alert(
+                'Error', 
+                `Failed to mark settlement as paid. ${error instanceof Error ? error.message : 'Please check the console for details.'}`
             );
-            
-            Alert.alert('Error', 'Failed to mark settlement as paid. Please try again.');
         } finally {
             // Clear processing state
             setProcessingSettlementId(null);

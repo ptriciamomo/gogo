@@ -849,7 +849,7 @@ const PostCommission: React.FC = () => {
                                             </View>
                                         ) : (
                                             categories.map((cat) => (
-                                                <View key={cat.id} style={styles.categorySection}>
+                                            <View key={cat.id} style={styles.categorySection}>
                                                 <TouchableOpacity style={styles.categoryHeader} onPress={() => toggleCategory(cat.id)}>
                                                     <Ionicons name={cat.isExpanded ? 'chevron-down' : 'chevron-forward'} size={16} color="#8B2323" />
                                                     <Text style={styles.categoryTitle}>{cat.title}</Text>

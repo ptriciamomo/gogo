@@ -1048,7 +1048,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
     const isInitialLoadRef = React.useRef(true);
     const availableMode = options?.availableMode ?? false;
     
-    // useRef to store latest availableMode without recreating subscription
+  
     const availableModeRef = React.useRef(availableMode);
 
     const refetch = React.useCallback(async () => {
@@ -1057,6 +1057,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
             isInitialLoadRef.current = false;
         }
         
+        // STep 0: Check ang authentication
         setLoading(true);
         try {
             const { data: auth } = await supabase.auth.getUser();
@@ -1069,21 +1070,21 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 return;
             }
 
-            // WEB CACHING: Try to load from cache first (only on initial load)
+           
             if (Platform.OS === 'web' && isInitialLoad) {
                 const { getCachedData } = await import('../../utils/webCache');
                 const cacheKey = `runner_available_errands_${uid}`;
                 const cached = getCachedData<ErrandUI[]>(cacheKey);
                 
                 if (cached) {
-                    // Use cached data immediately
+                 
                     setRows(cached);
                     setLoading(false);
-                    // Realtime subscription will trigger fresh fetch when data changes
+                    
                     return;
                 }
             }
-
+            // Step 0: Check kung kinsa ang online na runner 
             const { data: runnerData, error: runnerError } = await supabase
                 .from("users")
                 .select("is_available, latitude, longitude")
@@ -1101,11 +1102,11 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 if (__DEV__) console.log("❌ Runner is inactive/offline, not fetching errands");
                 setRows([]);
                 setLoading(false);
-                return;
+                return; 
             }
 
-            // STEP 1: Resolve runner location 
-            // Purpose: Get current runner location for distance calculations.
+            // STEP 0: Resolve runner location (GPS with database fallback)
+         //GPS try to get the runner's location up to 3 times lang if it fails kay kwaon sa ang last know loc sa runner
             let runnerLat: number | null = null;
             let runnerLon: number | null = null;
             let gpsAccuracy = 0;
@@ -1169,8 +1170,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 }
             }
 
-            // STEP 2: Fetch pending errands
-            // Purpose: Query all pending errands that haven't been assigned to a runner yet, ordered by creation time (newest first).
+            // STEP 1: iFetch pending errands
+            
             const distanceLimit = 500;
 
             const { data: eData, error } = await supabase
@@ -1183,7 +1184,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
             if (error) throw error;
             const errands = (eData || []) as ErrandRowDB[];
 
-            // STEP 3: Fetch caller names and locations
+            // STEP 2: iFetch caller names and locations
             // Purpose: Get caller location data needed for distance calculations.
             const callerIds = Array.from(
                 new Set(errands.map((r) => r.buddycaller_id).filter((v): v is string => !!v))
@@ -1205,8 +1206,8 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 });
             }
 
-            // STEP 4: Pre-ranking distance filtering
-            // Purpose: Filter errands to only those within 500 meters of the runner before ranking. Uses Haversine formula to calculate distance between runner and caller locations.
+            // STEP 3: Pre-ranking distance filtering
+            // Purpose: Filter errands to only those within 500 meters of the runner before ranking. 
             const filteredErrands = errands.filter((errand) => {
                 const callerLocation = callerLocations[errand.buddycaller_id || ""];
                 if (!callerLocation) return false;
@@ -1226,8 +1227,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 return true;
             });
 
-            // Helper function: Get runner's category history for TF-IDF calculation
-            // Purpose: Fetches all completed errands for a runner and returns their categories organized by task. Used to calculate TF-IDF similarity scores.
+            
             const getRunnerErrandCategoryHistory = async (runnerId: string): Promise<{ taskCategories: string[][]; totalTasks: number }> => {
                 try {
                     const { data, error } = await supabase
@@ -1261,7 +1261,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 }
             };
 
-            // Helper function to update errand notification (using RPC to bypass RLS, same as commissions)
+      
             const updateErrandNotification = async (
                 errandId: number,
                 notifiedRunnerId: string,
@@ -1290,10 +1290,10 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 }
             };
 
-            // Helper function to clear errand notification (using RPC to bypass RLS, same as commissions)
+        
             const clearErrandNotification = async (errandId: number): Promise<void> => {
                 try {
-                    // Use RPC function to clear notification (bypasses RLS)
+             
                     const { error: clearError } = await supabase.rpc('clear_errand_notification', {
                         p_errand_id: errandId
                     });
@@ -1308,7 +1308,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 }
             };
 
-            // Helper function to rank eligible runners and determine if current runner should see errand
+         //Step 4: Determine if the errand should be shown to the runner
             const shouldShowErrand = async (errand: ErrandRowDB): Promise<boolean> => {
                 if (!uid) return false;
                 

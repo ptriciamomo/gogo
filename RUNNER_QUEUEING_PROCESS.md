@@ -16,21 +16,63 @@ The queueing system assigns pending errands and commissions to eligible runners 
 
 ---
 
-## ENTRY POINT: Runner Becomes Available
+## Important: Two Separate Step Numbering Systems
 
-### STEP 0 – Runner Availability Check and Initial Fetch
+This document uses **two distinct step numbering systems** to avoid confusion:
+
+1. **QUEUE STEPS** (Runner Queueing Process): Steps for fetching, filtering, ranking, and assigning runners to tasks
+   - Labeled as: `QUEUE STEP X` or `Phase A/B Step X`
+   - These are the main queueing workflow steps
+
+2. **TF-IDF STEPS** (TF-IDF & Cosine Similarity Process): Internal steps within the TF-IDF calculation
+   - Labeled as: `TF-IDF STEP X`
+   - These are the mathematical calculation steps that happen inside `calculateTFIDFCosineSimilarity()`
+   - See detailed explanation in `TF_IDF_COSINE_SIMILARITY_EXPLANATION.md`
+
+**When TF-IDF steps are called:** TF-IDF steps are executed during **QUEUE STEP 6D** (Distance Filtering and Scoring) when calculating the `tfidfScore` for each runner.
+
+---
+
+---
+
+## Important: Two Separate Step Numbering Systems
+
+This document uses **two distinct step numbering systems** to avoid confusion:
+
+1. **QUEUE STEPS** (Runner Queueing Process): Steps for fetching, filtering, ranking, and assigning runners to tasks
+   - Labeled as: `QUEUE STEP X` or `Phase A/B Step X`
+   - These are the main queueing workflow steps
+
+2. **TF-IDF STEPS** (TF-IDF & Cosine Similarity Process): Internal steps within the TF-IDF calculation
+   - Labeled as: `TF-IDF STEP X`
+   - These are the mathematical calculation steps that happen inside `calculateTFIDFCosineSimilarity()`
+   - See detailed explanation in `TF_IDF_COSINE_SIMILARITY_EXPLANATION.md`
+
+**When TF-IDF steps are called:** TF-IDF steps are executed during **QUEUE STEP 6D** (Distance Filtering and Scoring) when calculating the `tfidfScore` for each runner.
+
+**Document Structure:**
+- **Phase A — Initial fetch & gating (not queueing yet)**: loads data and decides whether to proceed
+- **Phase B — Queueing & assignment (this is the real runner queueing process)**: assigns `notified_runner_id` / advances the queue
+- **TF-IDF & Cosine Similarity Steps**: Listed separately below with exact step numbers
+
+---
+
+## Phase A — Initial fetch & gating (NOT the queueing step)
+
+### P0 — Runner Auth + Availability Gate + Location Resolution (before queueing)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `useAvailableErrands()` → `refetch()` (Errands) / `useAvailableCommissions()` → `refetch()` (Commissions)  
-**Lines (Errands):** 1054-1170  
+**Lines (Errands):** 1004-1170  
 **Lines (Commissions):** 1928-2056  
 
-**Description:** Validates runner is online and fetches location before queueing.
+**Description:** This is the **initial fetch gate**. It ensures we have an authenticated runner, that they’re “online” (`users.is_available = true`), and that we can resolve a runner location (GPS, with DB fallback).  
+It does **not** assign any task or advance the queue; it only determines whether the app should proceed to loading and filtering tasks.
 
 **Code:**
 
 ```typescript
-// STEP 0A: Check runner authentication and availability
+// P0: Check runner authentication and availability
 const { data: auth } = await supabase.auth.getUser();
 const uid = auth?.user?.id ?? null;
 
@@ -67,9 +109,11 @@ let runnerLon: number | null = null;
 
 ---
 
-## ERRANDS QUEUEING FLOW
+---
 
-### STEP 1 – Fetch Pending Errands
+## Phase A (Errands) — Initial data fetch (still NOT queueing)
+
+### P1(E) — Fetch Pending Errands (data fetch only)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `useAvailableErrands()` → `refetch()`  
@@ -80,7 +124,7 @@ let runnerLon: number | null = null;
 **Code:**
 
 ```typescript
-// STEP 1: Fetch pending errands
+// P1:Icheck ang mga pending errands
 const { data: eData, error } = await supabase
     .from("errand")
     .select("id, title, category, status, created_at, buddycaller_id, runner_id, notified_runner_id, notified_at, timeout_runner_ids")
@@ -97,7 +141,7 @@ const { data: eData, error } = await supabase
 
 ---
 
-### STEP 2 – Fetch Caller Locations
+### A2(E) — Fetch Caller Locations (data fetch only)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `useAvailableErrands()` → `refetch()`  
@@ -108,7 +152,7 @@ const { data: eData, error } = await supabase
 **Code:**
 
 ```typescript
-// STEP 3: Fetch caller names and locations
+//  P2 — Fetch caller names and locations
 const callerIds = Array.from(
     new Set(errands.map((r) => r.buddycaller_id).filter((v): v is string => !!v))
 );
@@ -134,7 +178,7 @@ if (callerIds.length) {
 
 ---
 
-### STEP 3 – Pre-Ranking Distance Filter
+### A3(E) — Pre-Ranking Distance Filter (data filter only)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `useAvailableErrands()` → `refetch()`  
@@ -145,7 +189,7 @@ if (callerIds.length) {
 **Code:**
 
 ```typescript
-// STEP 4: Pre-ranking distance filtering
+// P3: Pre-ranking distance filtering
 const filteredErrands = errands.filter((errand) => {
     const callerLocation = callerLocations[errand.buddycaller_id || ""];
     if (!callerLocation) return false; // EXIT: Caller has no location
@@ -189,13 +233,20 @@ const filteredErrands = errands.filter((errand) => {
 
 ---
 
-### STEP 4 – Ranking Filter (shouldShowErrand)
+---
+
+## Phase B (Errands) — Queueing & assignment (this is where queueing starts)
+
+### B0(E) — Ranking/Dispatch Entry Function: `shouldShowErrand`
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowErrand()`  
 **Lines:** 1312-1790  
 
-**Description:** Determines if current runner should see an errand. Handles initial assignment and timeout reassignment.
+**Description:** This function is where the **errand queueing/dispatch** happens. It is called for each candidate errand during `refetch()`.  
+It decides visibility *and* can **write assignment state** (via RPC) when `notified_runner_id` is empty or timed out.
+
+//Diri na part mag decide kinsa na runner makakita sa errands, ma-assigned sa errand if wala pay runner na assigned sa kana na errrand or if naay runner na nag ignore
 
 **Entry Condition Check:**
 
@@ -214,13 +265,14 @@ const shouldShowErrand = async (errand: ErrandRowDB): Promise<boolean> => {
 
 ---
 
-### STEP 5 – Check Assignment Status
+### B1(E) — **ACTUAL FIRST QUEUEING STEP**: “unassigned task detected” gate (`if (!errand.notified_runner_id)`)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowErrand()`  
 **Lines:** 1325-1330  
 
-**Description:** Determines if errand needs initial assignment or timeout reassignment.
+**Description:** This is the first “real queueing” branch. Queueing begins the moment the code sees an eligible, pending errand **without** a `notified_runner_id`.  
+If this branch is taken, the runner client will compute the top runner and then **write** `notified_runner_id` + `notified_at` to the database.
 
 **Code:**
 
@@ -232,9 +284,9 @@ const sixtySecondsAgo = new Date(now.getTime() - 60000);
 
 // If no runner has been notified yet, find and assign top-ranked runner
 if (!errand.notified_runner_id) {
-    // INITIAL ASSIGNMENT PATH (Steps 6-8)
+    // INITIAL ASSIGNMENT PATH (Phase B continues)
 } else if (notifiedAt && notifiedAt < sixtySecondsAgo) {
-    // TIMEOUT REASSIGNMENT PATH (Step 9)
+    // TIMEOUT REASSIGNMENT PATH (Phase B continues)
 } else if (errand.notified_runner_id === uid) {
     // Already assigned to current runner
     return true;
@@ -244,22 +296,30 @@ if (!errand.notified_runner_id) {
 }
 ```
 
+**How this step works (Errands):**
+- **Input condition**: `errand.status = 'pending'` and `errand.runner_id IS NULL` (from Phase A fetch), and now **`errand.notified_runner_id IS NULL`**.
+- **Effect**: enters initial assignment path → logs the “Task detected” block → validates caller location → fetches eligible runners → ranks them → updates DB via `update_errand_notification` RPC (see later “Ranking and Assignment” section).
+- **Applies to**: **Errands only** (this is the `ErrandRowDB` branch).
+
 ---
 
-### STEP 6 – Initial Assignment: Task Detection
+### B2(E) — Task Detection Logging + Caller Location Gate (still part of queueing)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowErrand()`  
 **Lines:** 1331-1346  
 
-**Description:** Logs task information and validates caller location.
+**Description:** This is where the system logs the task details (errand ID, caller name, status) and gets the caller's location. The caller's location is needed to calculate the distance between the caller and each runner. If the caller doesn't have a location, the system stops here and doesn't proceed with ranking runners (because distance calculation is impossible without a location).
 
 **Code:**
 
 ```typescript
 // STEP 1: Task detected
+// This part gets the caller's name and ID for logging purposes
 const callerName = namesById[errand.buddycaller_id || ""] || "BuddyCaller";
 const callerShortId = (errand.buddycaller_id || "").substring(0, 8);
+
+// Log task information (for debugging and monitoring)
 console.log(`[QUEUE] STEP 1 — Task detected`);
 console.log(`Type: Errand`);
 console.log(`Task ID: ${errand.id}`);
@@ -267,16 +327,26 @@ console.log(`Caller: ${callerName} (id: ${callerShortId})`);
 console.log(`Status: pending`);
 
 // Get caller location for distance calculation
+// This is where the system retrieves the caller's location (latitude, longitude)
+// The location was fetched earlier in Phase A and stored in callerLocations object
 const callerLocation = callerLocations[errand.buddycaller_id || ""];
+
+// If caller has no location, stop here (can't calculate distance without location)
 if (!callerLocation) {
     if (__DEV__) console.log(`❌ [ERRAND RANKING] Errand ${errand.id}: Caller has no location, cannot rank runners`);
     return false; // EXIT: No caller location
 }
 ```
 
+**What happens here:**
+1. **Gets caller information**: Retrieves the caller's name and ID from the data fetched in Phase A
+2. **Logs task details**: Prints task information to console for debugging (task ID, caller name, status)
+3. **Gets caller location**: Retrieves the caller's location (latitude, longitude) from the `callerLocations` object
+4. **Validates location**: Checks if caller has a valid location - if not, stops the queueing process because distance calculation requires a location
+
 ---
 
-### STEP 7 – Availability and Presence Filtering
+### B3(E) — Fetch Eligible Runners (availability + presence) (still part of queueing)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowErrand()`  
@@ -356,7 +426,7 @@ if (!availableRunners || availableRunners.length === 0) {
 
 ---
 
-### STEP 8 – Distance Filtering and Scoring
+### B4(E) — Distance Filtering and Scoring (corresponds to runtime logs: `[QUEUE] STEP 3/4`)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowErrand()`  
@@ -444,26 +514,36 @@ if (eligibleRunners.length === 0) {
    - Range: 0-1
    - Example: 4.5 rating → 0.9
 
-3. **TF-IDF Score:** See STEP 8A below
+3. **TF-IDF Score:** Calculated using TF-IDF & Cosine Similarity steps (see section below)
 
 4. **Final Score:** `(distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25)`
    - Weighted combination
    - Higher = better match
 
+**Note:** The TF-IDF calculation happens inside `calculateTFIDFCosineSimilarity()` which is called at line 439. See the **TF-IDF & Cosine Similarity Steps** section below for the exact internal steps.
+
 ---
 
-### STEP 8A – TF-IDF Calculation
+## TF-IDF & Cosine Similarity Steps (Internal Calculation Process)
+
+**Location in Queueing Process:** These steps are executed during **QUEUE STEP 6D** when `calculateTFIDFCosineSimilarity()` is called.
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `calculateTFIDFCosineSimilarity()`  
-**Lines:** 856-1042  
+**Lines:** 829-1006  
 
-**Description:** Calculates TF-IDF cosine similarity between errand category and runner history.
+**Complete Documentation:** See `TF_IDF_COSINE_SIMILARITY_EXPLANATION.md` for detailed explanations of each step.
 
-**TF Calculation (Token-Based for Query):**
+### TF-IDF STEP 1: Calculate Term Frequency (Token-Based) — for Posted Task
 
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 711-717  
+**Function:** `calculateTF()`
+
+**What it does:** Calculates how often a category appears in the task document, divided by total terms.
+
+**Code:**
 ```typescript
-// File: app/buddyrunner/home.tsx, Lines: 711-717
 function calculateTF(term: string, document: string[]): number {
     if (document.length === 0) return 0;
     const termCount = document.filter(word => word === term).length;
@@ -471,10 +551,20 @@ function calculateTF(term: string, document: string[]): number {
 }
 ```
 
-**TF Calculation (Task-Based for Runner):**
+**Used for:** Task/query document (always uses token-based TF)
 
+---
+
+### TF-IDF STEP 2: Calculate Term Frequency (Task-Based) — for Runner History
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 721-729  
+**Function:** `calculateTFWithTaskCount()`
+
+**What it does:** Calculates how many tasks contain a category, divided by total tasks. This is the preferred method for runners.
+
+**Code:**
 ```typescript
-// File: app/buddyrunner/home.tsx, Lines: 721-729
 function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
     if (totalTasks === 0) return 0;
     const tasksWithCategory = taskCategories.filter(taskCats => 
@@ -484,76 +574,238 @@ function calculateTFWithTaskCount(term: string, taskCategories: string[][], tota
 }
 ```
 
-**IDF Calculation:**
+**Used for:** Runner document (preferred method when task data is available)
 
+---
+
+### TF-IDF STEP 3: Calculate Document Frequency (DF)
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 733-734 (inside `calculateIDFAdjusted`)  
+**Function:** `calculateIDFAdjusted()`
+
+**What it does:** Counts how many documents contain the term.
+
+**Code:**
 ```typescript
-// File: app/buddyrunner/home.tsx, Lines: 744-759
+const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
+```
+
+**Note:** This is part of the IDF calculation function.
+
+---
+
+### TF-IDF STEP 4: Calculate Inverse Document Frequency (IDF)
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 735-748  
+**Function:** `calculateIDFAdjusted()`
+
+**What it does:** Calculates how rare/common a term is across documents. Rare terms get higher IDF scores.
+
+**Code:**
+```typescript
 function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
+    // TF-IDF STEP 3: Count documents containing term (Document Frequency)
     const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
     if (documentsContainingTerm === 0) return 0;
     
-    // Smoothing: return 0.1 if term appears in all documents
+    // TF-IDF STEP 7: Apply smoothing - return 0.1 if term appears in all documents
     if (documentsContainingTerm === allDocuments.length) {
         return 0.1;
     }
     
-    return Math.log(allDocuments.length / documentsContainingTerm); // IDF = log(N / df)
+    // TF-IDF STEP 4: Calculate IDF using natural logarithm
+    return Math.log(allDocuments.length / documentsContainingTerm);
 }
 ```
 
-**Cosine Similarity:**
-
-```typescript
-// File: app/buddyrunner/home.tsx, Lines: 824-851
-function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
-    const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
-    
-    let dotProduct = 0;
-    let magnitude1 = 0;
-    let magnitude2 = 0;
-    
-    allTerms.forEach(term => {
-        const val1 = vector1.get(term) || 0;
-        const val2 = vector2.get(term) || 0;
-        dotProduct += val1 * val2;
-        magnitude1 += val1 * val1;
-        magnitude2 += val2 * val2;
-    });
-    
-    const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
-    if (denominator === 0) return 0;
-    
-    return dotProduct / denominator; // Cosine similarity = (v1 · v2) / (||v1|| × ||v2||)
-}
-```
-
-**Runner History Fetch:**
-
-```typescript
-// File: app/buddyrunner/home.tsx, Lines: 1231-1262
-const getRunnerErrandCategoryHistory = async (runnerId: string): Promise<{ taskCategories: string[][]; totalTasks: number }> => {
-    const { data, error } = await supabase
-        .from("errand")
-        .select("category")
-        .eq("runner_id", runnerId)
-        .eq("status", "completed");
-    
-    if (!data || data.length === 0) return { taskCategories: [], totalTasks: 0 };
-    
-    const totalTasks = data.length;
-    const taskCategories: string[][] = [];
-    data.forEach((completedErrand: any) => {
-        if (!completedErrand.category) return;
-        taskCategories.push([completedErrand.category.trim().toLowerCase()]);
-    });
-    
-    return { taskCategories, totalTasks };
-};
-```
+**Formula:** `IDF = log(N / df)` where N = total documents (2: task + runner), df = documents containing term
 
 ---
 
-### STEP 9 – Ranking and Assignment
+### TF-IDF STEP 7: Apply IDF Smoothing
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 737-740 (inside `calculateIDFAdjusted`)  
+**Function:** `calculateIDFAdjusted()`
+
+**What it does:** Prevents zero IDF when a term appears in all documents by returning 0.1 instead.
+
+**Code:**
+```typescript
+if (documentsContainingTerm === allDocuments.length) {
+    return 0.1; // Smoothing: prevents zero IDF
+}
+```
+
+**Why:** Without smoothing, common terms would get IDF = 0, making them meaningless in the calculation.
+
+---
+
+### TF-IDF STEP 8: Construct TF-IDF Vector for Query Document (Posted Task)
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 754-766  
+**Function:** `calculateTFIDFVectorAdjusted()`
+
+**What it does:** Creates a vector (map) of TF-IDF scores for all terms in the task document.
+
+**Code:**
+```typescript
+function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
+    const uniqueTerms = Array.from(new Set(document));
+    const tfidfMap = new Map<string, number>();
+    
+    uniqueTerms.forEach(term => {
+        const tf = calculateTF(term, document);                    // TF-IDF STEP 1: Get TF (token-based)
+        const idf = calculateIDFAdjusted(term, allDocuments);     // TF-IDF STEP 3 & 4: Get IDF
+        // TF-IDF STEP 8: Multiply TF × IDF to compute TF-IDF weight
+        const tfidf = tf * idf;
+        tfidfMap.set(term, tfidf);
+    });
+    
+    return tfidfMap;
+}
+```
+
+**Result:** Map of category → TF-IDF score for the posted task
+
+---
+
+### TF-IDF STEP 9: Construct TF-IDF Vector for Runner Document (Preferred Method)
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 772-789  
+**Function:** `calculateTFIDFVectorWithTaskCount()`
+
+**What it does:** Creates a TF-IDF vector for runner history using task-based TF (preferred method).
+
+**Code:**
+```typescript
+function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
+    const allTerms = new Set<string>();
+    taskCategories.forEach(taskCats => {
+        taskCats.forEach(cat => allTerms.add(cat.toLowerCase()));
+    });
+    
+    const tfidfMap = new Map<string, number>();
+    
+    allTerms.forEach(term => {
+        const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks); // TF-IDF STEP 2: Task-based TF
+        const idf = calculateIDFAdjusted(term, allDocuments);                  // TF-IDF STEP 3 & 4: IDF
+        // TF-IDF STEP 9: Multiply TF × IDF to compute TF-IDF weight
+        const tfidf = tf * idf;
+        tfidfMap.set(term, tfidf);
+    });
+    
+    return tfidfMap;
+}
+```
+
+**Result:** Map of category → TF-IDF score for the runner's history
+
+---
+
+### TF-IDF STEP 10: Construct TF-IDF Vector for Runner Document (Fallback Method)
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 754-766 (same function as STEP 8)  
+**Function:** `calculateTFIDFVectorAdjusted()`
+
+**What it does:** Creates a TF-IDF vector for runner history using token-based TF (fallback when task data unavailable).
+
+**When used:** Only when `runnerTaskCategories.length === 0` or `runnerTotalTasks === 0`
+
+---
+
+### TF-IDF STEP 12: Calculate Dot Product for Cosine Similarity
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 797-824  
+**Function:** `cosineSimilarity()`
+
+**What it does:** Calculates the dot product of two TF-IDF vectors.
+
+**Code:**
+```typescript
+allTerms.forEach(term => {
+    const val1 = vector1.get(term) || 0;
+    const val2 = vector2.get(term) || 0;
+    dotProduct += val1 * val2;  // TF-IDF STEP 12: Dot product
+});
+```
+
+**Formula:** `dotProduct = Σ(v1[term] × v2[term])` for all terms
+
+---
+
+### TF-IDF STEP 13: Calculate Vector Magnitudes for Cosine Similarity
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 797-824  
+**Function:** `cosineSimilarity()`
+
+**What it does:** Calculates the Euclidean magnitude (length) of each vector.
+
+**Code:**
+```typescript
+allTerms.forEach(term => {
+    const val1 = vector1.get(term) || 0;
+    const val2 = vector2.get(term) || 0;
+    magnitude1 += val1 * val1;  // TF-IDF STEP 13: Sum of squares for vector 1
+    magnitude2 += val2 * val2;  // TF-IDF STEP 13: Sum of squares for vector 2
+});
+
+const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);  // TF-IDF STEP 13: Calculate magnitudes
+```
+
+**Formula:** `||v|| = √(Σ(v[term]²))` for each vector
+
+---
+
+### TF-IDF STEP 14: Calculate Final Cosine Similarity Score
+
+**File:** `app/buddyrunner/home.tsx`  
+**Lines:** 797-824  
+**Function:** `cosineSimilarity()`
+
+**What it does:** Computes the final similarity score between task and runner vectors.
+
+**Code:**
+```typescript
+if (denominator === 0) return 0;
+// TF-IDF STEP 14: Final cosine similarity score
+return dotProduct / denominator;
+```
+
+**Formula:** `Cosine Similarity = (v1 · v2) / (||v1|| × ||v2||)`
+
+**Result:** Score between 0 (no match) and 1 (perfect match)
+
+**This score becomes the `tfidfScore` used in the final ranking formula.**
+
+---
+
+### Complete TF-IDF & Cosine Similarity Flow Summary
+
+**Execution Order:**
+1. **TF-IDF STEP 1**: Calculate TF for task (token-based)
+2. **TF-IDF STEP 2**: Calculate TF for runner (task-based, preferred) OR fallback to STEP 1 (token-based)
+3. **TF-IDF STEP 3**: Count documents containing each term (DF)
+4. **TF-IDF STEP 4**: Calculate IDF for each term
+5. **TF-IDF STEP 7**: Apply smoothing if term appears in all documents
+6. **TF-IDF STEP 8**: Build TF-IDF vector for task (combines STEP 1 + STEP 3 & 4)
+7. **TF-IDF STEP 9**: Build TF-IDF vector for runner (combines STEP 2 + STEP 3 & 4) OR STEP 10 (fallback)
+8. **TF-IDF STEP 12**: Calculate dot product of both vectors
+9. **TF-IDF STEP 13**: Calculate magnitudes of both vectors
+10. **TF-IDF STEP 14**: Calculate final cosine similarity score
+
+**For detailed explanations and examples, see:** `TF_IDF_COSINE_SIMILARITY_EXPLANATION.md`
+
+---
+
+### B6(E) — Ranking and Assignment (corresponds to runtime logs: `[QUEUE] STEP 5/6`)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowErrand()`  
@@ -694,7 +946,7 @@ $$;
 
 ---
 
-### STEP 10 – Timeout Detection and Reassignment
+### B7(E) — Timeout Detection and Reassignment (corresponds to runtime logs: `[QUEUE] STEP 7+`)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowErrand()`  
@@ -839,18 +1091,19 @@ $$;
 
 ---
 
-### STEP 11 – Apply Ranking Filter to All Errands
+### A4(E) — Apply Ranking/Dispatch Function to Each Candidate Errand (bridge into Phase B)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `useAvailableErrands()` → `refetch()`  
 **Lines:** 1792-1804  
 
-**Description:** Runs `shouldShowErrand()` for each distance-filtered errand to determine visibility.
+**Description:** This is the bridge from **Phase A → Phase B**.  
+For each errand that survived Phase A filtering, the code calls `shouldShowErrand()`. That call is where **queueing/assignment** can occur (Phase B), because it may write `notified_runner_id` when it’s currently null.
 
 **Code:**
 
 ```typescript
-// STEP 10: Apply ranking filter to determine visibility
+// Apply ranking filter to determine visibility (and possibly trigger assignment)
 const rankingFilteredErrands: ErrandRowDB[] = [];
 for (const errand of filteredErrands) {
     const shouldShow = await shouldShowErrand(errand);
@@ -875,8 +1128,9 @@ setRows(mapped);
 ```
 
 ---
+---
 
-## COMMISSIONS QUEUEING FLOW
+## Phase A (Commissions) — Initial data fetch (still NOT queueing)
 
 ### Overview of Differences
 
@@ -892,7 +1146,7 @@ setRows(mapped);
 
 ---
 
-### STEP 1 – Fetch Pending Commissions
+### A1(C) — Fetch Pending Commissions (data fetch only)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `useAvailableCommissions()` → `refetch()`  
@@ -917,7 +1171,7 @@ const { data, error } = await supabase
 
 ---
 
-### STEP 2 – Distance Filtering (Commissions)
+### A2(C) — Distance Filtering (Commissions) (data filter only)
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `useAvailableCommissions()` → `refetch()`  
@@ -961,13 +1215,18 @@ const filteredRaw = raw.filter(commission => {
 
 ---
 
-### STEP 3 – Ranking Filter (shouldShowCommission)
+---
+
+## Phase B (Commissions) — Queueing & assignment (this is where queueing starts)
+
+### B0(C) — Ranking/Dispatch Entry Function: `shouldShowCommission`
 
 **File:** `app/buddyrunner/home.tsx`  
 **Function:** `shouldShowCommission()`  
 **Lines:** 2182-2711  
 
-**Description:** Handles commission assignment with multiple categories and declined runner exclusion.
+**Description:** This function is where the **commission queueing/dispatch** happens. It is called for each candidate commission during `refetch()`.  
+It decides visibility *and* can **write assignment state** (via RPC) when `notified_runner_id` is empty or timed out.
 
 **Category Parsing:**
 
@@ -986,6 +1245,43 @@ const shouldShowCommission = async (commission: CommissionRowDB): Promise<boolea
         return true; // EXIT: No category, bypass ranking
     }
 ```
+
+### B1(C) — **ACTUAL FIRST QUEUEING STEP**: “unassigned task detected” gate (`if (!commission.notified_runner_id)`)
+
+**File:** `app/buddyrunner/home.tsx`  
+**Function:** `shouldShowCommission()`  
+**Applies to:** **Commissions only**
+
+**What makes this the “first queueing step”:** This is the first point where the runner client decides “this pending commission has no `notified_runner_id` yet” and proceeds to compute a top runner and then **write** `notified_runner_id` + `notified_at` via RPC.
+
+**Exact code (Commissions):**
+
+```typescript
+// If no runner has been notified yet, find and assign top-ranked runner
+if (!commission.notified_runner_id) {
+    // STEP 1: Task detected
+    const callerName = commissionCallerNamesById[commission.buddycaller_id || ""] || "BuddyCaller";
+    const callerShortId = (commission.buddycaller_id || "").substring(0, 8);
+    console.log(`[QUEUE] STEP 1 — Task detected`);
+    console.log(`Type: Commission`);
+    console.log(`Task ID: ${commission.id}`);
+    console.log(`Caller: ${callerName} (id: ${callerShortId})`);
+    console.log(`Status: pending`);
+
+    // Get caller location for distance calculation
+    const callerLocation = callerLocations[commission.buddycaller_id || ""];
+    if (!callerLocation) {
+        console.log(`❌ [RANKING] Commission ${commission.id}: Caller has no location, cannot rank runners`);
+        return false;
+    }
+
+    // ... continues into eligibility filtering, ranking, and RPC assignment ...
+}
+```
+
+**How this step works (Commissions):**
+- **Input condition**: `commission.status = 'pending'` and `commission.runner_id IS NULL` (from Phase A fetch), and now **`commission.notified_runner_id IS NULL`**.
+- **Effect**: enters initial assignment path → validates caller location → fetches eligible runners → ranks them → updates DB via `update_commission_notification` RPC.
 
 **Runner History Fetch (Commissions):**
 
@@ -1184,11 +1480,12 @@ await supabase.rpc('update_commission_notification', {
 - **Commissions:** Excludes `timeout_runner_ids`, `declined_runner_id`, and previously notified runner; requires caller location; commissionTypes can be multiple.
 
 ### Purpose Recap
-- **STEP 3 (Distance filter):** Keep only runners within 500m of caller.
-- **STEP 4 (Score calc):** Combine distance (40%), rating (35%), TF-IDF (25%).
-- **STEP 5 (Ranking):** Sort by finalScore desc, distance asc (tiebreaker).
-- **STEP 6 (Assignment):** Notify top-ranked runner (RPC update of notified_runner_id/notified_at).
-- **STEP 7/9 (Timeout):** After 60s, exclude previous runner (and declined for commissions), re-run steps 3-6; clear notification if none remain.
+- **QUEUE STEP 3 (Distance filter):** Keep only runners within 500m of caller.
+- **QUEUE STEP 4 (Score calc):** Combine distance (40%), rating (35%), TF-IDF (25%).
+  - **Note:** TF-IDF score is calculated using TF-IDF STEPS 1-14 (see TF-IDF & Cosine Similarity Steps section above)
+- **QUEUE STEP 5 (Ranking):** Sort by finalScore desc, distance asc (tiebreaker).
+- **QUEUE STEP 6 (Assignment):** Notify top-ranked runner (RPC update of notified_runner_id/notified_at).
+- **QUEUE STEP 7/9 (Timeout):** After 60s, exclude previous runner (and declined for commissions), re-run QUEUE STEPS 3-6; clear notification if none remain.
 
 ---
 

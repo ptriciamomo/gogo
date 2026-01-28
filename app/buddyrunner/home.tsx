@@ -706,82 +706,61 @@ function toUiStatus(s: ErrandRowDB["status"]): UiStatus {
 
 /* ===================== TF-IDF + COSINE SIMILARITY UTILITIES ===================== */
 
-// STEP 1: Calculate Term Frequency (token-based)
-
+// TF-IDF STEP 1: Calculate Term Frequency (token-based)
 function calculateTF(term: string, document: string[]): number {
     if (document.length === 0) return 0;
-    // STEP 1: Count term occurrences in document array using filter to match exact term, then get count via .length property
+    // Count term occurrences in document
     const termCount = document.filter(word => word === term).length;
-    // STEP 1B: Divide term count by total document length to compute token-based TF
+    // Divide by total terms to get frequency (0 to 1)
     return termCount / document.length;
 }
 
-// STEP 2: Calculate Term Frequency (task-based)
-
+// TF-IDF STEP 2: Calculate Term Frequency (task-based)
 function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
     if (totalTasks === 0) return 0;
-    // STEP 2: Count how many tasks contain the category term by filtering tasks where any category matches (case-insensitive), then get count via .length
+    // Count how many tasks contain this category
     const tasksWithCategory = taskCategories.filter(taskCats => 
         taskCats.some(cat => cat === term.toLowerCase())
     ).length;
-    // STEP 2B: Divide tasks containing category by total tasks to compute task-based TF
+    // Divide by total tasks to get frequency (0 to 1)
     return tasksWithCategory / totalTasks;
 }
 
-/**
- * Calculate Inverse Document Frequency (IDF) for a term across all documents
- */
-function calculateIDF(term: string, allDocuments: string[][]): number {
-    const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
-    if (documentsContainingTerm === 0) return 0;
-    return Math.log(allDocuments.length / documentsContainingTerm);
-}
-
-// STEP 3: Calculate Document Frequency (DF)
-
-// STEP 4: Calculate Inverse Document Frequency (IDF) with adjustment
-
+// TF-IDF STEP 3: Calculate Document Frequency (DF)
+// TF-IDF STEP 4: Calculate Inverse Document Frequency (IDF) with adjustment
+// TF-IDF STEP 7: Apply IDF smoothing (prevents zero IDF when term appears in all documents)
 function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
-    // STEP 3: Count documents containing term by filtering documents where term exists, then get count via .length property. This computes Document Frequency (DF).
+    // STEP 3: Count documents containing term (Document Frequency)
     const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
     if (documentsContainingTerm === 0) return 0;
     
-    // STEP 7: Apply IDF smoothing by returning constant 0.1 when term appears in all documents (prevents zero IDF)
+    // STEP 7: Apply smoothing - return 0.1 if term appears in all documents
     if (documentsContainingTerm === allDocuments.length) {
-       
         return 0.1;
     }
     
-    // STEP 4: Get total document count N via allDocuments.length property, used in IDF calculation
-    // STEP 5: Divide total documents N by documents containing term (df) to compute N/df ratio
-    // STEP 6: Apply natural logarithm to N/df ratio using Math.log() to compute IDF value
+    // STEP 4: Calculate IDF using natural logarithm
     return Math.log(allDocuments.length / documentsContainingTerm);
 }
 
-// STEP 5: Compute TF-IDF weight (TF × IDF) for query document
-
-// STEP 8: Construct TF-IDF vector for query document
-
+// TF-IDF STEP 8: Construct TF-IDF vector for query document
 function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
     const uniqueTerms = Array.from(new Set(document));
     const tfidfMap = new Map<string, number>();
     
     uniqueTerms.forEach(term => {
-        const tf = calculateTF(term, document);
-        const idf = calculateIDFAdjusted(term, allDocuments);
-        // STEP 8: Multiply TF and IDF values using multiplication operator * to compute TF-IDF weight for each term in query document
+        const tf = calculateTF(term, document);                    //  Get TF 
+        const idf = calculateIDFAdjusted(term, allDocuments);      //  Get IDF
+        // STEP 8: Multiply TF × IDF to compute TF-IDF weight
         tfidfMap.set(term, tf * idf);
     });
     
     return tfidfMap;
 }
 
-// STEP 7: Compute TF-IDF weight (TF × IDF) for runner document using task-based TF
-// Purpose: Multiplies task-based TF and IDF values for runner history. This is the preferred method for runner documents as it uses task count instead of token count, preventing multi-category tasks from inflating TF values. Formula: TF-IDF(term) = TF(term) × IDF(term) where TF uses task count.
-// STEP 9: Construct TF-IDF vector for runner document using task-based TF
-// Purpose: Builds a Map<string, number> representing the TF-IDF vector for runner history using task-based TF calculation. Collects all unique terms from taskCategories array, computes task-based TF × IDF for each term, and stores in map. This is the preferred method for runner vectors as it accurately represents task-level frequency.
+// TF-IDF STEP 9: Construct TF-IDF vector for runner document using task-based TF (preferred method)
 function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
-    // Get all unique terms from all tasks
+    // Get all unique categories from all tasks
     const allTerms = new Set<string>();
     taskCategories.forEach(taskCats => {
         taskCats.forEach(cat => allTerms.add(cat.toLowerCase()));
@@ -790,37 +769,18 @@ function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTask
     const tfidfMap = new Map<string, number>();
     
     allTerms.forEach(term => {
-        const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks);
-        const idf = calculateIDFAdjusted(term, allDocuments);
-        // STEP 9: Multiply task-based TF and IDF values using multiplication operator * to compute TF-IDF weight for each term in runner document
+        const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks); // STEP 2: Get TF (task-based)
+        const idf = calculateIDFAdjusted(term, allDocuments);                  // STEP 3 & 4: Get IDF
+        // STEP 9: Multiply TF × IDF to compute TF-IDF weight
         tfidfMap.set(term, tf * idf);
     });
     
     return tfidfMap;
 }
 
-/**
- * Calculate TF-IDF vector for a document
- */
-function calculateTFIDFVector(document: string[], allDocuments: string[][]): Map<string, number> {
-    const uniqueTerms = Array.from(new Set(document));
-    const tfidfMap = new Map<string, number>();
-    
-    uniqueTerms.forEach(term => {
-        const tf = calculateTF(term, document);
-        const idf = calculateIDF(term, allDocuments);
-        tfidfMap.set(term, tf * idf);
-    });
-    
-    return tfidfMap;
-}
-
-// STEP 12: Calculate dot product for cosine similarity
-// Purpose: Computes dot product of two TF-IDF vectors as sum of products of corresponding term weights. Formula: dotProduct = Σ(v1[term] × v2[term]) for all terms. Iterates through union of all terms from both vectors, multiplies corresponding values, and sums the products. Returns 0 for missing terms.
-// STEP 13: Calculate vector magnitudes for cosine similarity
-// Purpose: Computes Euclidean magnitude (L2 norm) of each TF-IDF vector as square root of sum of squared term weights. Formula: ||v|| = √(Σ(v[term]²)). Calculates magnitude1 and magnitude2, then multiplies them to get denominator. Used to normalize dot product in cosine similarity calculation.
-// STEP 14: Calculate final cosine similarity score
-// Purpose: Computes cosine similarity as (v1 · v2) / (||v1|| × ||v2||) where numerator is dot product and denominator is product of magnitudes. Returns 0 if denominator is 0 (zero vectors). Result is a value between 0 and 1, where 1 indicates perfect similarity and 0 indicates no similarity. Used for both errands and commissions.
+// TF-IDF STEP 12: Calculate dot product for cosine similarity
+// TF-IDF STEP 13: Calculate vector magnitudes for cosine similarity
+// TF-IDF STEP 14: Calculate final cosine similarity score
 function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
     const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
     
@@ -828,25 +788,23 @@ function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, num
     let magnitude1 = 0;
     let magnitude2 = 0;
     
+    // STEP 12 & 13: Calculate dot product and vector magnitudes
     allTerms.forEach(term => {
         const val1 = vector1.get(term) || 0;
         const val2 = vector2.get(term) || 0;
-        // STEP 13: Compute dot product by iterating all terms, multiplying corresponding vector values, and accumulating sum using += operator
-        dotProduct += val1 * val2;
-        // STEP 15: Compute sum of squared values for first vector by squaring each value and accumulating using += operator
-        magnitude1 += val1 * val1;
-        // STEP 16: Compute sum of squared values for second vector by squaring each value and accumulating using += operator
-        magnitude2 += val2 * val2;
+        
+        dotProduct += val1 * val2;        // STEP 12: Dot product
+        magnitude1 += val1 * val1;        // STEP 13: Sum of squares for vector 1
+        magnitude2 += val2 * val2;        // STEP 13: Sum of squares for vector 2
     });
     
-    // STEP 19: Compute square root of sum of squares for first vector using Math.sqrt() to get Euclidean magnitude
-    // STEP 20: Compute square root of sum of squares for second vector using Math.sqrt() to get Euclidean magnitude
-    // STEP 21: Multiply two vector magnitudes using * operator to compute denominator for cosine similarity
+    // STEP 13: Calculate Euclidean magnitudes
     const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
-    // STEP 25: Check if denominator equals zero using === operator, return 0 if true to prevent division by zero
+    
+    // Prevent division by zero
     if (denominator === 0) return 0;
     
-    // STEP 26: Divide dot product by product of magnitudes using / operator to compute final cosine similarity score
+    // STEP 14: Final cosine similarity: (v1 · v2) / (||v1|| × ||v2||)
     return dotProduct / denominator;
 }
 
@@ -911,7 +869,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         console.log(`[TFIDF] Total completed tasks: ${runnerTotalTasks}`);
     }
     
-    // STEP 12: Build document corpus array containing exactly 2 documents: query document and runner document
+    // TF-IDF STEP 12: Build document corpus (2 documents: query + runner)
     const allDocuments = [queryDoc, runnerDoc];
     
     // Calculate TF, IDF, and TF-IDF for logging
@@ -919,7 +877,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     const uniqueQueryTerms = Array.from(new Set(queryDoc));
     const allUniqueTerms = Array.from(new Set([...uniqueRunnerTerms, ...uniqueQueryTerms]));
     
-    // 4️⃣ Term Frequency (TF) - Runner
+    // 4️⃣ Term Frequency (TF) - Runner (for logging)
     console.log(`[TFIDF] Term Frequency (Runner):`);
     const runnerTFMap = new Map<string, number>();
     uniqueRunnerTerms.forEach(term => {
@@ -928,14 +886,13 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         let denominator: number;
         
         if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-            // NEW: Use task-based TF calculation
+            // STEP 2: Use task-based TF calculation (preferred)
             tf = calculateTFWithTaskCount(term, runnerTaskCategories, runnerTotalTasks);
             taskCount = runnerCategoryTaskCounts.get(term) || 0;
             denominator = runnerTotalTasks;
         } else {
-            // OLD: Use token-based TF calculation (backward compatibility)
+            // STEP 1: Use token-based TF calculation (fallback)
             tf = calculateTF(term, runnerDoc);
-            // Count term occurrences in runner document for logging purposes (same logic as Step 1)
             taskCount = runnerDoc.filter(word => word === term).length;
             denominator = runnerDoc.length;
         }
@@ -944,60 +901,51 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         console.log(`[TFIDF] - ${term}: ${taskCount} / ${denominator} = ${tf.toFixed(4)}`);
     });
     
-    // 5️⃣ Inverse Document Frequency (IDF)
+    // 5️⃣ Inverse Document Frequency (IDF) (for logging)
     console.log(`[TFIDF] Inverse Document Frequency:`);
     const idfMap = new Map<string, number>();
     allUniqueTerms.forEach(term => {
-        const idf = calculateIDFAdjusted(term, allDocuments);
+        const idf = calculateIDFAdjusted(term, allDocuments); // STEP 3 & 4
         idfMap.set(term, idf);
         console.log(`[TFIDF] - ${term}: ${idf.toFixed(4)}`);
     });
     
-    // 6️⃣ TF-IDF weights - Runner
+    // 6️⃣ TF-IDF weights - Runner (for logging)
     console.log(`[TFIDF] TF-IDF weights (Runner):`);
     const runnerTFIDFMap = new Map<string, number>();
     uniqueRunnerTerms.forEach(term => {
         const tf = runnerTFMap.get(term) || 0;
         const idf = idfMap.get(term) || 0;
-        // STEP 10: Multiply TF and IDF values retrieved from maps using multiplication operator * to compute TF-IDF weight for runner terms (for logging)
         const tfidf = tf * idf;
         runnerTFIDFMap.set(term, tfidf);
         console.log(`[TFIDF] - ${term}: ${tf.toFixed(4)} × ${idf.toFixed(4)} = ${tfidf.toFixed(4)}`);
     });
     
-    // 7️⃣ TF-IDF weights - Task
+    // 7️⃣ TF-IDF weights - Task (for logging)
     console.log(`[TFIDF] TF-IDF weights (Task):`);
     const queryTFIDFMap = new Map<string, number>();
     uniqueQueryTerms.forEach(term => {
-        const tf = calculateTF(term, queryDoc);
+        const tf = calculateTF(term, queryDoc); // STEP 1
         const idf = idfMap.get(term) || 0;
-        // STEP 11: Multiply TF and IDF values using multiplication operator * to compute TF-IDF weight for query terms (for logging)
         const tfidf = tf * idf;
         queryTFIDFMap.set(term, tfidf);
         const termCount = queryDoc.filter(word => word === term).length;
         console.log(`[TFIDF] - ${term}: ${termCount} / ${queryDoc.length} × ${idf.toFixed(4)} = ${tfidf.toFixed(4)}`);
     });
     
-    // For terms that appear in all documents, we use a small positive IDF value instead of 0
-    // Use task-based TF calculation for runner if task data is available
-    // STEP 8: Construct TF-IDF vector for query document
-    // Purpose: Builds a Map<string, number> representing the TF-IDF vector for the query document (task categories). Iterates through all unique terms in the document, computes TF × IDF for each term, and stores in map. Used for both errands and commissions as the task vector.
+    // TF-IDF STEP 8: Construct TF-IDF vector for query document
     const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
+    
     let runnerVector: Map<string, number>;
     if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-        // STEP 9: Construct TF-IDF vector for runner document using task-based TF
-        // Purpose: Builds a Map<string, number> representing the TF-IDF vector for runner history using task-based TF calculation. Collects all unique terms from taskCategories array, computes task-based TF × IDF for each term, and stores in map. This is the preferred method for runner vectors as it accurately represents task-level frequency.
+        // TF-IDF STEP 9: Construct TF-IDF vector for runner document using task-based TF (preferred)
         runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
     } else {
-        // STEP 10: Construct TF-IDF vector for runner document using token-based TF (fallback)
-        // Purpose: Builds a Map<string, number> representing the TF-IDF vector for runner history using token-based TF calculation. Used as fallback when task data is unavailable. Same process as query document vector construction but applied to runner document.
+        // TF-IDF STEP 10: Construct TF-IDF vector for runner document using token-based TF (fallback)
         runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
     }
     
-    // STEP 12: Calculate dot product for cosine similarity
-    // Purpose: Computes dot product of two TF-IDF vectors as sum of products of corresponding term weights. Formula: dotProduct = Σ(v1[term] × v2[term]) for all terms. Iterates through union of all terms from both vectors, multiplies corresponding values, and sums the products. Returns 0 for missing terms.
-    // STEP 13: Calculate vector magnitudes for cosine similarity
-    // Purpose: Computes Euclidean magnitude (L2 norm) of each TF-IDF vector as square root of sum of squared term weights. Formula: ||v|| = √(Σ(v[term]²)). Calculates magnitude1 and magnitude2, then multiplies them to get denominator. Used to normalize dot product in cosine similarity calculation.
+    // TF-IDF STEP 12 & 13: Calculate dot product and vector magnitudes (for logging)
     const allTerms = Array.from(new Set([...queryVector.keys(), ...runnerVector.keys()]));
     let dotProduct = 0;
     let magnitude1 = 0;
@@ -1006,19 +954,13 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     allTerms.forEach(term => {
         const val1 = queryVector.get(term) || 0;
         const val2 = runnerVector.get(term) || 0;
-        // STEP 14: Compute dot product by iterating all terms, multiplying corresponding vector values, and accumulating sum using += operator (for logging)
-        dotProduct += val1 * val2;
-        // STEP 17: Compute sum of squared values for query vector by squaring each value and accumulating using += operator (for logging)
-        magnitude1 += val1 * val1;
-        // STEP 18: Compute sum of squared values for runner vector by squaring each value and accumulating using += operator (for logging)
-        magnitude2 += val2 * val2;
+        dotProduct += val1 * val2;        // STEP 12: Dot product
+        magnitude1 += val1 * val1;        // STEP 13: Sum of squares for vector 1
+        magnitude2 += val2 * val2;        // STEP 13: Sum of squares for vector 2
     });
     
-    // STEP 22: Compute square root of sum of squares for query vector using Math.sqrt() to get Euclidean magnitude (for logging)
     const taskMagnitude = Math.sqrt(magnitude1);
-    // STEP 23: Compute square root of sum of squares for runner vector using Math.sqrt() to get Euclidean magnitude (for logging)
     const runnerMagnitude = Math.sqrt(magnitude2);
-    // STEP 24: Multiply two vector magnitudes using * operator to compute denominator for cosine similarity (for logging)
     const denominator = taskMagnitude * runnerMagnitude;
     
     console.log(`[TFIDF] Cosine similarity calculation:`);
@@ -1026,8 +968,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     console.log(`[TFIDF] - Task magnitude: ${taskMagnitude.toFixed(4)}`);
     console.log(`[TFIDF] - Runner magnitude: ${runnerMagnitude.toFixed(4)}`);
     
-    // STEP 14: Calculate final cosine similarity score
-    // Purpose: Computes cosine similarity as (v1 · v2) / (||v1|| × ||v2||) where numerator is dot product and denominator is product of magnitudes. Returns 0 if denominator is 0 (zero vectors). Result is a value between 0 and 1, where 1 indicates perfect similarity and 0 indicates no similarity. Used for both errands and commissions.
+    // TF-IDF STEP 14: Calculate final cosine similarity score
     const similarity = cosineSimilarity(queryVector, runnerVector);
     
     // 9️⃣ Final TF-IDF similarity score
@@ -1057,13 +998,13 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
             isInitialLoadRef.current = false;
         }
         
-        // STep 0: Check ang authentication
+        // P0:— Check runner authentication and availability
         setLoading(true);
         try {
             const { data: auth } = await supabase.auth.getUser();
             const uid = auth?.user?.id ?? null;
 
-            // Enforce active status: only fetch errands for runners who are online
+            // Authentication part
             if (!uid) {
                 setRows([]);
                 setLoading(false);
@@ -1084,7 +1025,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     return;
                 }
             }
-            // Step 0: Check kung kinsa ang online na runner 
+            // Check kung kinsa ang online na runner 
             const { data: runnerData, error: runnerError } = await supabase
                 .from("users")
                 .select("is_available, latitude, longitude")
@@ -1105,7 +1046,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 return; 
             }
 
-            // STEP 0: Resolve runner location (GPS with database fallback)
+            // Resolve runner location (GPS with database fallback)
          //GPS try to get the runner's location up to 3 times lang if it fails kay kwaon sa ang last know loc sa runner
             let runnerLat: number | null = null;
             let runnerLon: number | null = null;
@@ -1170,7 +1111,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 }
             }
 
-            // STEP 1: iFetch pending errands
+            //P1: — Icheck ang mga pending errands
             
             const distanceLimit = 500;
 
@@ -1184,7 +1125,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
             if (error) throw error;
             const errands = (eData || []) as ErrandRowDB[];
 
-            // STEP 2: iFetch caller names and locations
+            // P2 — Fetch caller names and locations
             // Purpose: Get caller location data needed for distance calculations.
             const callerIds = Array.from(
                 new Set(errands.map((r) => r.buddycaller_id).filter((v): v is string => !!v))
@@ -1206,7 +1147,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 });
             }
 
-            // STEP 3: Pre-ranking distance filtering
+            // P3 : Pre-ranking distance filtering
             // Purpose: Filter errands to only those within 500 meters of the runner before ranking. 
             const filteredErrands = errands.filter((errand) => {
                 const callerLocation = callerLocations[errand.buddycaller_id || ""];
@@ -1308,7 +1249,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 }
             };
 
-         //Step 4: Determine if the errand should be shown to the runner
+         // Q0: Check if the errand should be shown to the runner
             const shouldShowErrand = async (errand: ErrandRowDB): Promise<boolean> => {
                 if (!uid) return false;
                 
@@ -1327,9 +1268,9 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 const notifiedAt = errand.notified_at ? new Date(errand.notified_at) : null;
                 const sixtySecondsAgo = new Date(now.getTime() - 60000);
                 
-                // If no runner has been notified yet, find and assign top-ranked runner
+                //  B1:If no runner has been notified yet, find and assign top-ranked runner
                 if (!errand.notified_runner_id) {
-                    // STEP 1: Task detected
+                    
                     const callerName = namesById[errand.buddycaller_id || ""] || "BuddyCaller";
                     const callerShortId = (errand.buddycaller_id || "").substring(0, 8);
                     console.log(`[QUEUE] STEP 1 — Task detected`);
@@ -1338,18 +1279,15 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     console.log(`Caller: ${callerName} (id: ${callerShortId})`);
                     console.log(`Status: pending`);
                     
-                    // Get caller location for distance calculation
+                 
                     const callerLocation = callerLocations[errand.buddycaller_id || ""];
                     if (!callerLocation) {
                         if (__DEV__) console.log(`❌ [ERRAND RANKING] Errand ${errand.id}: Caller has no location, cannot rank runners`);
                         return false;
                     }
                     
-                    // STEP 5: Fetch available runners with presence and availability filters
-                    // Purpose: Query all runners who are available, have been active recently, and exclude any runners who have already timed out for this errand.
-                    // Runner heartbeat updates: last_seen_at every ~60s
-                    // Thresholds: 75s (buffered to prevent flapping between heartbeats)
-                    const seventyFiveSecondsAgo = new Date(now.getTime() - 75 * 1000); // 75 seconds for both presence checks
+                   
+                    const seventyFiveSecondsAgo = new Date(now.getTime() - 75 * 1000); 
 
                     // First, get count of runners before presence filter (for logging)
                     let countQuery = supabase
@@ -1377,7 +1315,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                         .gte("last_seen_at", seventyFiveSecondsAgo.toISOString())
                         .or(`location_updated_at.gte.${seventyFiveSecondsAgo.toISOString()},location_updated_at.is.null`);
                     
-                    // Exclude all timeout runners if exists
+                   
                     if (errand.timeout_runner_ids && errand.timeout_runner_ids.length > 0) {
                         console.log(`📊 [DEBUG] Excluding ${errand.timeout_runner_ids.length} timeout runners from initial assignment`);
                         for (const timeoutRunnerId of errand.timeout_runner_ids) {
@@ -1392,7 +1330,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                         return false;
                     }
                     
-                    // STEP 2: Availability check
+                    
                     const totalRunners = availableRunners?.length || 0;
                     const unavailableCount = 0; // We only fetch available runners, so unavailable is 0
                     console.log(`[QUEUE] STEP 2 — Availability check`);
@@ -1427,7 +1365,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                         
                         if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue;
                         
-                        // STEP 6A: Calculate distance between runner and caller
+                        // Calculate distance between runner and caller
                         // Purpose: Uses Haversine formula to compute distance in kilometers, then converts to meters for comparison against 500m threshold.
                         const distanceKm = LocationService.calculateDistance(
                             lat,
@@ -1550,7 +1488,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     }
                 }
                 
-                // STEP 9: Timeout detection and reassignment
+                // A runner was notified pero giignore beyond 60s 
                 
                 if (notifiedAt && notifiedAt < sixtySecondsAgo) {
                     const previousRunnerId = errand.notified_runner_id || "";
@@ -1778,13 +1716,13 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     }
                 }
                 
-                // Current runner is the notified runner (within 60 seconds)
+                // Already assigned to current runner na 
                 if (errand.notified_runner_id === uid) {
                     console.log(`✅ [ERRAND RANKING] Errand ${errand.id}: Showing to notified runner ${uid}`);
                     return true;
                 }
                 
-                // Current runner is not the notified runner
+                // Assigned to different runner na 
                 console.log(`❌ [ERRAND RANKING] Errand ${errand.id}: Assigned to different runner ${errand.notified_runner_id}`);
                 return false;
             };

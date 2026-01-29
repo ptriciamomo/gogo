@@ -8,14 +8,6 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  // NOTE: Test Mode Bypass (Development/Testing Only)
-  // The x-test-mode header allows manual testing in Supabase Dashboard or other testing tools
-  // without requiring a valid JWT token. This bypass is for manual testing only.
-  // IMPORTANT: Test mode is automatically disabled in production environments.
-  // When ENVIRONMENT=production, x-test-mode is ignored and JWT authentication is always required.
-  // This prevents abuse or security issues in production.
-  // Production app requests MUST include a valid Authorization: Bearer <JWT> header.
-
   // Check for explicit test mode header (only allowed in non-production environments)
   const isTestMode =
     req.headers.get("x-test-mode") === "true" &&
@@ -47,41 +39,39 @@ serve(async (req) => {
   try {
     // Parse request body
     const body = await req.json();
-    const { errand_id } = body;
+    const { commission_id } = body;
 
     // Basic validation
-    if (!errand_id) {
+    if (!commission_id) {
       return new Response(
-        JSON.stringify({ error: "Missing errand_id" }),
+        JSON.stringify({ error: "Missing commission_id" }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // Fetch the errand (READ-ONLY)
-    const { data: errand, error } = await supabase
-      .from("errand")
+    // Fetch the commission (READ-ONLY)
+    const { data: commission, error } = await supabase
+      .from("commission")
       .select("*")
-      .eq("id", errand_id)
+      .eq("id", commission_id)
       .single();
 
     // Handle database error
     if (error) {
-      // Check if errand not found
       if (error.code === "PGRST116") {
         return new Response(
-          JSON.stringify({ error: "Errand not found" }),
+          JSON.stringify({ error: "Commission not found" }),
           { status: 404, headers: { "Content-Type": "application/json" } }
         );
       }
-      // Other database errors
       return new Response(
-        JSON.stringify({ error: "Failed to fetch errand" }),
+        JSON.stringify({ error: "Failed to fetch commission" }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // Check if errand is already assigned
-    if (errand.notified_runner_id !== null) {
+    // Check if commission is already assigned
+    if (commission.notified_runner_id !== null) {
       return new Response(
         JSON.stringify({ status: "already_assigned" }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -89,12 +79,9 @@ serve(async (req) => {
     }
 
     // Define presence thresholds (must match runner-side logic exactly)
-    // Runner heartbeat updates: last_seen_at every ~60s
-    // Thresholds: 75s (buffered to prevent flapping between heartbeats)
     const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
 
     // Fetch eligible runners (READ-ONLY)
-    // Eligibility: role = BuddyRunner AND is_available = true AND last_seen_at >= 75s ago AND (location_updated_at >= 75s ago OR location_updated_at IS NULL)
     let runnersQuery = supabase
       .from("users")
       .select("id, latitude, longitude, last_seen_at, location_updated_at, is_available, average_rating")
@@ -103,16 +90,20 @@ serve(async (req) => {
       .gte("last_seen_at", seventyFiveSecondsAgo)
       .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`);
 
-    // Exclude timeout runners if present (READ-ONLY filtering)
-    if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids) && errand.timeout_runner_ids.length > 0) {
-      for (const timeoutRunnerId of errand.timeout_runner_ids) {
+    // Exclude declined runner if exists
+    if (commission.declined_runner_id) {
+      runnersQuery = runnersQuery.neq("id", commission.declined_runner_id);
+    }
+
+    // Exclude timeout runners if present
+    if (commission.timeout_runner_ids && Array.isArray(commission.timeout_runner_ids) && commission.timeout_runner_ids.length > 0) {
+      for (const timeoutRunnerId of commission.timeout_runner_ids) {
         runnersQuery = runnersQuery.neq("id", timeoutRunnerId);
       }
     }
 
     const { data: runners, error: runnersError } = await runnersQuery;
 
-    // Handle runner fetch errors
     if (runnersError) {
       return new Response(
         JSON.stringify({ error: "Failed to fetch eligible runners" }),
@@ -120,34 +111,20 @@ serve(async (req) => {
       );
     }
 
-    // Check if no runners found
     if (!runners || runners.length === 0) {
-      // DEBUG: Return diagnostic info when no eligible runners found
       return new Response(
-        JSON.stringify({
-          status: "no_eligible_runners",
-          debug: {
-            errand_id: errand.id,
-            buddycaller_id: errand.buddycaller_id,
-            presence_thresholds: {
-              seventyFiveSecondsAgo,
-            },
-            timeout_runner_ids: errand.timeout_runner_ids || [],
-            note: "No runners matched: role=BuddyRunner, is_available=true, last_seen_at >= 75s ago, location_updated_at >= 75s ago OR NULL",
-          },
-        }),
+        JSON.stringify({ status: "no_eligible_runners" }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // A5: Fetch caller location for distance calculation
+    // Fetch caller location for distance calculation
     const { data: callerData, error: callerError } = await supabase
       .from("users")
       .select("latitude, longitude")
-      .eq("id", errand.buddycaller_id)
+      .eq("id", commission.buddycaller_id)
       .single();
 
-    // Handle caller location error or missing location
     if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
       return new Response(
         JSON.stringify({ status: "no_runners_within_distance" }),
@@ -155,7 +132,6 @@ serve(async (req) => {
       );
     }
 
-    // Validate caller coordinates
     const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
     const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
 
@@ -166,80 +142,46 @@ serve(async (req) => {
       );
     }
 
-    // A5: Haversine distance calculation function (audit-aligned)
-    function calculateDistanceKm(
-      lat1: number,
-      lon1: number,
-      lat2: number,
-      lon2: number
-    ): number {
+    // Haversine distance calculation function
+    function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
       const R = 6371; // Earth radius in km
       const toRad = (deg: number) => (deg * Math.PI) / 180;
-
       const dLat = toRad(lat2 - lat1);
       const dLon = toRad(lon2 - lon1);
-
       const a =
         Math.sin(dLat / 2) * Math.sin(dLat / 2) +
         Math.cos(toRad(lat1)) *
           Math.cos(toRad(lat2)) *
           Math.sin(dLon / 2) *
           Math.sin(dLon / 2);
-
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       return R * c;
     }
 
-    // A5: Apply distance hard filter (≤ 500m)
+    // Apply distance hard filter (≤ 500m)
     const filteredRunners = runners.filter((runner) => {
-      // Exclude runners with null/undefined/NaN coordinates
-      if (!runner.latitude || !runner.longitude) {
-        return false;
-      }
-
+      if (!runner.latitude || !runner.longitude) return false;
       const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
       const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-
-      if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
-        return false;
-      }
-
-      // Calculate distance in meters
+      if (!lat || !lon || isNaN(lat) || isNaN(lon)) return false;
       const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
       const distanceMeters = distanceKm * 1000;
-
-      // Hard filter: exclude if distance > 500m (strict > comparison, 500m is included)
       return distanceMeters <= 500;
     });
 
-    // Handle empty result after distance filtering
     if (!filteredRunners || filteredRunners.length === 0) {
-      // DEBUG: Return diagnostic info when no runners within distance
-      const debugRunnerCoords = runners.map((r: any) => ({
-        id: r.id,
-        lat: r.latitude,
-        lng: r.longitude,
-        distance_km: r.latitude && r.longitude
-          ? calculateDistanceKm(callerLat, callerLon, 
-              typeof r.latitude === 'number' ? r.latitude : parseFloat(String(r.latitude || '')),
-              typeof r.longitude === 'number' ? r.longitude : parseFloat(String(r.longitude || '')))
-          : null,
-      }));
       return new Response(
-        JSON.stringify({
-          status: "no_runners_within_distance",
-          debug: {
-            caller_coords: { lat: callerLat, lng: callerLon },
-            distance_threshold_km: 0.5,
-            eligible_runners_count: runners.length,
-            runner_coords: debugRunnerCoords,
-          },
-        }),
+        JSON.stringify({ status: "no_runners_within_distance" }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // A6: TF-IDF & Cosine Similarity Utilities (exact replication)
+    // Parse commission types
+    const commissionTypes = commission.commission_type 
+      ? commission.commission_type.split(',').map(t => t.trim()).filter(t => t.length > 0)
+      : [];
+
+    // TF-IDF & Cosine Similarity Utilities
     function calculateTF(term: string, document: string[]): number {
       if (document.length === 0) return 0;
       const termCount = document.filter(word => word === term).length;
@@ -257,25 +199,18 @@ serve(async (req) => {
     function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
       const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
       if (documentsContainingTerm === 0) return 0;
-      
-      // IDF smoothing: return 0.1 when term appears in all documents (prevents zero IDF)
-      if (documentsContainingTerm === allDocuments.length) {
-        return 0.1;
-      }
-      
+      if (documentsContainingTerm === allDocuments.length) return 0.1;
       return Math.log(allDocuments.length / documentsContainingTerm);
     }
 
     function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
       const uniqueTerms = Array.from(new Set(document));
       const tfidfMap = new Map<string, number>();
-      
       uniqueTerms.forEach(term => {
         const tf = calculateTF(term, document);
         const idf = calculateIDFAdjusted(term, allDocuments);
         tfidfMap.set(term, tf * idf);
       });
-      
       return tfidfMap;
     }
 
@@ -284,25 +219,20 @@ serve(async (req) => {
       taskCategories.forEach(taskCats => {
         taskCats.forEach(cat => allTerms.add(cat.toLowerCase()));
       });
-      
       const tfidfMap = new Map<string, number>();
-      
       allTerms.forEach(term => {
         const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks);
         const idf = calculateIDFAdjusted(term, allDocuments);
         tfidfMap.set(term, tf * idf);
       });
-      
       return tfidfMap;
     }
 
     function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
       const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
-      
       let dotProduct = 0;
       let magnitude1 = 0;
       let magnitude2 = 0;
-      
       allTerms.forEach(term => {
         const val1 = vector1.get(term) || 0;
         const val2 = vector2.get(term) || 0;
@@ -310,10 +240,8 @@ serve(async (req) => {
         magnitude1 += val1 * val1;
         magnitude2 += val2 * val2;
       });
-      
       const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
       if (denominator === 0) return 0;
-      
       return dotProduct / denominator;
     }
 
@@ -326,43 +254,29 @@ serve(async (req) => {
       if (commissionCategories.length === 0 || runnerHistory.length === 0) {
         return 0;
       }
-      
       const queryDoc = commissionCategories.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
       const runnerDoc = runnerHistory.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
-      
       if (queryDoc.length === 0 || runnerDoc.length === 0) {
         return 0;
       }
-      
-      // Build document corpus: exactly 2 documents (query and runner)
       const allDocuments = [queryDoc, runnerDoc];
-      
-      // Construct TF-IDF vectors
       const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
       let runnerVector: Map<string, number>;
-      
       if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-        // Use task-based TF calculation (preferred)
         runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
       } else {
-        // Fallback to token-based TF calculation
         runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
       }
-      
-      // Calculate cosine similarity
       const similarity = cosineSimilarity(queryVector, runnerVector);
-      const finalScore = isNaN(similarity) ? 0 : similarity;
-      
-      return finalScore;
+      return isNaN(similarity) ? 0 : similarity;
     }
 
-    // A6: Normalize errand categories for TF-IDF query (empty array allowed)
-    const errandCategories =
-      errand.category && errand.category.trim().length > 0
-        ? [errand.category.trim().toLowerCase()]
-        : [];
+    // Normalize commission types for TF-IDF query
+    const normalizedCommissionTypes = commissionTypes.length > 0
+      ? commissionTypes.map(t => t.trim().toLowerCase()).filter(t => t.length > 0)
+      : [];
 
-    // A6: Compute per-runner scores (sequential execution)
+    // Compute per-runner scores
     const rankedRunners: Array<{
       id: string;
       distance: number;
@@ -373,48 +287,45 @@ serve(async (req) => {
     }> = [];
 
     for (const runner of filteredRunners) {
-      // Calculate distance in meters (already filtered, but need for score)
       const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
       const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
       const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
       const distanceMeters = distanceKm * 1000;
 
-      // 1️⃣ Distance score
+      // Distance score
       const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
 
-      // 2️⃣ Rating score
+      // Rating score
       const ratingScore = (runner.average_rating || 0) / 5;
 
-      // 3️⃣ TF-IDF score
-      // Fetch runner category history (sequential, per runner)
-      const { data: historyData, error: historyError } = await supabase
-        .from("errand")
-        .select("category")
-        .eq("runner_id", runner.id)
-        .eq("status", "completed");
-
+      // TF-IDF score
       let tfidfScore = 0;
-      
-      if (!historyError && historyData && historyData.length > 0) {
-        const totalTasks = historyData.length;
-        const taskCategories: string[][] = [];
-        
-        historyData.forEach((completedErrand: any) => {
-          if (!completedErrand.category) return;
-          taskCategories.push([completedErrand.category.trim().toLowerCase()]);
-        });
-        
-        const runnerHistory = taskCategories.flat();
-        
-        tfidfScore = calculateTFIDFCosineSimilarity(
-          errandCategories,
-          runnerHistory,
-          taskCategories,
-          totalTasks
-        );
+      if (normalizedCommissionTypes.length > 0) {
+        const { data: historyData } = await supabase
+          .from("commission")
+          .select("commission_type")
+          .eq("runner_id", runner.id)
+          .eq("status", "completed");
+
+        if (historyData && historyData.length > 0) {
+          const totalTasks = historyData.length;
+          const taskCategories: string[][] = [];
+          historyData.forEach((c: any) => {
+            if (!c.commission_type) return;
+            const types = c.commission_type.split(',').map((t: string) => t.trim().toLowerCase());
+            taskCategories.push(types);
+          });
+          const runnerHistory = taskCategories.flat();
+          tfidfScore = calculateTFIDFCosineSimilarity(
+            normalizedCommissionTypes,
+            runnerHistory,
+            taskCategories,
+            totalTasks
+          );
+        }
       }
 
-      // Calculate final weighted score
+      // Final weighted score
       const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
 
       rankedRunners.push({
@@ -427,63 +338,47 @@ serve(async (req) => {
       });
     }
 
-    // A6: Sort and rank runners
+    // Sort and rank runners
     rankedRunners.sort((a, b) => {
-      // Primary: finalScore descending
       if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-      // Tie-breaker: distance ascending
       return a.distance - b.distance;
     });
 
-    // A7.1: Dry-Run Assignment (NO DB WRITES)
-    // Determine which runner WOULD be assigned without modifying the database
     if (rankedRunners.length === 0) {
       return new Response(
-        JSON.stringify({
-          status: "no_runner_to_assign",
-        }),
+        JSON.stringify({ status: "no_runner_to_assign" }),
         { headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // Get top runner (would be assigned)
     const topRunner = rankedRunners[0];
-
-    // A7.2: Real Assignment
-    // Persists the top-ranked runner to the errand record.
-    // This converts the A7.1 dry-run result into an actual assignment.
-
-    // Generate assignment timestamp
     const assignedAt = new Date().toISOString();
 
-    // Prepare timeout_runner_ids update (append topRunner.id if not already present)
+    // Prepare timeout_runner_ids update
     let updatedTimeoutRunnerIds: string[];
-    if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids)) {
-      // Append only if not already present
-      if (!errand.timeout_runner_ids.includes(topRunner.id)) {
-        updatedTimeoutRunnerIds = [...errand.timeout_runner_ids, topRunner.id];
+    if (commission.timeout_runner_ids && Array.isArray(commission.timeout_runner_ids)) {
+      if (!commission.timeout_runner_ids.includes(topRunner.id)) {
+        updatedTimeoutRunnerIds = [...commission.timeout_runner_ids, topRunner.id];
       } else {
-        updatedTimeoutRunnerIds = errand.timeout_runner_ids;
+        updatedTimeoutRunnerIds = commission.timeout_runner_ids;
       }
     } else {
-      // Initialize as array with topRunner.id
       updatedTimeoutRunnerIds = [topRunner.id];
     }
 
-    // Perform DB update (only if errand is still unassigned and pending)
+    // Perform DB update (atomic: only if still unassigned and pending)
     const { data: updateData, error: updateError } = await supabase
-      .from("errand")
+      .from("commission")
       .update({
         notified_runner_id: topRunner.id,
         notified_at: assignedAt,
         timeout_runner_ids: updatedTimeoutRunnerIds,
       })
-      .eq("id", errand.id)
+      .eq("id", commission.id)
       .is("notified_runner_id", null)
       .eq("status", "pending")
       .select();
 
-    // Handle update error
     if (updateError) {
       return new Response(
         JSON.stringify({ error: "assignment_failed" }),
@@ -491,7 +386,6 @@ serve(async (req) => {
       );
     }
 
-    // Check if errand was already assigned during the process (no rows updated)
     if (!updateData || updateData.length === 0) {
       return new Response(
         JSON.stringify({ status: "already_assigned" }),
@@ -500,26 +394,25 @@ serve(async (req) => {
     }
 
     // Broadcast notification to assigned runner's private channel
-    const channelName = `errand_notify_${topRunner.id}`;
+    const channelName = `commission_notify_${topRunner.id}`;
     const broadcastChannel = supabase.channel(channelName);
     
     await broadcastChannel.send({
       type: 'broadcast',
-      event: 'errand_notification',
+      event: 'commission_notification',
       payload: {
-        errand_id: errand.id,
-        errand_title: errand.title,
-        errand_category: errand.category,
-        caller_id: errand.buddycaller_id,
+        commission_id: commission.id,
+        commission_title: commission.title,
+        commission_type: commission.commission_type,
+        caller_id: commission.buddycaller_id,
         assigned_at: assignedAt,
       },
     });
 
-    // Return successful assignment response
     return new Response(
       JSON.stringify({
         status: "assigned",
-        errand_id: errand.id,
+        commission_id: commission.id,
         assigned_runner_id: topRunner.id,
         final_score: topRunner.finalScore,
         assigned_at: assignedAt,

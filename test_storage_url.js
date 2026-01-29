@@ -1,8 +1,9 @@
 // Test script to check Supabase storage URLs
 // Run this in your browser console to test if a Supabase URL is accessible
 
-// Test URL from your images
-const testUrl = "https://ednraiixtmzymowfwarh.supabase.co/storage/v1/object/public/task-uploads/4344f7dd-05dd-44db-87e1-074c7adf945b/1760884833485-bsci8woaf.pdf";
+// Build a test URL from env so we don't hardcode any project-specific Supabase URL in the repo.
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "https://example.supabase.co";
+const testUrl = `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/YOUR_BUCKET/YOUR_OBJECT`;
 
 console.log("Testing Supabase storage URL:", testUrl);
 

@@ -13,8 +13,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "web:https": "expo start --web --https",
-    "build": "expo export",
-    "build:web": "expo export",
+    "build": "expo export --platform web",
+    "build:web": "expo export --platform web",
     "lint": "expo lint"
   },
   "dependencies": {

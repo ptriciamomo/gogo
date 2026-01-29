@@ -5,7 +5,7 @@
 You need to create a storage bucket in your Supabase dashboard:
 
 1. Go to your Supabase dashboard: https://supabase.com/dashboard
-2. Select your project: `ednraiixtmzymowfwarh`
+2. Select your project: `<your-supabase-project-ref>`
 3. Navigate to **Storage** in the left sidebar
 4. Click **"New bucket"**
 5. Set the bucket name to: `student-ids`

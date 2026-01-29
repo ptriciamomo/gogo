@@ -1808,8 +1808,20 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             }
 
             // IMPORTANT: no .select().single() to avoid extra read blocked by RLS
-            const { error: insertError } = await supabase.from("errand").insert([payload]);
+            const { error: insertError, data: insertedData } = await supabase.from("errand").insert([payload]).select();
             if (insertError) throw insertError;
+
+            // Call Edge Function to assign top runner and notify
+            if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
+                try {
+                    await supabase.functions.invoke('assign-errand', {
+                        body: { errand_id: insertedData[0].id },
+                    });
+                } catch (edgeError) {
+                    console.error('Failed to assign and notify errand:', edgeError);
+                    // Don't throw - errand was created successfully
+                }
+            }
 
             // Show success modal instead of Alert
             setShowSuccessModal(true);

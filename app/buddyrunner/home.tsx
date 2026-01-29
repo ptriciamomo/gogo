@@ -19,6 +19,7 @@ import { supabase } from "../../lib/supabase";
 import LocationService from "../../components/LocationService";
 import LocationPromptModal from "../../components/LocationPromptModal";
 import LocationPromptModalWeb from "../../components/LocationPromptModalWeb";
+import { useNotificationBadge } from "./_layout";
 
 /* ================= COLORS ================= */
 const colors = {
@@ -1270,6 +1271,14 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 
                 //  B1:If no runner has been notified yet, find and assign top-ranked runner
                 if (!errand.notified_runner_id) {
+                    // GUARD: Skip initial assignment if errand was created < 5 seconds ago
+                    // Edge Function will handle initial assignment server-side
+                    const fiveSecondsAgo = new Date(now.getTime() - 5000);
+                    const createdAt = errand.created_at ? new Date(errand.created_at) : null;
+                    if (createdAt && createdAt > fiveSecondsAgo) {
+                        console.log(`⏳ [ERRAND RANKING] Errand ${errand.id} too new (< 5s), skipping client-side assignment - Edge Function will assign`);
+                        return false; // Let Edge Function handle initial assignment
+                    }
                     
                     const callerName = namesById[errand.buddycaller_id || ""] || "BuddyCaller";
                     const callerShortId = (errand.buddycaller_id || "").substring(0, 8);
@@ -1698,11 +1707,12 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                     // STEP 9B: Reassign to next runner with timeout tracking
                     
                     const previousNotifiedRunnerId = errand.notified_runner_id;
+                    const assignedAt = new Date().toISOString();
                     
                     await updateErrandNotification(
                         errand.id,
                         nextRunner.id,
-                        new Date().toISOString(),
+                        assignedAt,
                         previousNotifiedRunnerId
                     );
                     
@@ -2147,6 +2157,15 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                 
                 // If no runner has been notified yet, find and assign top-ranked runner
                 if (!commission.notified_runner_id) {
+                    // GUARD: Skip initial assignment if commission was created < 5 seconds ago
+                    // Edge Function will handle initial assignment server-side
+                    const fiveSecondsAgo = new Date(now.getTime() - 5000);
+                    const createdAt = commission.created_at ? new Date(commission.created_at) : null;
+                    if (createdAt && createdAt > fiveSecondsAgo) {
+                        console.log(`⏳ [RANKING] Commission ${commission.id} too new (< 5s), skipping client-side assignment - Edge Function will assign`);
+                        return false; // Let Edge Function handle initial assignment
+                    }
+                    
                     // STEP 1: Task detected
                     const callerName = commissionCallerNamesById[commission.buddycaller_id || ""] || "BuddyCaller";
                     const callerShortId = (commission.buddycaller_id || "").substring(0, 8);
@@ -2611,10 +2630,11 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                     const previousNotifiedRunnerId = commission.notified_runner_id;
                     
                     // Assign to next-ranked runner using RPC (bypasses RLS)
+                    const assignedAt = new Date().toISOString();
                     const { error: updateError } = await supabase.rpc('update_commission_notification', {
                         p_commission_id: commission.id,
                         p_notified_runner_id: nextRunner.id,
-                        p_notified_at: new Date().toISOString(),
+                        p_notified_at: assignedAt,
                         p_previous_notified_runner_id: previousNotifiedRunnerId
                     });
                     
@@ -3208,8 +3228,8 @@ function HomeWeb() {
     const [, setSignedOut] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
 
-    // Notification state
-    const [newCommissionCount, setNewCommissionCount] = useState(0);
+    // Global notification badge
+    const { unreadCount, incrementUnread, clearUnread } = useNotificationBadge();
 
     // Location prompt modal state
     const [locationPromptVisible, setLocationPromptVisible] = useState(false);
@@ -3780,7 +3800,7 @@ function HomeWeb() {
                             }
 
                             if (__DEV__) console.log('✅ [Web Real-time] Runner is online and within 500m, showing notification');
-                            setNewCommissionCount(prev => prev + 1);
+                            incrementUnread();
                         } else {
                             if (__DEV__) console.log('❌ [Web Real-time] Caller has no location, not showing notification');
                         }
@@ -3789,12 +3809,117 @@ function HomeWeb() {
                     }
                 }
             )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'errand',
+                    filter: 'status=eq.pending'
+                },
+                async (payload) => {
+                    console.log('New errand detected on home screen:', payload);
+                    
+                    // Check if runner is online and within distance before showing notification
+                    try {
+                        const { data: { user } } = await supabase.auth.getUser();
+                        if (!user) return;
+
+                        const errand = payload.new as any;
+
+                        const { data: runnerData } = await supabase
+                            .from("users")
+                            .select("is_available, latitude, longitude")
+                            .eq("id", user.id)
+                            .single();
+
+                        // Only increment notification count if runner is online (available)
+                        if (!runnerData?.is_available) {
+                            console.log('Runner is offline, not showing errand notification');
+                            return;
+                        }
+
+                        // Use device's current GPS location for filtering (not database location)
+                        if (__DEV__) console.log('🔄 [Web Real-time] Getting device current GPS location for errand notification check...');
+                        let runnerLat: number;
+                        let runnerLon: number;
+                        let locationSource: 'gps' | 'database' = 'gps';
+
+                        try {
+                            const locationResult = await LocationService.getCurrentLocation();
+                            
+                            if (locationResult.success && locationResult.location) {
+                                runnerLat = locationResult.location.latitude;
+                                runnerLon = locationResult.location.longitude;
+                                locationSource = 'gps';
+                                if (__DEV__) {
+                                    console.log('✅ [Web Real-time] Device current GPS location obtained for errand:', { 
+                                        lat: runnerLat, 
+                                        lon: runnerLon,
+                                        accuracy: locationResult.location.accuracy,
+                                        runnerId: user.id,
+                                        source: locationSource
+                                    });
+                                }
+                            } else {
+                                throw new Error(locationResult.error || 'Failed to get GPS location');
+                            }
+                        } catch (error) {
+                            if (__DEV__) console.warn('⚠️ [Web Real-time] Failed to get device current GPS location, falling back to database location:', error);
+                            
+                            // Fallback to database location if GPS fails
+                            const dbLat = typeof runnerData?.latitude === 'number' ? runnerData.latitude : parseFloat(String(runnerData?.latitude || ''));
+                            const dbLon = typeof runnerData?.longitude === 'number' ? runnerData.longitude : parseFloat(String(runnerData?.longitude || ''));
+                            
+                            if (!dbLat || !dbLon || isNaN(dbLat) || isNaN(dbLon)) {
+                                if (__DEV__) console.log('❌ [Web Real-time] Database location also invalid, not showing errand notification');
+                                return;
+                            }
+                            
+                            runnerLat = dbLat;
+                            runnerLon = dbLon;
+                            locationSource = 'database';
+                        }
+
+                        // Check distance (500 meters = 0.5 km)
+                        const { data: callerData } = await supabase
+                            .from("users")
+                            .select("latitude, longitude")
+                            .eq("id", errand.buddycaller_id)
+                            .single();
+
+                        if (callerData?.latitude && callerData?.longitude) {
+                            const distanceKm = LocationService.calculateDistance(
+                                runnerLat,
+                                runnerLon,
+                                callerData.latitude,
+                                callerData.longitude
+                            );
+                            const distanceMeters = distanceKm * 1000;
+
+                            if (__DEV__) console.log(`📍 [Web Real-time] Errand ${errand.id} distance check: ${distanceMeters.toFixed(2)}m [runner source: ${locationSource}]`);
+
+                            if (distanceMeters > 500) {
+                                if (__DEV__) console.log(`❌ [Web Real-time] Skipping notification for errand ${errand.id} - distance: ${distanceMeters.toFixed(2)}m (exceeds 500m)`);
+                                return;
+                            }
+
+                            if (__DEV__) console.log('✅ [Web Real-time] Runner is online and within 500m, showing errand notification');
+                            incrementUnread();
+                        } else {
+                            if (__DEV__) console.log('❌ [Web Real-time] Caller has no location, not showing errand notification');
+                        }
+                    } catch (error) {
+                        console.error('Error checking runner availability for errand notification:', error);
+                    }
+                }
+            )
             .subscribe();
 
         return () => {
             supabase.removeChannel(channel);
         };
-    }, []);
+    }, [incrementUnread]);
 
     const goToAcceptedTasks = () => {
         const type = activeTab === "Commissions" ? "commissions" : "errands";
@@ -3984,17 +4109,16 @@ function HomeWeb() {
                         </Text>
                         <TouchableOpacity
                             onPress={() => {
-                                setNewCommissionCount(0); // Clear notification count when viewed
                                 router.push("/buddyrunner/notification");
                             }}
                             style={web.notificationIcon}
                             activeOpacity={0.7}
                         >
                             <Ionicons name="notifications-outline" size={24} color={colors.text} />
-                            {newCommissionCount > 0 && (
+                            {unreadCount > 0 && (
                                 <View style={web.notificationBadge}>
                                     <Text style={web.notificationBadgeText}>
-                                        {newCommissionCount > 99 ? '99+' : newCommissionCount}
+                                        {unreadCount > 99 ? '99+' : unreadCount}
                                     </Text>
                                 </View>
                             )}
@@ -4639,9 +4763,8 @@ function HomeMobile() {
     const [availableMode, setAvailableMode] = useState<boolean>(false);
     const [availabilityLoading, setAvailabilityLoading] = useState<boolean>(true);
 
-    // Notification state
-    const [newCommissionCount, setNewCommissionCount] = useState(0);
-    const notificationCountRef = useRef(0);
+    // Global notification badge
+    const { unreadCount, incrementUnread, clearUnread } = useNotificationBadge();
     
     // Location prompt modal state
     const [locationPromptVisible, setLocationPromptVisible] = useState(false);
@@ -4753,10 +4876,6 @@ function HomeMobile() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [width]);
 
-    // Sync ref with state whenever state changes
-    React.useEffect(() => {
-        notificationCountRef.current = newCommissionCount;
-    }, [newCommissionCount]);
 
     // Function to toggle availability and save to database
     const toggleAvailability = async (newStatus: boolean) => {
@@ -5382,22 +5501,149 @@ function HomeMobile() {
                                     // Only increment notification count if runner is online, has location, within 500m, and component is mounted
                                     if (mounted) {
                                         if (__DEV__) console.log('✅ Runner is online and within 500m, incrementing notification count');
-                                    // Update state using functional form to ensure it always gets latest value
-                                    setNewCommissionCount(currentCount => {
-                                        const updatedCount = currentCount + 1;
-                                        notificationCountRef.current = updatedCount;
-                                        if (__DEV__) {
-                                            console.log(`📱 Mobile notification count: ${currentCount} -> ${updatedCount}`);
-                                            console.log(`📱 Notification badge should now show: ${updatedCount}`);
-                                        }
-                                        return updatedCount;
-                                    });
+                                        incrementUnread();
                                     }
                                 } else {
                                     if (__DEV__) console.log('❌ Caller has no location, not showing notification');
                                 }
                             } catch (error) {
                                 console.error('❌ Error checking runner availability for notification:', error);
+                            }
+                        }
+                    )
+                    .on(
+                        'postgres_changes',
+                        {
+                            event: 'INSERT',
+                            schema: 'public',
+                            table: 'errand',
+                            filter: 'status=eq.pending'
+                        },
+                        async (payload) => {
+                            if (!mounted) {
+                                console.log('Component unmounted, ignoring errand notification');
+                                return;
+                            }
+                            
+                            console.log('🔔 New errand detected on mobile home screen:', {
+                                id: payload.new?.id,
+                                status: payload.new?.status,
+                            });
+                            
+                            // Check if runner is online before showing notification
+                            try {
+                                const { data: { user: currentUser } } = await supabase.auth.getUser();
+                                if (!currentUser || !mounted) {
+                                    console.log('No user or component unmounted');
+                                    return;
+                                }
+
+                                const errand = payload.new;
+                                
+                                // Don't show notification if errand already has a runner assigned
+                                if (errand?.runner_id) {
+                                    console.log('❌ Errand already has a runner, skipping notification');
+                                    return;
+                                }
+                                
+                                // Don't show notification if this errand was posted by the current user
+                                if (errand?.buddycaller_id === currentUser.id) {
+                                    console.log('❌ Errand was posted by current user, skipping notification');
+                                    return;
+                                }
+
+                                // Check if runner is online (available) and has location
+                                const { data: runnerData, error: runnerError } = await supabase
+                                    .from("users")
+                                    .select("is_available, latitude, longitude")
+                                    .eq("id", currentUser.id)
+                                    .single();
+
+                                if (runnerError) {
+                                    console.error('❌ Error checking runner availability:', runnerError);
+                                    return;
+                                }
+
+                                if (!runnerData?.is_available) {
+                                    console.log('❌ Runner is offline, not showing errand notification');
+                                    return;
+                                }
+
+                                // Use device's current GPS location for filtering
+                                if (__DEV__) console.log('🔄 [Mobile Real-time] Getting device current GPS location for errand notification check...');
+                                let runnerLat: number;
+                                let runnerLon: number;
+                                let locationSource: 'gps' | 'database' = 'gps';
+
+                                try {
+                                    const locationResult = await LocationService.getCurrentLocation();
+                                    
+                                    if (locationResult.success && locationResult.location) {
+                                        runnerLat = locationResult.location.latitude;
+                                        runnerLon = locationResult.location.longitude;
+                                        locationSource = 'gps';
+                                        if (__DEV__) {
+                                            console.log('✅ [Mobile Real-time] Device current GPS location obtained for errand:', { 
+                                                lat: runnerLat, 
+                                                lon: runnerLon,
+                                                accuracy: locationResult.location.accuracy,
+                                                runnerId: currentUser.id,
+                                                source: locationSource
+                                            });
+                                        }
+                                    } else {
+                                        throw new Error(locationResult.error || 'Failed to get GPS location');
+                                    }
+                                } catch (error) {
+                                    if (__DEV__) console.warn('⚠️ [Mobile Real-time] Failed to get device current GPS location, falling back to database location:', error);
+                                    
+                                    // Fallback to database location if GPS fails
+                                    const dbLat = typeof runnerData?.latitude === 'number' ? runnerData.latitude : parseFloat(String(runnerData?.latitude || ''));
+                                    const dbLon = typeof runnerData?.longitude === 'number' ? runnerData.longitude : parseFloat(String(runnerData?.longitude || ''));
+                                    
+                                    if (!dbLat || !dbLon || isNaN(dbLat) || isNaN(dbLon)) {
+                                        if (__DEV__) console.log('❌ [Mobile Real-time] Database location also invalid, not showing errand notification');
+                                        return;
+                                    }
+                                    
+                                    runnerLat = dbLat;
+                                    runnerLon = dbLon;
+                                    locationSource = 'database';
+                                }
+
+                                // Check distance (500 meters = 0.5 km)
+                                const { data: callerData } = await supabase
+                                    .from("users")
+                                    .select("latitude, longitude")
+                                    .eq("id", errand.buddycaller_id)
+                                    .single();
+
+                                if (callerData?.latitude && callerData?.longitude) {
+                                    const distanceKm = LocationService.calculateDistance(
+                                        runnerLat,
+                                        runnerLon,
+                                        callerData.latitude,
+                                        callerData.longitude
+                                    );
+                                    const distanceMeters = distanceKm * 1000;
+
+                                    if (__DEV__) console.log(`📍 [Mobile Real-time] Errand ${errand.id} distance check: ${distanceMeters.toFixed(2)}m [runner source: ${locationSource}]`);
+
+                                    if (distanceMeters > 500) {
+                                        if (__DEV__) console.log(`❌ [Mobile Real-time] Skipping notification for errand ${errand.id} - distance: ${distanceMeters.toFixed(2)}m (exceeds 500m)`);
+                                        return;
+                                    }
+
+                                    // Only increment notification count if runner is online, has location, within 500m, and component is mounted
+                                    if (mounted) {
+                                        if (__DEV__) console.log('✅ Runner is online and within 500m, incrementing errand notification count');
+                                        incrementUnread();
+                                    }
+                                } else {
+                                    if (__DEV__) console.log('❌ Caller has no location, not showing errand notification');
+                                }
+                            } catch (error) {
+                                console.error('❌ Error checking runner availability for errand notification:', error);
                             }
                         }
                     )
@@ -5624,18 +5870,16 @@ function HomeMobile() {
                     </View>
                     <TouchableOpacity
                         onPress={() => {
-                            notificationCountRef.current = 0;
-                            setNewCommissionCount(0); // Clear notification count when viewed
                             router.push("/buddyrunner/notification");
                         }}
                         activeOpacity={0.9}
                         style={{ position: "relative" }}
                     >
                         <Ionicons name="notifications-outline" size={24} color={colors.text} />
-                        {newCommissionCount > 0 && (
+                        {unreadCount > 0 && (
                             <View style={m.notificationBadge}>
                                 <Text style={m.notificationBadgeText}>
-                                    {newCommissionCount > 99 ? '99+' : newCommissionCount}
+                                    {unreadCount > 99 ? '99+' : unreadCount}
                                 </Text>
                             </View>
                         )}

@@ -113,6 +113,19 @@ async function createCommission(input: {
         .single();
 
     if (error) throw error;
+
+    // Call Edge Function to assign top runner and notify
+    if (data?.id) {
+        try {
+            await supabase.functions.invoke('assign-and-notify-commission', {
+                body: { commission_id: data.id },
+            });
+        } catch (edgeError) {
+            console.error('Failed to assign and notify commission:', edgeError);
+            // Don't throw - commission was created successfully
+        }
+    }
+
     return data;
 }
 

@@ -179,6 +179,9 @@ function NotificationMobile() {
     const [notifications, setNotifications] = useState<Notif[]>([]);
     const [loading, setLoading] = useState(true);
 
+    // Deduplication: Track processed commission IDs to prevent duplicate notifications
+    const processedCommissionIds = React.useRef<Set<number>>(new Set());
+
     // Debug notifications state changes
     React.useEffect(() => {
         console.log('Mobile notifications state updated:', notifications);
@@ -406,144 +409,34 @@ function NotificationMobile() {
                             return false;
                         }
                         
-                        // Apply ranking filter: only show if current runner is the notified runner or eligible after timeout
-                        // If no commission type, show to all eligible runners (no ranking)
+                        // READ-ONLY: Only show if assigned to current runner
+                        // Notification screen must NEVER assign runners (Edge Function handles assignment)
+                        // If no commission type, still check assignment (Edge Function will assign)
                         if (!commission.commission_type || commission.commission_type.trim() === '') {
-                            console.log(`📊 [Notification Ranking] Commission ${commission.id} has no category/type, showing to all eligible runners`);
-                        return true;
+                            // No type means Edge Function may assign to any eligible runner
+                            // Only show if assigned to current runner
+                            if (commission.notified_runner_id === currentUser.id) {
+                                console.log(`✅ [Notification] Commission ${commission.id} (no type): Assigned to current runner`);
+                                return true;
+                            }
+                            return false;
                         }
                         
                         // Check if current runner is the notified runner
                         if (commission.notified_runner_id === currentUser.id) {
-                            console.log(`✅ [Notification Ranking] Commission ${commission.id}: Current runner is the notified runner`);
+                            console.log(`✅ [Notification] Commission ${commission.id}: Current runner is the notified runner`);
                             return true;
                         }
                         
-                        // If no runner has been notified yet, perform ranking and assign to top runner
+                        // If not assigned yet, wait for Edge Function assignment
                         if (!commission.notified_runner_id) {
-                            console.log(`🔍 [Notification Ranking] Commission ${commission.id}: Finding top-ranked runner...`);
-                            
-                            // Get caller location for distance calculation
-                            const callerLocation = callerLocationMap[commission.buddycaller_id || ""];
-                            if (!callerLocation) {
-                                console.log(`❌ [Notification Ranking] Commission ${commission.id}: Caller has no location, cannot rank runners`);
-                                return false;
-                            }
-                            
-                            // Parse commission types
-                            const commissionTypes = commission.commission_type 
-                                ? commission.commission_type.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
-                                : [];
-                            
-                            // Helper function to get runner's completed commissions count
-                            const getRunnerCompletedCount = async (runnerId: string, types: string[]): Promise<number> => {
-                                if (!types || types.length === 0) return 0;
-                                try {
-                                    const { data, error } = await supabase
-                                        .from("commission")
-                                        .select("id, commission_type")
-                                        .eq("runner_id", runnerId)
-                                        .eq("status", "completed");
-                                    if (error) return 0;
-                                    if (!data || data.length === 0) return 0;
-                                    let count = 0;
-                                    data.forEach((c: any) => {
-                                        if (!c.commission_type) return;
-                                        const completedTypes = c.commission_type.split(',').map((t: string) => t.trim());
-                                        const hasMatch = types.some(type => completedTypes.includes(type));
-                                        if (hasMatch) count++;
-                                    });
-                                    return count;
-                                } catch {
-                                    return 0;
-                                }
-                            };
-                            
-                            // Get all available runners
-                            const { data: availableRunners, error: runnersError } = await supabase
-                                .from("users")
-                                .select("id, latitude, longitude")
-                                .eq("role", "BuddyRunner")
-                                .eq("is_available", true);
-                            
-                            if (runnersError || !availableRunners || availableRunners.length === 0) {
-                                console.log(`❌ [Notification Ranking] No available runners found`);
-                                return false;
-                            }
-                            
-                            // Filter runners within 500m and calculate ranks
-                            const eligibleRunners: Array<{ id: string; count: number; distance: number }> = [];
-                            
-                            for (const runner of availableRunners) {
-                                if (!runner.latitude || !runner.longitude) continue;
-                                const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-                                const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-                                if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue;
-                                
-                                const distanceKm = LocationService.calculateDistance(
-                                    lat, lon,
-                                    callerLocation.latitude, callerLocation.longitude
-                                );
-                                const distanceMeters = distanceKm * 1000;
-                                
-                                if (distanceMeters > 500) continue;
-                                
-                                const count = await getRunnerCompletedCount(runner.id, commissionTypes);
-                                eligibleRunners.push({ id: runner.id, count, distance: distanceMeters });
-                            }
-                            
-                            if (eligibleRunners.length === 0) {
-                                console.log(`❌ [Notification Ranking] No eligible runners within range`);
-                                return false;
-                            }
-                            
-                            // Sort by count (descending), then distance (ascending)
-                            eligibleRunners.sort((a, b) => {
-                                if (b.count !== a.count) return b.count - a.count;
-                                return a.distance - b.distance;
-                            });
-                            
-                            const topRunner = eligibleRunners[0];
-                            console.log(`🏆 [Notification Ranking] Top-ranked runner: ${topRunner.id} with ${topRunner.count} completed commissions`);
-                            
-                            // Assign to top-ranked runner
-                            const { error: updateError } = await supabase.rpc('update_commission_notification', {
-                                p_commission_id: commission.id,
-                                p_notified_runner_id: topRunner.id,
-                                p_notified_at: new Date().toISOString()
-                            });
-                            
-                            if (updateError) {
-                                console.error(`❌ [Notification Ranking] Failed to update notified_runner_id for commission ${commission.id}:`, updateError);
-                            } else {
-                                console.log(`✅ [Notification Ranking] Successfully updated notified_runner_id for commission ${commission.id} to runner ${topRunner.id}`);
-                            }
-                            
-                            // Only show if current runner is the top-ranked runner
-                            if (topRunner.id === currentUser.id) {
-                                console.log(`✅ [Notification Ranking] Commission ${commission.id}: Assigned to current runner ${currentUser.id} (top-ranked)`);
-                                return true;
-                            } else {
-                                console.log(`❌ [Notification Ranking] Commission ${commission.id}: Assigned to runner ${topRunner.id}, not current runner`);
-                                return false;
-                            }
-                        }
-                        
-                        // Check if 60 seconds have passed since notification
-                        const now = new Date();
-                        const notifiedAt = commission.notified_at ? new Date(commission.notified_at) : null;
-                        const sixtySecondsAgo = new Date(now.getTime() - 60000);
-                        
-                        if (notifiedAt && notifiedAt < sixtySecondsAgo) {
-                            // 60 seconds passed, current runner might be eligible (ranking will be handled by commission filtering on next refresh)
-                            console.log(`⏰ [Notification Ranking] Commission ${commission.id}: 60 seconds passed, current runner may be eligible`);
-                            // Still return false here - let the commission filtering logic handle the reassignment
-                            return false;
-                        } else {
-                            // Not yet 60 seconds, don't show to current runner
-                            console.log(`⏳ [Notification Ranking] Commission ${commission.id}: Assigned to runner ${commission.notified_runner_id}, waiting for 60 seconds timeout...`);
+                            console.log(`⏳ [Notification] Commission ${commission.id}: Not yet assigned, waiting for Edge Function`);
                             return false;
                         }
+                        
+                        // Assigned to different runner
+                        console.log(`❌ [Notification] Commission ${commission.id}: Assigned to different runner (${commission.notified_runner_id})`);
+                        return false;
                     };
                     
                     // Apply async filter using Promise.all
@@ -629,10 +522,23 @@ function NotificationMobile() {
                         return;
                     }
 
+                    // GUARD: Only process if assigned to current runner (Edge Function already assigned)
+                    // If not assigned yet, wait for Edge Function assignment
+                    if (!commission.notified_runner_id) {
+                        console.log(`Commission ${commission.id} not yet assigned, waiting for Edge Function assignment`);
+                        return;
+                    }
+
                     // Get current user to check if they were declined and if they're online
                     const { data: { user: currentUser } } = await supabase.auth.getUser();
                     if (!currentUser) {
                         console.error('No authenticated user found for real-time notification');
+                        return;
+                    }
+
+                    // GUARD: Only show if assigned to current runner
+                    if (commission.notified_runner_id !== currentUser.id) {
+                        console.log(`Commission ${commission.id} assigned to different runner (${commission.notified_runner_id}), skipping notification`);
                         return;
                     }
 
@@ -689,6 +595,13 @@ function NotificationMobile() {
                         console.log(`Skipping notification for commission ${commission.id} - caller has no location`);
                         return;
                     }
+
+                    // Deduplication: Skip if already processed
+                    if (processedCommissionIds.current.has(commission.id)) {
+                        console.log(`Commission ${commission.id} already processed, skipping duplicate notification`);
+                        return;
+                    }
+                    processedCommissionIds.current.add(commission.id);
 
                     const callerName = callerData
                         ? `${callerData.first_name || ''} ${callerData.last_name || ''}`.trim() || 'BuddyCaller'
@@ -1064,6 +977,9 @@ function NotificationWebInstant() {
     const [notifications, setNotifications] = useState<Notif[]>([]);
     const [loading, setLoading] = useState(true);
 
+    // Deduplication: Track processed commission IDs to prevent duplicate notifications
+    const processedCommissionIds = React.useRef<Set<number>>(new Set());
+
     // Logout flow: confirm -> sign out -> success -> /login
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [successOpen, setSuccessOpen] = useState(false);
@@ -1316,144 +1232,34 @@ function NotificationWebInstant() {
                             return false;
                         }
                         
-                        // Apply ranking filter: only show if current runner is the notified runner or eligible after timeout
-                        // If no commission type, show to all eligible runners (no ranking)
+                        // READ-ONLY: Only show if assigned to current runner
+                        // Notification screen must NEVER assign runners (Edge Function handles assignment)
+                        // If no commission type, still check assignment (Edge Function will assign)
                         if (!commission.commission_type || commission.commission_type.trim() === '') {
-                            console.log(`📊 [Notification Ranking] Commission ${commission.id} has no category/type, showing to all eligible runners`);
-                        return true;
+                            // No type means Edge Function may assign to any eligible runner
+                            // Only show if assigned to current runner
+                            if (commission.notified_runner_id === currentUser.id) {
+                                console.log(`✅ [Notification] Commission ${commission.id} (no type): Assigned to current runner`);
+                                return true;
+                            }
+                            return false;
                         }
                         
                         // Check if current runner is the notified runner
                         if (commission.notified_runner_id === currentUser.id) {
-                            console.log(`✅ [Notification Ranking] Commission ${commission.id}: Current runner is the notified runner`);
+                            console.log(`✅ [Notification] Commission ${commission.id}: Current runner is the notified runner`);
                             return true;
                         }
                         
-                        // If no runner has been notified yet, perform ranking and assign to top runner
+                        // If not assigned yet, wait for Edge Function assignment
                         if (!commission.notified_runner_id) {
-                            console.log(`🔍 [Notification Ranking] Commission ${commission.id}: Finding top-ranked runner...`);
-                            
-                            // Get caller location for distance calculation
-                            const callerLocation = callerLocationMap[commission.buddycaller_id || ""];
-                            if (!callerLocation) {
-                                console.log(`❌ [Notification Ranking] Commission ${commission.id}: Caller has no location, cannot rank runners`);
-                                return false;
-                            }
-                            
-                            // Parse commission types
-                            const commissionTypes = commission.commission_type 
-                                ? commission.commission_type.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
-                                : [];
-                            
-                            // Helper function to get runner's completed commissions count
-                            const getRunnerCompletedCount = async (runnerId: string, types: string[]): Promise<number> => {
-                                if (!types || types.length === 0) return 0;
-                                try {
-                                    const { data, error } = await supabase
-                                        .from("commission")
-                                        .select("id, commission_type")
-                                        .eq("runner_id", runnerId)
-                                        .eq("status", "completed");
-                                    if (error) return 0;
-                                    if (!data || data.length === 0) return 0;
-                                    let count = 0;
-                                    data.forEach((c: any) => {
-                                        if (!c.commission_type) return;
-                                        const completedTypes = c.commission_type.split(',').map((t: string) => t.trim());
-                                        const hasMatch = types.some(type => completedTypes.includes(type));
-                                        if (hasMatch) count++;
-                                    });
-                                    return count;
-                                } catch {
-                                    return 0;
-                                }
-                            };
-                            
-                            // Get all available runners
-                            const { data: availableRunners, error: runnersError } = await supabase
-                                .from("users")
-                                .select("id, latitude, longitude")
-                                .eq("role", "BuddyRunner")
-                                .eq("is_available", true);
-                            
-                            if (runnersError || !availableRunners || availableRunners.length === 0) {
-                                console.log(`❌ [Notification Ranking] No available runners found`);
-                                return false;
-                            }
-                            
-                            // Filter runners within 500m and calculate ranks
-                            const eligibleRunners: Array<{ id: string; count: number; distance: number }> = [];
-                            
-                            for (const runner of availableRunners) {
-                                if (!runner.latitude || !runner.longitude) continue;
-                                const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-                                const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-                                if (!lat || !lon || isNaN(lat) || isNaN(lon)) continue;
-                                
-                                const distanceKm = LocationService.calculateDistance(
-                                    lat, lon,
-                                    callerLocation.latitude, callerLocation.longitude
-                                );
-                                const distanceMeters = distanceKm * 1000;
-                                
-                                if (distanceMeters > 500) continue;
-                                
-                                const count = await getRunnerCompletedCount(runner.id, commissionTypes);
-                                eligibleRunners.push({ id: runner.id, count, distance: distanceMeters });
-                            }
-                            
-                            if (eligibleRunners.length === 0) {
-                                console.log(`❌ [Notification Ranking] No eligible runners within range`);
-                                return false;
-                            }
-                            
-                            // Sort by count (descending), then distance (ascending)
-                            eligibleRunners.sort((a, b) => {
-                                if (b.count !== a.count) return b.count - a.count;
-                                return a.distance - b.distance;
-                            });
-                            
-                            const topRunner = eligibleRunners[0];
-                            console.log(`🏆 [Notification Ranking] Top-ranked runner: ${topRunner.id} with ${topRunner.count} completed commissions`);
-                            
-                            // Assign to top-ranked runner
-                            const { error: updateError } = await supabase.rpc('update_commission_notification', {
-                                p_commission_id: commission.id,
-                                p_notified_runner_id: topRunner.id,
-                                p_notified_at: new Date().toISOString()
-                            });
-                            
-                            if (updateError) {
-                                console.error(`❌ [Notification Ranking] Failed to update notified_runner_id for commission ${commission.id}:`, updateError);
-                            } else {
-                                console.log(`✅ [Notification Ranking] Successfully updated notified_runner_id for commission ${commission.id} to runner ${topRunner.id}`);
-                            }
-                            
-                            // Only show if current runner is the top-ranked runner
-                            if (topRunner.id === currentUser.id) {
-                                console.log(`✅ [Notification Ranking] Commission ${commission.id}: Assigned to current runner ${currentUser.id} (top-ranked)`);
-                                return true;
-                            } else {
-                                console.log(`❌ [Notification Ranking] Commission ${commission.id}: Assigned to runner ${topRunner.id}, not current runner`);
-                                return false;
-                            }
-                        }
-                        
-                        // Check if 60 seconds have passed since notification
-                        const now = new Date();
-                        const notifiedAt = commission.notified_at ? new Date(commission.notified_at) : null;
-                        const sixtySecondsAgo = new Date(now.getTime() - 60000);
-                        
-                        if (notifiedAt && notifiedAt < sixtySecondsAgo) {
-                            // 60 seconds passed, current runner might be eligible (ranking will be handled by commission filtering on next refresh)
-                            console.log(`⏰ [Notification Ranking] Commission ${commission.id}: 60 seconds passed, current runner may be eligible`);
-                            // Still return false here - let the commission filtering logic handle the reassignment
-                            return false;
-                        } else {
-                            // Not yet 60 seconds, don't show to current runner
-                            console.log(`⏳ [Notification Ranking] Commission ${commission.id}: Assigned to runner ${commission.notified_runner_id}, waiting for 60 seconds timeout...`);
+                            console.log(`⏳ [Notification] Commission ${commission.id}: Not yet assigned, waiting for Edge Function`);
                             return false;
                         }
+                        
+                        // Assigned to different runner
+                        console.log(`❌ [Notification] Commission ${commission.id}: Assigned to different runner (${commission.notified_runner_id})`);
+                        return false;
                     };
                     
                     // Apply async filter using Promise.all
@@ -1539,10 +1345,23 @@ function NotificationWebInstant() {
                         return;
                     }
 
+                    // GUARD: Only process if assigned to current runner (Edge Function already assigned)
+                    // If not assigned yet, wait for Edge Function assignment
+                    if (!commission.notified_runner_id) {
+                        console.log(`Commission ${commission.id} not yet assigned, waiting for Edge Function assignment`);
+                        return;
+                    }
+
                     // Get current user to check if they were declined and if they're online
                     const { data: { user: currentUser } } = await supabase.auth.getUser();
                     if (!currentUser) {
                         console.error('No authenticated user found for real-time notification');
+                        return;
+                    }
+
+                    // GUARD: Only show if assigned to current runner
+                    if (commission.notified_runner_id !== currentUser.id) {
+                        console.log(`Commission ${commission.id} assigned to different runner (${commission.notified_runner_id}), skipping notification`);
                         return;
                     }
 
@@ -1599,6 +1418,13 @@ function NotificationWebInstant() {
                         console.log(`Skipping notification for commission ${commission.id} (web) - caller has no location`);
                         return;
                     }
+
+                    // Deduplication: Skip if already processed
+                    if (processedCommissionIds.current.has(commission.id)) {
+                        console.log(`Commission ${commission.id} already processed (web), skipping duplicate notification`);
+                        return;
+                    }
+                    processedCommissionIds.current.add(commission.id);
 
                     const callerName = callerData
                         ? `${callerData.first_name || ''} ${callerData.last_name || ''}`.trim() || 'BuddyCaller'

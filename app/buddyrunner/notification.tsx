@@ -17,6 +17,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from "../../lib/supabase";
 import LocationService from "../../components/LocationService";
+import { useNotificationBadge } from "./_layout";
 
 /* ================= COLORS ================= */
 const colors = {
@@ -37,6 +38,7 @@ type Notif = {
     avatar: string;
     created_at?: string;
     commission_id?: string;
+    errand_id?: string;
     caller_name?: string;
 };
 
@@ -60,7 +62,7 @@ function formatNotificationTime(dateString: string): string {
 }
 
 // Helper function to create notification from commission
-function createNotificationFromCommission(commission: any, callerName: string, callerAvatar?: string): Notif {
+export function createNotificationFromCommission(commission: any, callerName: string, callerAvatar?: string): Notif {
     return {
         id: commission.id,
         title: commission.title || 'New Commission',
@@ -68,6 +70,19 @@ function createNotificationFromCommission(commission: any, callerName: string, c
         avatar: callerAvatar || 'https://via.placeholder.com/40x40/8B2323/FFFFFF?text=BC',
         created_at: commission.created_at,
         commission_id: commission.id,
+        caller_name: callerName,
+    };
+}
+
+// Helper function to create notification from errand
+export function createNotificationFromErrand(errand: any, callerName: string, callerAvatar?: string): Notif {
+    return {
+        id: String(errand.id),
+        title: errand.title || 'New Errand',
+        body: `New errand from ${callerName}`,
+        avatar: callerAvatar || 'https://via.placeholder.com/40x40/8B2323/FFFFFF?text=BC',
+        created_at: errand.created_at,
+        errand_id: String(errand.id),
         caller_name: callerName,
     };
 }
@@ -309,20 +324,34 @@ function NotificationMobile() {
                     gpsAccuracy: gpsAccuracy > 0 ? `${gpsAccuracy.toFixed(2)}m` : 'N/A'
                 });
 
-                // Load recent commissions, excluding those where current user was declined
-                const { data: commissions, error } = await supabase
+                // Load pending commissions assigned to this runner (database source of truth)
+                const { data: commissions, error: commissionError } = await supabase
                     .from('commission')
                     .select('id, title, created_at, buddycaller_id, declined_runner_id, commission_type, notified_runner_id, notified_at, timeout_runner_ids')
                     .eq('status', 'pending')
+                    .eq('notified_runner_id', currentUser.id)
                     .order('created_at', { ascending: false })
                     .limit(20);
 
-                if (error) {
-                    console.error('Error loading notifications:', error);
-                    return;
+                if (commissionError) {
+                    console.error('Error loading commissions:', commissionError);
+                }
+
+                // Load pending errands assigned to this runner (database source of truth)
+                const { data: errands, error: errandError } = await supabase
+                    .from('errand')
+                    .select('id, title, created_at, buddycaller_id, notified_runner_id, notified_at, category')
+                    .eq('status', 'pending')
+                    .eq('notified_runner_id', currentUser.id)
+                    .order('created_at', { ascending: false })
+                    .limit(20);
+
+                if (errandError) {
+                    console.error('Error loading errands:', errandError);
                 }
 
                 console.log('Commissions loaded:', commissions);
+                console.log('Errands loaded:', errands);
 
                 // Load warning notifications from the notifications table
                 const { data: warningNotifications, error: warningError } = await supabase
@@ -341,112 +370,48 @@ function NotificationMobile() {
 
                 let allNotifications: Notif[] = [];
 
-                // Process commission notifications
+                // Process commission notifications (already filtered by notified_runner_id in query)
                 if (commissions && commissions.length > 0) {
-                    // Get caller IDs first to fetch locations
+                    // Get caller IDs
                     const callerIds = commissions.map(c => c.buddycaller_id).filter(Boolean);
                     
-                    // Fetch caller details and locations
-                    const { data: callers, error: callerError } = await supabase
+                    // Fetch caller details
+                    const { data: callers } = await supabase
                         .from('users')
-                        .select('id, first_name, last_name, profile_picture_url, latitude, longitude')
+                        .select('id, first_name, last_name, profile_picture_url')
                         .in('id', callerIds);
 
-                    if (callerError) {
-                        console.error('Error loading callers:', callerError);
-                    }
-
-                    // Create caller location map
-                    const callerLocationMap: Record<string, { latitude: number; longitude: number }> = {};
+                    // Create caller name map
+                    const callerMap: Record<string, { name: string; avatar?: string }> = {};
                     callers?.forEach(caller => {
-                        if (caller.latitude && caller.longitude) {
-                            callerLocationMap[caller.id] = { latitude: caller.latitude, longitude: caller.longitude };
-                        }
+                        const name = `${caller.first_name || ''} ${caller.last_name || ''}`.trim() || 'BuddyCaller';
+                        callerMap[caller.id] = {
+                            name,
+                            avatar: caller.profile_picture_url || undefined
+                        };
                     });
 
-                    // Strict distance limit: 500 meters (no GPS accuracy expansion)
-                    const distanceLimit = 500;
+                    // Convert commissions to notifications
+                    const commissionNotifs = commissions.map((c: any) => {
+                        const callerInfo = callerMap[c.buddycaller_id] || { name: 'BuddyCaller' };
+                        return createNotificationFromCommission(c, callerInfo.name, callerInfo.avatar);
+                    });
 
-                    // Filter out commissions based on distance (500 meters = 0.5 km) and declined status
-                    // Need to use async filter pattern since ranking logic requires async operations
-                    const filterCommission = async (commission: any): Promise<boolean> => {
-                        // Check if current user was declined for this commission
-                        if (commission.declined_runner_id === currentUser.id) {
-                            console.log('Filtering out commission where user was declined:', commission.id);
-                            return false;
-                        }
-                        
-                        // Check distance if caller has location
-                        const callerLocation = callerLocationMap[commission.buddycaller_id || ""];
-                        if (callerLocation) {
-                            const distanceKm = LocationService.calculateDistance(
-                                runnerLat,
-                                runnerLon,
-                                callerLocation.latitude,
-                                callerLocation.longitude
-                            );
-                            const distanceMeters = distanceKm * 1000;
+                    allNotifications = [...allNotifications, ...commissionNotifs];
+                            }
                             
-                            console.log(`\n📍 [Notification] Commission ${commission.id} distance calculation:`);
-                            console.log(`   Runner location: (${runnerLat}, ${runnerLon}) [source: ${locationSource}]`);
-                            if (gpsAccuracy > 0) {
-                                console.log(`   GPS accuracy: ${gpsAccuracy.toFixed(2)}m`);
-                            }
-                            console.log(`   Caller location: (${callerLocation.latitude}, ${callerLocation.longitude})`);
-                            console.log(`   Calculated distance: ${distanceMeters.toFixed(2)}m (${distanceKm.toFixed(4)} km)`);
-                            console.log(`   Distance limit: 500m`);
-                            console.log(`   ${distanceMeters <= 500 ? '✅ WITHIN RANGE' : '❌ EXCEEDS LIMIT'}`);
-                            
-                            if (distanceMeters > 500) {
-                                console.log(`❌ Filtering out commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m exceeds 500m limit`);
-                                return false;
-                                } else {
-                                    console.log(`✅ Commission ${commission.id} is within range: ${distanceMeters.toFixed(2)}m <= 500m`);
-                            }
-                        } else {
-                            // If caller doesn't have location, exclude the commission
-                            console.log(`Filtering out commission ${commission.id} - caller has no location`);
-                            return false;
-                        }
-                        
-                        // READ-ONLY: Only show if assigned to current runner
-                        // Notification screen must NEVER assign runners (Edge Function handles assignment)
-                        // If no commission type, still check assignment (Edge Function will assign)
-                        if (!commission.commission_type || commission.commission_type.trim() === '') {
-                            // No type means Edge Function may assign to any eligible runner
-                            // Only show if assigned to current runner
-                            if (commission.notified_runner_id === currentUser.id) {
-                                console.log(`✅ [Notification] Commission ${commission.id} (no type): Assigned to current runner`);
-                                return true;
-                            }
-                            return false;
-                        }
-                        
-                        // Check if current runner is the notified runner
-                        if (commission.notified_runner_id === currentUser.id) {
-                            console.log(`✅ [Notification] Commission ${commission.id}: Current runner is the notified runner`);
-                            return true;
-                        }
-                        
-                        // If not assigned yet, wait for Edge Function assignment
-                        if (!commission.notified_runner_id) {
-                            console.log(`⏳ [Notification] Commission ${commission.id}: Not yet assigned, waiting for Edge Function`);
-                            return false;
-                        }
-                        
-                        // Assigned to different runner
-                        console.log(`❌ [Notification] Commission ${commission.id}: Assigned to different runner (${commission.notified_runner_id})`);
-                        return false;
-                    };
+                // Process errand notifications (already filtered by notified_runner_id in query)
+                if (errands && errands.length > 0) {
+                    // Get caller IDs
+                    const callerIds = errands.map(e => e.buddycaller_id).filter(Boolean);
                     
-                    // Apply async filter using Promise.all
-                    const filterResults = await Promise.all(commissions.map(filterCommission));
-                    const filteredCommissions = commissions.filter((_, index) => filterResults[index]);
+                    // Fetch caller details
+                    const { data: callers } = await supabase
+                        .from('users')
+                        .select('id, first_name, last_name, profile_picture_url')
+                        .in('id', callerIds);
 
-                    console.log('Filtered commissions (excluding declined, beyond 500m, and ranking):', filteredCommissions);
-
-                    if (filteredCommissions.length > 0) {
-                        // Create caller name map from already fetched callers
+                    // Create caller name map
                             const callerMap: Record<string, { name: string; avatar?: string }> = {};
                             callers?.forEach(caller => {
                                 const name = `${caller.first_name || ''} ${caller.last_name || ''}`.trim() || 'BuddyCaller';
@@ -456,15 +421,13 @@ function NotificationMobile() {
                                 };
                             });
 
-                            // Convert commissions to notifications
-                            const commissionNotifs = filteredCommissions.map((c: any) => {
-                                const callerInfo = callerMap[c.buddycaller_id] || { name: 'BuddyCaller' };
-                                console.log('Converting commission to notification:', { commission: c, callerInfo });
-                                return createNotificationFromCommission(c, callerInfo.name, callerInfo.avatar);
+                    // Convert errands to notifications
+                    const errandNotifs = errands.map((e: any) => {
+                        const callerInfo = callerMap[e.buddycaller_id] || { name: 'BuddyCaller' };
+                        return createNotificationFromErrand(e, callerInfo.name, callerInfo.avatar);
                             });
 
-                            allNotifications = [...allNotifications, ...commissionNotifs];
-                    }
+                    allNotifications = [...allNotifications, ...errandNotifs];
                 }
 
                 // Process warning notifications
@@ -643,10 +606,60 @@ function NotificationMobile() {
         };
     }, [loadNotifications]);
 
+    // Clear badge when notification screen is focused
+    const { clearUnread } = useNotificationBadge();
+    
+    // Listen for commission and errand notification broadcasts from Edge Function
+    React.useEffect(() => {
+        const handleCommissionNotification = (event: any) => {
+            const notif = event.detail;
+            console.log('Mobile: Received commission notification from broadcast:', notif);
+            // Deduplication check
+            if (notif.commission_id && processedCommissionIds.current.has(Number(notif.commission_id))) {
+                console.log(`Commission ${notif.commission_id} already processed, skipping duplicate`);
+                return;
+            }
+            if (notif.commission_id) {
+                processedCommissionIds.current.add(Number(notif.commission_id));
+            }
+            // Add notification to state immediately
+            setNotifications(prev => [notif, ...prev]);
+        };
+
+        const handleErrandNotification = (event: any) => {
+            const notif = event.detail;
+            console.log('Mobile: Received errand notification from broadcast:', notif);
+            // Deduplication check
+            if (notif.errand_id && processedCommissionIds.current.has(Number(notif.errand_id))) {
+                console.log(`Errand ${notif.errand_id} already processed, skipping duplicate`);
+                return;
+            }
+            if (notif.errand_id) {
+                processedCommissionIds.current.add(Number(notif.errand_id));
+            }
+            // Add notification to state immediately
+            setNotifications(prev => [notif, ...prev]);
+        };
+
+        if (Platform.OS === 'web') {
+            window.addEventListener('commission_notification_received', handleCommissionNotification);
+            window.addEventListener('errand_notification_received', handleErrandNotification);
+        }
+
+        return () => {
+            if (Platform.OS === 'web') {
+                window.removeEventListener('commission_notification_received', handleCommissionNotification);
+                window.removeEventListener('errand_notification_received', handleErrandNotification);
+            }
+        };
+    }, []);
+
     // Refresh notifications when screen comes into focus
     useFocusEffect(
         React.useCallback(() => {
             console.log('Mobile notification screen focused, refreshing notifications');
+            // Clear badge when screen is opened
+            clearUnread();
             // Reload notifications to ensure only pending commissions are shown
             const refreshNotifications = async () => {
                 try {
@@ -670,39 +683,38 @@ function NotificationMobile() {
                         return;
                     }
 
-                    const { data: commissions, error } = await supabase
+                    // Load pending commissions assigned to this runner (database source of truth)
+                    const { data: commissions, error: commissionError } = await supabase
                         .from('commission')
                         .select('id, title, created_at, buddycaller_id, declined_runner_id, commission_type, notified_runner_id, notified_at')
                         .eq('status', 'pending')
+                        .eq('notified_runner_id', currentUser.id)
                         .order('created_at', { ascending: false })
                         .limit(20);
 
-                    if (error) {
-                        console.error('Error refreshing notifications:', error);
-                        return;
+                    // Load pending errands assigned to this runner (database source of truth)
+                    const { data: errands, error: errandError } = await supabase
+                        .from('errand')
+                        .select('id, title, created_at, buddycaller_id, notified_runner_id, notified_at, category')
+                        .eq('status', 'pending')
+                        .eq('notified_runner_id', currentUser.id)
+                        .order('created_at', { ascending: false })
+                        .limit(20);
+
+                    if (commissionError || errandError) {
+                        console.error('Error refreshing notifications:', commissionError || errandError);
                     }
 
-                    if (!commissions || commissions.length === 0) {
-                        setNotifications([]);
-                        return;
-                    }
+                    // Get all caller IDs
+                    const commissionCallerIds = (commissions || []).map(c => c.buddycaller_id).filter(Boolean);
+                    const errandCallerIds = (errands || []).map(e => e.buddycaller_id).filter(Boolean);
+                    const allCallerIds = [...new Set([...commissionCallerIds, ...errandCallerIds])];
 
-                    // Filter out commissions where current user was declined
-                    const filteredCommissions = commissions.filter(commission => {
-                        return commission.declined_runner_id !== currentUser.id;
-                    });
-
-                    if (filteredCommissions.length === 0) {
-                        setNotifications([]);
-                        return;
-                    }
-
-                    // Get caller details
-                    const callerIds = filteredCommissions.map(c => c.buddycaller_id).filter(Boolean);
+                    // Fetch caller details
                     const { data: callers } = await supabase
                         .from('users')
                         .select('id, first_name, last_name, profile_picture_url')
-                        .in('id', callerIds);
+                        .in('id', allCallerIds);
 
                     const callerMap: Record<string, { name: string; avatar?: string }> = {};
                     callers?.forEach(caller => {
@@ -714,12 +726,26 @@ function NotificationMobile() {
                     });
 
                     // Convert commissions to notifications
-                    const notifs = filteredCommissions.map((c: any) => {
+                    const commissionNotifs = (commissions || []).map((c: any) => {
                         const callerInfo = callerMap[c.buddycaller_id] || { name: 'BuddyCaller' };
                         return createNotificationFromCommission(c, callerInfo.name, callerInfo.avatar);
                     });
 
-                    setNotifications(notifs);
+                    // Convert errands to notifications
+                    const errandNotifs = (errands || []).map((e: any) => {
+                        const callerInfo = callerMap[e.buddycaller_id] || { name: 'BuddyCaller' };
+                        return createNotificationFromErrand(e, callerInfo.name, callerInfo.avatar);
+                    });
+
+                    // Merge and sort by newest first
+                    const allNotifs = [...commissionNotifs, ...errandNotifs];
+                    allNotifs.sort((a, b) => {
+                        const dateA = new Date(a.created_at || 0).getTime();
+                        const dateB = new Date(b.created_at || 0).getTime();
+                        return dateB - dateA;
+                    });
+
+                    setNotifications(allNotifs);
                 } catch (error) {
                     console.error('Error refreshing notifications:', error);
                 }
@@ -737,6 +763,9 @@ function NotificationMobile() {
         if (n.commission_id) {
             // Navigate to commission details - use mobile version for mobile
             router.push(`/buddyrunner/view_commission?id=${n.commission_id}`);
+        } else if (n.errand_id) {
+            // Navigate to errand details
+            router.push(`/buddyrunner/view_errand?id=${n.errand_id}`);
         } else {
             // Navigate to messages
             router.push('/buddyrunner/messages');
@@ -787,7 +816,7 @@ function NotificationMobile() {
                     <View style={styles.emptyContainer}>
                         <Ionicons name="notifications-outline" size={64} color={colors.border} />
                         <Text style={styles.emptyTitle}>No notifications</Text>
-                        <Text style={styles.emptySubtitle}>You'll see new commission notifications here</Text>
+                        <Text style={styles.emptySubtitle}>You'll see new commission and errand notifications here</Text>
                     </View>
                 ) : (
                     notifications.map((notification, index) => (
@@ -805,11 +834,17 @@ function NotificationMobile() {
                                 )}
                                 <View style={styles.notificationText}>
                                     <Text style={styles.notificationTitle}>
-                                        {notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_') ? '⚠️ Warning' : 'New Commission'}
+                                        {notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_') 
+                                            ? '⚠️ Warning' 
+                                            : notification.errand_id 
+                                                ? 'New Errand'
+                                                : 'New Commission'}
                                     </Text>
                                     <Text style={styles.notificationBody}>
                                         {notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_') 
                                             ? notification.body 
+                                            : notification.errand_id
+                                                ? `${notification.caller_name || 'BuddyCaller'} posted a new errand.`
                                             : `${notification.caller_name || 'BuddyCaller'} posted a new commission.`
                                         }
                                     </Text>
@@ -1132,17 +1167,30 @@ function NotificationWebInstant() {
                     gpsAccuracy: gpsAccuracy > 0 ? `${gpsAccuracy.toFixed(2)}m` : 'N/A'
                 });
 
-                // Load recent commissions, excluding those where current user was declined
-                const { data: commissions, error } = await supabase
+                // Load pending commissions assigned to this runner (database source of truth)
+                const { data: commissions, error: commissionError } = await supabase
                     .from('commission')
                     .select('id, title, created_at, buddycaller_id, declined_runner_id, commission_type, notified_runner_id, notified_at, timeout_runner_ids')
                     .eq('status', 'pending')
+                    .eq('notified_runner_id', currentUser.id)
                     .order('created_at', { ascending: false })
                     .limit(20);
 
-                if (error) {
-                    console.error('Error loading notifications:', error);
-                    return;
+                if (commissionError) {
+                    console.error('Error loading commissions:', commissionError);
+                }
+
+                // Load pending errands assigned to this runner (database source of truth)
+                const { data: errands, error: errandError } = await supabase
+                    .from('errand')
+                    .select('id, title, created_at, buddycaller_id, notified_runner_id, notified_at, category')
+                    .eq('status', 'pending')
+                    .eq('notified_runner_id', currentUser.id)
+                    .order('created_at', { ascending: false })
+                    .limit(20);
+
+                if (errandError) {
+                    console.error('Error loading errands:', errandError);
                 }
 
                 console.log('Commissions loaded:', commissions);
@@ -1164,112 +1212,48 @@ function NotificationWebInstant() {
 
                 let allNotifications: Notif[] = [];
 
-                // Process commission notifications
+                // Process commission notifications (already filtered by notified_runner_id in query)
                 if (commissions && commissions.length > 0) {
-                    // Get caller IDs first to fetch locations
+                    // Get caller IDs
                     const callerIds = commissions.map(c => c.buddycaller_id).filter(Boolean);
                     
-                    // Fetch caller details and locations
-                    const { data: callers, error: callerError } = await supabase
+                    // Fetch caller details
+                    const { data: callers } = await supabase
                         .from('users')
-                        .select('id, first_name, last_name, profile_picture_url, latitude, longitude')
+                        .select('id, first_name, last_name, profile_picture_url')
                         .in('id', callerIds);
 
-                    if (callerError) {
-                        console.error('Error loading callers:', callerError);
-                    }
-
-                    // Create caller location map
-                    const callerLocationMap: Record<string, { latitude: number; longitude: number }> = {};
+                    // Create caller name map
+                    const callerMap: Record<string, { name: string; avatar?: string }> = {};
                     callers?.forEach(caller => {
-                        if (caller.latitude && caller.longitude) {
-                            callerLocationMap[caller.id] = { latitude: caller.latitude, longitude: caller.longitude };
-                        }
+                        const name = `${caller.first_name || ''} ${caller.last_name || ''}`.trim() || 'BuddyCaller';
+                        callerMap[caller.id] = {
+                            name,
+                            avatar: caller.profile_picture_url || undefined
+                        };
                     });
 
-                    // Strict distance limit: 500 meters (no GPS accuracy expansion)
-                    const distanceLimit = 500;
+                    // Convert commissions to notifications
+                    const commissionNotifs = commissions.map((c: any) => {
+                        const callerInfo = callerMap[c.buddycaller_id] || { name: 'BuddyCaller' };
+                        return createNotificationFromCommission(c, callerInfo.name, callerInfo.avatar);
+                    });
 
-                    // Filter out commissions based on distance (500 meters = 0.5 km) and declined status
-                    // Need to use async filter pattern since ranking logic requires async operations
-                    const filterCommission = async (commission: any): Promise<boolean> => {
-                        // Check if current user was declined for this commission
-                        if (commission.declined_runner_id === currentUser.id) {
-                            console.log('Filtering out commission where user was declined:', commission.id);
-                            return false;
-                        }
-                        
-                        // Check distance if caller has location
-                        const callerLocation = callerLocationMap[commission.buddycaller_id || ""];
-                        if (callerLocation) {
-                            const distanceKm = LocationService.calculateDistance(
-                                runnerLat,
-                                runnerLon,
-                                callerLocation.latitude,
-                                callerLocation.longitude
-                            );
-                            const distanceMeters = distanceKm * 1000;
+                    allNotifications = [...allNotifications, ...commissionNotifs];
+                            }
                             
-                            console.log(`\n📍 [Notification] Commission ${commission.id} distance calculation:`);
-                            console.log(`   Runner location: (${runnerLat}, ${runnerLon}) [source: ${locationSource}]`);
-                            if (gpsAccuracy > 0) {
-                                console.log(`   GPS accuracy: ${gpsAccuracy.toFixed(2)}m`);
-                            }
-                            console.log(`   Caller location: (${callerLocation.latitude}, ${callerLocation.longitude})`);
-                            console.log(`   Calculated distance: ${distanceMeters.toFixed(2)}m (${distanceKm.toFixed(4)} km)`);
-                            console.log(`   Distance limit: 500m`);
-                            console.log(`   ${distanceMeters <= 500 ? '✅ WITHIN RANGE' : '❌ EXCEEDS LIMIT'}`);
-                            
-                            if (distanceMeters > 500) {
-                                console.log(`❌ Filtering out commission ${commission.id} - distance: ${distanceMeters.toFixed(2)}m exceeds 500m limit`);
-                                return false;
-                                } else {
-                                    console.log(`✅ Commission ${commission.id} is within range: ${distanceMeters.toFixed(2)}m <= 500m`);
-                            }
-                        } else {
-                            // If caller doesn't have location, exclude the commission
-                            console.log(`Filtering out commission ${commission.id} - caller has no location`);
-                            return false;
-                        }
-                        
-                        // READ-ONLY: Only show if assigned to current runner
-                        // Notification screen must NEVER assign runners (Edge Function handles assignment)
-                        // If no commission type, still check assignment (Edge Function will assign)
-                        if (!commission.commission_type || commission.commission_type.trim() === '') {
-                            // No type means Edge Function may assign to any eligible runner
-                            // Only show if assigned to current runner
-                            if (commission.notified_runner_id === currentUser.id) {
-                                console.log(`✅ [Notification] Commission ${commission.id} (no type): Assigned to current runner`);
-                                return true;
-                            }
-                            return false;
-                        }
-                        
-                        // Check if current runner is the notified runner
-                        if (commission.notified_runner_id === currentUser.id) {
-                            console.log(`✅ [Notification] Commission ${commission.id}: Current runner is the notified runner`);
-                            return true;
-                        }
-                        
-                        // If not assigned yet, wait for Edge Function assignment
-                        if (!commission.notified_runner_id) {
-                            console.log(`⏳ [Notification] Commission ${commission.id}: Not yet assigned, waiting for Edge Function`);
-                            return false;
-                        }
-                        
-                        // Assigned to different runner
-                        console.log(`❌ [Notification] Commission ${commission.id}: Assigned to different runner (${commission.notified_runner_id})`);
-                        return false;
-                    };
+                // Process errand notifications (already filtered by notified_runner_id in query)
+                if (errands && errands.length > 0) {
+                    // Get caller IDs
+                    const callerIds = errands.map(e => e.buddycaller_id).filter(Boolean);
                     
-                    // Apply async filter using Promise.all
-                    const filterResults = await Promise.all(commissions.map(filterCommission));
-                    const filteredCommissions = commissions.filter((_, index) => filterResults[index]);
+                    // Fetch caller details
+                    const { data: callers } = await supabase
+                        .from('users')
+                        .select('id, first_name, last_name, profile_picture_url')
+                        .in('id', callerIds);
 
-                    console.log('Filtered commissions (excluding declined, beyond 500m, and ranking):', filteredCommissions);
-
-                    if (filteredCommissions.length > 0) {
-                        // Create caller name map from already fetched callers
+                    // Create caller name map
                             const callerMap: Record<string, { name: string; avatar?: string }> = {};
                             callers?.forEach(caller => {
                                 const name = `${caller.first_name || ''} ${caller.last_name || ''}`.trim() || 'BuddyCaller';
@@ -1279,15 +1263,13 @@ function NotificationWebInstant() {
                                 };
                             });
 
-                            // Convert commissions to notifications
-                            const commissionNotifs = filteredCommissions.map((c: any) => {
-                                const callerInfo = callerMap[c.buddycaller_id] || { name: 'BuddyCaller' };
-                                console.log('Converting commission to notification:', { commission: c, callerInfo });
-                                return createNotificationFromCommission(c, callerInfo.name, callerInfo.avatar);
+                    // Convert errands to notifications
+                    const errandNotifs = errands.map((e: any) => {
+                        const callerInfo = callerMap[e.buddycaller_id] || { name: 'BuddyCaller' };
+                        return createNotificationFromErrand(e, callerInfo.name, callerInfo.avatar);
                             });
 
-                            allNotifications = [...allNotifications, ...commissionNotifs];
-                    }
+                    allNotifications = [...allNotifications, ...errandNotifs];
                 }
 
                 // Process warning notifications
@@ -1466,10 +1448,60 @@ function NotificationWebInstant() {
         };
     }, [loadNotifications]);
 
+    // Clear badge when notification screen is focused
+    const { clearUnread } = useNotificationBadge();
+    
+    // Listen for commission and errand notification broadcasts from Edge Function
+    React.useEffect(() => {
+        const handleCommissionNotification = (event: any) => {
+            const notif = event.detail;
+            console.log('Web: Received commission notification from broadcast:', notif);
+            // Deduplication check
+            if (notif.commission_id && processedCommissionIds.current.has(Number(notif.commission_id))) {
+                console.log(`Commission ${notif.commission_id} already processed, skipping duplicate`);
+                return;
+            }
+            if (notif.commission_id) {
+                processedCommissionIds.current.add(Number(notif.commission_id));
+            }
+            // Add notification to state immediately
+            setNotifications(prev => [notif, ...prev]);
+        };
+
+        const handleErrandNotification = (event: any) => {
+            const notif = event.detail;
+            console.log('Web: Received errand notification from broadcast:', notif);
+            // Deduplication check
+            if (notif.errand_id && processedCommissionIds.current.has(Number(notif.errand_id))) {
+                console.log(`Errand ${notif.errand_id} already processed, skipping duplicate`);
+                return;
+            }
+            if (notif.errand_id) {
+                processedCommissionIds.current.add(Number(notif.errand_id));
+            }
+            // Add notification to state immediately
+            setNotifications(prev => [notif, ...prev]);
+        };
+
+        if (Platform.OS === 'web') {
+            window.addEventListener('commission_notification_received', handleCommissionNotification);
+            window.addEventListener('errand_notification_received', handleErrandNotification);
+        }
+
+        return () => {
+            if (Platform.OS === 'web') {
+                window.removeEventListener('commission_notification_received', handleCommissionNotification);
+                window.removeEventListener('errand_notification_received', handleErrandNotification);
+            }
+        };
+    }, []);
+
     // Refresh notifications when screen comes into focus
     useFocusEffect(
         React.useCallback(() => {
             console.log('Web notification screen focused, refreshing notifications');
+            // Clear badge when screen is opened
+            clearUnread();
             // Reload notifications to ensure only pending commissions are shown
             const refreshNotifications = async () => {
                 try {
@@ -1493,39 +1525,38 @@ function NotificationWebInstant() {
                         return;
                     }
 
-                    const { data: commissions, error } = await supabase
+                    // Load pending commissions assigned to this runner (database source of truth)
+                    const { data: commissions, error: commissionError } = await supabase
                         .from('commission')
                         .select('id, title, created_at, buddycaller_id, declined_runner_id, commission_type, notified_runner_id, notified_at')
                         .eq('status', 'pending')
+                        .eq('notified_runner_id', currentUser.id)
                         .order('created_at', { ascending: false })
                         .limit(20);
 
-                    if (error) {
-                        console.error('Error refreshing notifications:', error);
-                        return;
+                    // Load pending errands assigned to this runner (database source of truth)
+                    const { data: errands, error: errandError } = await supabase
+                        .from('errand')
+                        .select('id, title, created_at, buddycaller_id, notified_runner_id, notified_at, category')
+                        .eq('status', 'pending')
+                        .eq('notified_runner_id', currentUser.id)
+                        .order('created_at', { ascending: false })
+                        .limit(20);
+
+                    if (commissionError || errandError) {
+                        console.error('Error refreshing notifications:', commissionError || errandError);
                     }
 
-                    if (!commissions || commissions.length === 0) {
-                        setNotifications([]);
-                        return;
-                    }
+                    // Get all caller IDs
+                    const commissionCallerIds = (commissions || []).map(c => c.buddycaller_id).filter(Boolean);
+                    const errandCallerIds = (errands || []).map(e => e.buddycaller_id).filter(Boolean);
+                    const allCallerIds = [...new Set([...commissionCallerIds, ...errandCallerIds])];
 
-                    // Filter out commissions where current user was declined
-                    const filteredCommissions = commissions.filter(commission => {
-                        return commission.declined_runner_id !== currentUser.id;
-                    });
-
-                    if (filteredCommissions.length === 0) {
-                        setNotifications([]);
-                        return;
-                    }
-
-                    // Get caller details
-                    const callerIds = filteredCommissions.map(c => c.buddycaller_id).filter(Boolean);
+                    // Fetch caller details
                     const { data: callers } = await supabase
                         .from('users')
                         .select('id, first_name, last_name, profile_picture_url')
-                        .in('id', callerIds);
+                        .in('id', allCallerIds);
 
                     const callerMap: Record<string, { name: string; avatar?: string }> = {};
                     callers?.forEach(caller => {
@@ -1537,12 +1568,26 @@ function NotificationWebInstant() {
                     });
 
                     // Convert commissions to notifications
-                    const notifs = filteredCommissions.map((c: any) => {
+                    const commissionNotifs = (commissions || []).map((c: any) => {
                         const callerInfo = callerMap[c.buddycaller_id] || { name: 'BuddyCaller' };
                         return createNotificationFromCommission(c, callerInfo.name, callerInfo.avatar);
                     });
 
-                    setNotifications(notifs);
+                    // Convert errands to notifications
+                    const errandNotifs = (errands || []).map((e: any) => {
+                        const callerInfo = callerMap[e.buddycaller_id] || { name: 'BuddyCaller' };
+                        return createNotificationFromErrand(e, callerInfo.name, callerInfo.avatar);
+                    });
+
+                    // Merge and sort by newest first
+                    const allNotifs = [...commissionNotifs, ...errandNotifs];
+                    allNotifs.sort((a, b) => {
+                        const dateA = new Date(a.created_at || 0).getTime();
+                        const dateB = new Date(b.created_at || 0).getTime();
+                        return dateB - dateA;
+                    });
+
+                    setNotifications(allNotifs);
                 } catch (error) {
                     console.error('Error refreshing notifications:', error);
                 }
@@ -1626,7 +1671,7 @@ function NotificationWebInstant() {
                                     <View style={web.emptyContainer}>
                             <Ionicons name="notifications-outline" size={64} color={colors.border} />
                             <Text style={web.emptyTitle}>No notifications</Text>
-                            <Text style={web.emptySubtitle}>You'll see new commission notifications here</Text>
+                            <Text style={web.emptySubtitle}>You'll see new commission and errand notifications here</Text>
                                     </View>
                                 ) : (
                         notifications.map((notification, index) => (
@@ -1636,6 +1681,8 @@ function NotificationWebInstant() {
                                 onPress={() => {
                                     if (notification.commission_id) {
                                         router.push(`/buddyrunner/view_commission_web?id=${notification.commission_id}&withSidebar=1`);
+                                    } else if (notification.errand_id) {
+                                        router.push(`/buddyrunner/view_errand_web?id=${notification.errand_id}&withSidebar=1`);
                                     } else {
                                         router.push('/buddyrunner/messages');
                                     }
@@ -1650,11 +1697,17 @@ function NotificationWebInstant() {
                                     )}
                                     <View style={web.notificationText}>
                                         <Text style={web.notificationTitle}>
-                                            {notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_') ? '⚠️ Warning' : 'New Commission'}
+                                            {notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_') 
+                                                ? '⚠️ Warning' 
+                                                : notification.errand_id 
+                                                    ? 'New Errand'
+                                                    : 'New Commission'}
                                         </Text>
                                         <Text style={web.notificationBody}>
                                             {notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_') 
                                                 ? notification.body 
+                                                : notification.errand_id
+                                                    ? `${notification.caller_name || 'BuddyCaller'} posted a new errand.`
                                                 : `${notification.caller_name || 'BuddyCaller'} posted a new commission.`
                                             }
                                         </Text>
@@ -1671,6 +1724,8 @@ function NotificationWebInstant() {
                                         onPress={() => {
                                             if (notification.commission_id) {
                                                 router.push(`/buddyrunner/view_commission_web?id=${notification.commission_id}&withSidebar=1`);
+                                            } else if (notification.errand_id) {
+                                                router.push(`/buddyrunner/view_errand_web?id=${notification.errand_id}&withSidebar=1`);
                                             } else {
                                                 router.push('/buddyrunner/messages');
                                             }

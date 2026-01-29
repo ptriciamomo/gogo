@@ -1728,12 +1728,31 @@ export default function ErrandForm() {
             // Call Edge Function to assign top runner and notify
             if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
                 try {
-                    await supabase.functions.invoke('assign-errand', {
+                    const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-errand', {
                         body: { errand_id: insertedData[0].id },
                     });
-                } catch (edgeError) {
-                    console.error('Failed to assign and notify errand:', edgeError);
-                    // Don't throw - errand was created successfully
+                    
+                    if (assignError) {
+                        console.warn('⚠️ [ASSIGN-ERRAND] Edge Function returned error:', assignError);
+                        console.warn('⚠️ [ASSIGN-ERRAND] Error details:', JSON.stringify(assignError, null, 2));
+                        Alert.alert(
+                            'Assignment Warning',
+                            `Errand created but assignment failed: ${assignError.message || 'Unknown error'}. Check console for details.`
+                        );
+                    } else {
+                        console.log('✅ [ASSIGN-ERRAND] Assignment successful:', assignData);
+                    }
+                } catch (edgeError: any) {
+                    console.error('❌ [ASSIGN-ERRAND] Exception during invocation:', edgeError);
+                    console.error('❌ [ASSIGN-ERRAND] Error type:', typeof edgeError);
+                    console.error('❌ [ASSIGN-ERRAND] Error message:', edgeError?.message);
+                    console.error('❌ [ASSIGN-ERRAND] Error stack:', edgeError?.stack);
+                    console.error('❌ [ASSIGN-ERRAND] Full error object:', JSON.stringify(edgeError, Object.getOwnPropertyNames(edgeError), 2));
+                    console.warn('⚠️ [ASSIGN-ERRAND] Errand was created but assignment failed. Check logs above.');
+                    Alert.alert(
+                        'Assignment Failed',
+                        `Errand created successfully, but runner assignment failed: ${edgeError?.message || 'Network or server error'}. Check console for details.`
+                    );
                 }
             }
 

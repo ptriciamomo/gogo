@@ -1,7 +1,31 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// CORS headers for browser compatibility
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+// Helper function to create response with CORS headers
+function corsResponse(body: string, status: number = 200, additionalHeaders: Record<string, string> = {}) {
+  return new Response(body, {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...additionalHeaders,
+    },
+  });
+}
+
 serve(async (req) => {
+  // Handle OPTIONS preflight request
+  if (req.method === "OPTIONS") {
+    return corsResponse("", 200);
+  }
+
   // Initialize Supabase client with service role key
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -26,10 +50,7 @@ serve(async (req) => {
     const authHeader = req.headers.get("authorization");
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Unauthorized" }), 401);
     }
 
     const token = authHeader.replace("Bearer ", "");
@@ -37,10 +58,7 @@ serve(async (req) => {
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (!user || error) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Unauthorized" }), 401);
     }
   }
 
@@ -51,10 +69,7 @@ serve(async (req) => {
 
     // Basic validation
     if (!errand_id) {
-      return new Response(
-        JSON.stringify({ error: "Missing errand_id" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Missing errand_id" }), 400);
     }
 
     // Fetch the errand (READ-ONLY)
@@ -68,40 +83,25 @@ serve(async (req) => {
     if (error) {
       // Check if errand not found
       if (error.code === "PGRST116") {
-        return new Response(
-          JSON.stringify({ error: "Errand not found" }),
-          { status: 404, headers: { "Content-Type": "application/json" } }
-        );
+        return corsResponse(JSON.stringify({ error: "Errand not found" }), 404);
       }
       // Other database errors
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch errand" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Failed to fetch errand" }), 500);
     }
 
     // Check if errand is already assigned
     if (errand.notified_runner_id !== null) {
-      return new Response(
-        JSON.stringify({ status: "already_assigned" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
 
-    // Define presence thresholds (must match runner-side logic exactly)
-    // Runner heartbeat updates: last_seen_at every ~60s
-    // Thresholds: 75s (buffered to prevent flapping between heartbeats)
-    const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
-
     // Fetch eligible runners (READ-ONLY)
-    // Eligibility: role = BuddyRunner AND is_available = true AND last_seen_at >= 75s ago AND (location_updated_at >= 75s ago OR location_updated_at IS NULL)
+    // Eligibility: role = BuddyRunner AND is_available = true
+    // NOTE: Presence timestamp filtering relaxed for errands - runners with is_available=true and valid location are eligible
     let runnersQuery = supabase
       .from("users")
       .select("id, latitude, longitude, last_seen_at, location_updated_at, is_available, average_rating")
       .eq("role", "BuddyRunner")
-      .eq("is_available", true)
-      .gte("last_seen_at", seventyFiveSecondsAgo)
-      .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`);
+      .eq("is_available", true);
 
     // Exclude timeout runners if present (READ-ONLY filtering)
     if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids) && errand.timeout_runner_ids.length > 0) {
@@ -114,29 +114,23 @@ serve(async (req) => {
 
     // Handle runner fetch errors
     if (runnersError) {
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch eligible runners" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Failed to fetch eligible runners" }), 500);
     }
 
     // Check if no runners found
     if (!runners || runners.length === 0) {
       // DEBUG: Return diagnostic info when no eligible runners found
-      return new Response(
+      return corsResponse(
         JSON.stringify({
           status: "no_eligible_runners",
           debug: {
             errand_id: errand.id,
             buddycaller_id: errand.buddycaller_id,
-            presence_thresholds: {
-              seventyFiveSecondsAgo,
-            },
             timeout_runner_ids: errand.timeout_runner_ids || [],
-            note: "No runners matched: role=BuddyRunner, is_available=true, last_seen_at >= 75s ago, location_updated_at >= 75s ago OR NULL",
+            note: "No runners matched: role=BuddyRunner, is_available=true (presence timestamp filtering relaxed for errands)",
           },
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        200
       );
     }
 
@@ -149,10 +143,7 @@ serve(async (req) => {
 
     // Handle caller location error or missing location
     if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-      return new Response(
-        JSON.stringify({ status: "no_runners_within_distance" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "no_runners_within_distance" }), 200);
     }
 
     // Validate caller coordinates
@@ -160,10 +151,7 @@ serve(async (req) => {
     const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
 
     if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-      return new Response(
-        JSON.stringify({ status: "no_runners_within_distance" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "no_runners_within_distance" }), 200);
     }
 
     // A5: Haversine distance calculation function (audit-aligned)
@@ -225,7 +213,7 @@ serve(async (req) => {
               typeof r.longitude === 'number' ? r.longitude : parseFloat(String(r.longitude || '')))
           : null,
       }));
-      return new Response(
+      return corsResponse(
         JSON.stringify({
           status: "no_runners_within_distance",
           debug: {
@@ -235,7 +223,7 @@ serve(async (req) => {
             runner_coords: debugRunnerCoords,
           },
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        200
       );
     }
 
@@ -438,11 +426,11 @@ serve(async (req) => {
     // A7.1: Dry-Run Assignment (NO DB WRITES)
     // Determine which runner WOULD be assigned without modifying the database
     if (rankedRunners.length === 0) {
-      return new Response(
+      return corsResponse(
         JSON.stringify({
           status: "no_runner_to_assign",
         }),
-        { headers: { "Content-Type": "application/json" } }
+        200
       );
     }
 
@@ -477,6 +465,7 @@ serve(async (req) => {
         notified_runner_id: topRunner.id,
         notified_at: assignedAt,
         timeout_runner_ids: updatedTimeoutRunnerIds,
+        is_notified: true,
       })
       .eq("id", errand.id)
       .is("notified_runner_id", null)
@@ -485,22 +474,21 @@ serve(async (req) => {
 
     // Handle update error
     if (updateError) {
-      return new Response(
-        JSON.stringify({ error: "assignment_failed" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "assignment_failed" }), 500);
     }
 
     // Check if errand was already assigned during the process (no rows updated)
     if (!updateData || updateData.length === 0) {
-      return new Response(
-        JSON.stringify({ status: "already_assigned" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
 
     // Broadcast notification to assigned runner's private channel
     const channelName = `errand_notify_${topRunner.id}`;
+    console.log(`🔔 [EDGE FUNCTION] Broadcasting to channel: ${channelName}`);
+    console.log(`🔔 [EDGE FUNCTION] Event name: errand_notification`);
+    console.log(`🔔 [EDGE FUNCTION] Runner ID: ${topRunner.id}`);
+    console.log(`🔔 [EDGE FUNCTION] Errand ID: ${errand.id}`);
+    
     const broadcastChannel = supabase.channel(channelName);
     
     await broadcastChannel.send({
@@ -514,9 +502,11 @@ serve(async (req) => {
         assigned_at: assignedAt,
       },
     });
+    
+    console.log(`🔔 [EDGE FUNCTION] Broadcast sent to channel: ${channelName}`);
 
     // Return successful assignment response
-    return new Response(
+    return corsResponse(
       JSON.stringify({
         status: "assigned",
         errand_id: errand.id,
@@ -524,15 +514,15 @@ serve(async (req) => {
         final_score: topRunner.finalScore,
         assigned_at: assignedAt,
       }),
-      { headers: { "Content-Type": "application/json" } }
+      200
     );
   } catch (error) {
-    return new Response(
+    return corsResponse(
       JSON.stringify({
         error: "Invalid request body",
         details: String(error),
       }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      500
     );
   }
 });

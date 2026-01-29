@@ -373,6 +373,7 @@ serve(async (req) => {
         notified_runner_id: topRunner.id,
         notified_at: assignedAt,
         timeout_runner_ids: updatedTimeoutRunnerIds,
+        is_notified: true,
       })
       .eq("id", commission.id)
       .is("notified_runner_id", null)
@@ -395,6 +396,11 @@ serve(async (req) => {
 
     // Broadcast notification to assigned runner's private channel
     const channelName = `commission_notify_${topRunner.id}`;
+    console.log(`🔔 [EDGE FUNCTION] Broadcasting to channel: ${channelName}`);
+    console.log(`🔔 [EDGE FUNCTION] Event name: commission_notification`);
+    console.log(`🔔 [EDGE FUNCTION] Runner ID: ${topRunner.id}`);
+    console.log(`🔔 [EDGE FUNCTION] Commission ID: ${commission.id}`);
+    
     const broadcastChannel = supabase.channel(channelName);
     
     await broadcastChannel.send({
@@ -408,6 +414,8 @@ serve(async (req) => {
         assigned_at: assignedAt,
       },
     });
+    
+    console.log(`🔔 [EDGE FUNCTION] Broadcast sent to channel: ${channelName}`);
 
     return new Response(
       JSON.stringify({

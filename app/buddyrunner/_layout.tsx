@@ -8,7 +8,7 @@ import SimpleTaskApprovalModal from "../../components/SimpleTaskApprovalModal";
 import SimpleTaskApprovalModalWeb from "../../components/SimpleTaskApprovalModalWeb";
 import GlobalInvoiceAcceptanceModal from "../../components/GlobalInvoiceAcceptanceModal";
 import { invoiceAcceptanceService } from "../../services/InvoiceAcceptanceService";
-import { useEffect, useState, createContext, useContext } from "react";
+import { useEffect, useState, createContext, useContext, useCallback, useRef } from "react";
 import { globalNotificationService } from "../../services/GlobalNotificationService";
 import { useRouter } from "expo-router";
 
@@ -32,19 +32,48 @@ export default function BuddyrunnerLayout() {
     const [showPendingIdModal, setShowPendingIdModal] = useState(false);
     const [showDisapprovedIdModal, setShowDisapprovedIdModal] = useState(false);
     
-    // Global notification badge state
+    // Global notification badge state - computed from database
     const [unreadCount, setUnreadCount] = useState(0);
     
+    // Compute badge count from database (source of truth)
+    // Memoized to prevent stale closures in subscription handlers
+    const computeBadgeCount = useCallback(async (userId: string) => {
+        try {
+            // Count pending commissions assigned to this runner
+            const { count: commissionCount } = await supabase
+                .from('commission')
+                .select('*', { count: 'exact', head: true })
+                .eq('status', 'pending')
+                .eq('notified_runner_id', userId);
+            
+            // Count pending errands assigned to this runner
+            const { count: errandCount } = await supabase
+                .from('errand')
+                .select('*', { count: 'exact', head: true })
+                .eq('status', 'pending')
+                .eq('notified_runner_id', userId);
+            
+            const total = (commissionCount || 0) + (errandCount || 0);
+            setUnreadCount(total);
+        } catch (error) {
+            console.warn('🔔 [BADGE] Error computing badge count:', error);
+        }
+    }, []); // Empty deps: setUnreadCount is stable, supabase is stable
+    
     const incrementUnread = () => {
+        // Optional: Increment for realtime UI hint, but refresh from DB to ensure accuracy
         setUnreadCount(prev => prev + 1);
+        // Refresh from DB after a short delay to sync with actual state
+        supabase.auth.getUser().then(({ data: { user } }) => {
+            if (user?.id) {
+                setTimeout(() => computeBadgeCount(user.id), 500);
+            }
+        });
     };
     
     const clearUnread = () => {
         setUnreadCount(0);
     };
-    
-    // Expose incrementUnread for use in broadcast handlers
-    (globalThis as any).__incrementNotificationBadge = incrementUnread;
     
     // Global authentication guard for blocked users
     useEffect(() => {
@@ -123,6 +152,181 @@ export default function BuddyrunnerLayout() {
 
         return () => subscription.unsubscribe();
     }, [router]);
+    
+    // Compute badge count from database on auth state change
+    useEffect(() => {
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+            if (session?.user?.id) {
+                await computeBadgeCount(session.user.id);
+            } else {
+                setUnreadCount(0);
+            }
+        });
+        
+        // Also compute on initial mount
+        supabase.auth.getUser().then(({ data: { user } }) => {
+            if (user?.id) {
+                computeBadgeCount(user.id);
+            }
+        });
+        
+        return () => {
+            authListener?.subscription?.unsubscribe();
+        };
+    }, []);
+    
+    // Subscribe to notification channels using onAuthStateChange (INITIAL_SESSION)
+    // CRITICAL: Use refs to prevent duplicate subscriptions per login session
+    const subscriptionInitializedRef = useRef<string | null>(null);
+    const commissionNotifyChannelRef = useRef<ReturnType<typeof supabase.channel> | undefined>(undefined);
+    const errandNotifyChannelRef = useRef<ReturnType<typeof supabase.channel> | undefined>(undefined);
+    const authListenerRef = useRef<ReturnType<typeof supabase.auth.onAuthStateChange>['data'] | undefined>(undefined);
+
+    useEffect(() => {
+        // Cleanup function to remove all subscriptions
+        const cleanupSubscriptions = () => {
+            if (commissionNotifyChannelRef.current) {
+                supabase.removeChannel(commissionNotifyChannelRef.current);
+                commissionNotifyChannelRef.current = undefined;
+            }
+            if (errandNotifyChannelRef.current) {
+                supabase.removeChannel(errandNotifyChannelRef.current);
+                errandNotifyChannelRef.current = undefined;
+            }
+            if (authListenerRef.current?.subscription) {
+                authListenerRef.current.subscription.unsubscribe();
+                authListenerRef.current = undefined;
+            }
+            subscriptionInitializedRef.current = null;
+        };
+
+        // Set up auth state listener (only once)
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+            const userId = session?.user?.id;
+
+            // Handle logout: cleanup all subscriptions
+            if (!userId) {
+                cleanupSubscriptions();
+                setUnreadCount(0);
+                return;
+            }
+
+            // GUARD: Only create subscriptions once per user session
+            // Prevent duplicate subscriptions if onAuthStateChange fires multiple times
+            if (subscriptionInitializedRef.current === userId) {
+                console.log('🔔 [SUBSCRIPTION] Already initialized for user, skipping duplicate setup');
+                return;
+            }
+
+            // Cleanup any existing subscriptions before creating new ones
+            cleanupSubscriptions();
+
+            // Mark as initialized for this user
+            subscriptionInitializedRef.current = userId;
+            authListenerRef.current = authListener;
+
+            console.log(`🔔 [SUBSCRIPTION] Initializing notification channels for user: ${userId}`);
+
+            // Commission notification channel (created once per session)
+            commissionNotifyChannelRef.current = supabase
+                .channel(`commission_notify_${userId}`)
+                .on('broadcast', { event: 'commission_notification' }, async (payload: any) => {
+                    try {
+                        const notification = payload?.payload;
+                        if (notification) {
+                            // Fetch caller details
+                            const { data: callerData } = await supabase
+                                .from('users')
+                                .select('first_name, last_name, profile_picture_url')
+                                .eq('id', notification.caller_id)
+                                .single();
+                            
+                            const callerName = callerData
+                                ? `${callerData.first_name || ''} ${callerData.last_name || ''}`.trim() || 'BuddyCaller'
+                                : 'BuddyCaller';
+                            
+                            // Create notification object
+                            const { createNotificationFromCommission } = await import('./notification');
+                            const notif = createNotificationFromCommission(
+                                {
+                                    id: notification.commission_id,
+                                    title: notification.commission_title,
+                                    created_at: notification.assigned_at,
+                                },
+                                callerName,
+                                callerData?.profile_picture_url
+                            );
+                            
+                            // Refresh badge count from database (source of truth)
+                            await computeBadgeCount(userId);
+                            
+                            // Dispatch custom event for notification screen
+                            if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('commission_notification_received', { detail: notif }));
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('🔔 [COMMISSION BROADCAST] Error handling broadcast:', e);
+                    }
+                })
+                .subscribe();
+
+            // Errand notification channel (created once per session)
+            errandNotifyChannelRef.current = supabase
+                .channel(`errand_notify_${userId}`)
+                .on('broadcast', { event: 'errand_notification' }, async (payload: any) => {
+                    try {
+                        const notification = payload?.payload;
+                        if (notification) {
+                            // Fetch caller details
+                            const { data: callerData } = await supabase
+                                .from('users')
+                                .select('first_name, last_name, profile_picture_url')
+                                .eq('id', notification.caller_id)
+                                .single();
+                            
+                            const callerName = callerData
+                                ? `${callerData.first_name || ''} ${callerData.last_name || ''}`.trim() || 'BuddyCaller'
+                                : 'BuddyCaller';
+                            
+                            // Create notification object
+                            const { createNotificationFromErrand } = await import('./notification');
+                            const notif = createNotificationFromErrand(
+                                {
+                                    id: notification.errand_id,
+                                    title: notification.errand_title,
+                                    created_at: notification.assigned_at,
+                                },
+                                callerName,
+                                callerData?.profile_picture_url
+                            );
+                            
+                            // CRITICAL: Always call computeBadgeCount to update badge state
+                            await computeBadgeCount(userId);
+                            
+                            // Dispatch custom event for notification screen
+                            if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('errand_notification_received', { detail: notif }));
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('🔔 [ERRAND BROADCAST] Error handling broadcast:', e);
+                    }
+                })
+                .subscribe();
+
+            console.log(`🔔 [SUBSCRIPTION] Notification channels initialized for user: ${userId}`);
+        });
+
+        // Store auth listener for cleanup
+        authListenerRef.current = authListener;
+
+        // Cleanup on unmount
+        return () => {
+            console.log('🔔 [SUBSCRIPTION] Cleaning up notification channels');
+            cleanupSubscriptions();
+        };
+    }, [computeBadgeCount]); // computeBadgeCount is stable (memoized), so this effect runs once
     
     useEffect(() => {
         console.log('BuddyrunnerLayout: Setting up global notification service');
@@ -228,28 +432,18 @@ export default function BuddyrunnerLayout() {
             }
         });
 
-        // NEW: Direct realtime broadcast channel (no DB dependency)
-        // Subscribe runner to a user-specific approvals channel and forward payloads to the modal
+        // Task approvals channel (keep existing)
         let approvalsChannelCleanup: (() => void) | undefined;
-        let commissionNotifyChannelCleanup: (() => void) | undefined;
-        let errandNotifyChannelCleanup: (() => void) | undefined;
-        
-        supabase.auth.getUser().then(({ data: { user } }) => {
-            const currentUserId = user?.id;
-            if (!currentUserId) {
-                console.log('BuddyrunnerLayout: No authenticated user, skipping channel subscriptions');
-                return;
-            }
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            const currentUserId = session?.user?.id;
+            if (!currentUserId) return;
             
-            // Task approvals channel
             const approvalsChannelName = `task_approvals_${currentUserId}`;
-            console.log('BuddyrunnerLayout: Subscribing to approvals channel:', approvalsChannelName);
             const approvalsChannel = supabase
                 .channel(approvalsChannelName)
                 .on('broadcast', { event: 'task_approval' }, (payload: any) => {
                     try {
                         const approval = payload?.payload;
-                        console.log('BuddyrunnerLayout: Received broadcast approval payload:', approval);
                         if (approval) {
                             const { approvalModalService } = require('../../services/ApprovalModalService');
                             approvalModalService.notifyApproval(approval);
@@ -258,9 +452,7 @@ export default function BuddyrunnerLayout() {
                         console.warn('BuddyrunnerLayout: Error handling approval broadcast:', e);
                     }
                 })
-                .subscribe((status) => {
-                    console.log('BuddyrunnerLayout: Approvals channel status:', status);
-                });
+                .subscribe();
 
             approvalsChannelCleanup = () => {
                 try {
@@ -269,122 +461,6 @@ export default function BuddyrunnerLayout() {
                     console.warn('BuddyrunnerLayout: Error removing approvals channel:', e);
                 }
             };
-
-            // Commission notification channel
-            const commissionNotifyChannelName = `commission_notify_${currentUserId}`;
-            console.log('BuddyrunnerLayout: Subscribing to commission notification channel:', commissionNotifyChannelName);
-            const commissionNotifyChannel = supabase
-                .channel(commissionNotifyChannelName)
-                .on('broadcast', { event: 'commission_notification' }, async (payload: any) => {
-                    try {
-                        const notification = payload?.payload;
-                        console.log('BuddyrunnerLayout: Received commission notification broadcast:', notification);
-                        if (notification) {
-                            // Fetch caller details
-                            const { data: callerData } = await supabase
-                                .from('users')
-                                .select('first_name, last_name, profile_picture_url')
-                                .eq('id', notification.caller_id)
-                                .single();
-                            
-                            const callerName = callerData
-                                ? `${callerData.first_name || ''} ${callerData.last_name || ''}`.trim() || 'BuddyCaller'
-                                : 'BuddyCaller';
-                            
-                            // Create notification object
-                            const { createNotificationFromCommission } = await import('./notification');
-                            const notif = createNotificationFromCommission(
-                                {
-                                    id: notification.commission_id,
-                                    title: notification.commission_title,
-                                    created_at: notification.assigned_at,
-                                },
-                                callerName,
-                                callerData?.profile_picture_url
-                            );
-                            
-                            // Increment badge
-                            incrementUnread();
-                            
-                            // Dispatch custom event for notification screen to handle
-                            if (typeof window !== 'undefined') {
-                                window.dispatchEvent(new CustomEvent('commission_notification_received', { detail: notif }));
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('BuddyrunnerLayout: Error handling commission notification broadcast:', e);
-                    }
-                })
-                .subscribe((status) => {
-                    console.log('BuddyrunnerLayout: Commission notification channel status:', status);
-                });
-
-            commissionNotifyChannelCleanup = () => {
-                try {
-                    supabase.removeChannel(commissionNotifyChannel);
-                } catch (e) {
-                    console.warn('BuddyrunnerLayout: Error removing commission notification channel:', e);
-                }
-            };
-
-            // Errand notification channel
-            const errandNotifyChannelName = `errand_notify_${currentUserId}`;
-            console.log('BuddyrunnerLayout: Subscribing to errand notification channel:', errandNotifyChannelName);
-            const errandNotifyChannel = supabase
-                .channel(errandNotifyChannelName)
-                .on('broadcast', { event: 'errand_notification' }, async (payload: any) => {
-                    try {
-                        const notification = payload?.payload;
-                        console.log('BuddyrunnerLayout: Received errand notification broadcast:', notification);
-                        if (notification) {
-                            // Fetch caller details
-                            const { data: callerData } = await supabase
-                                .from('users')
-                                .select('first_name, last_name, profile_picture_url')
-                                .eq('id', notification.caller_id)
-                                .single();
-                            
-                            const callerName = callerData
-                                ? `${callerData.first_name || ''} ${callerData.last_name || ''}`.trim() || 'BuddyCaller'
-                                : 'BuddyCaller';
-                            
-                            // Create notification object
-                            const { createNotificationFromErrand } = await import('./notification');
-                            const notif = createNotificationFromErrand(
-                                {
-                                    id: notification.errand_id,
-                                    title: notification.errand_title,
-                                    created_at: notification.assigned_at,
-                                },
-                                callerName,
-                                callerData?.profile_picture_url
-                            );
-                            
-                            // Increment badge
-                            incrementUnread();
-                            
-                            // Dispatch custom event for notification screen to handle
-                            if (typeof window !== 'undefined') {
-                                window.dispatchEvent(new CustomEvent('errand_notification_received', { detail: notif }));
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('BuddyrunnerLayout: Error handling errand notification broadcast:', e);
-                    }
-                })
-                .subscribe((status) => {
-                    console.log('BuddyrunnerLayout: Errand notification channel status:', status);
-                });
-
-            errandNotifyChannelCleanup = () => {
-                try {
-                    supabase.removeChannel(errandNotifyChannel);
-                } catch (e) {
-                    console.warn('BuddyrunnerLayout: Error removing errand notification channel:', e);
-                }
-            };
-        }).catch((e) => {
-            console.warn('BuddyrunnerLayout: Failed to get user for channel subscriptions:', e);
         });
 
         return () => {
@@ -397,12 +473,6 @@ export default function BuddyrunnerLayout() {
             }
             if (approvalsChannelCleanup) {
                 approvalsChannelCleanup();
-            }
-            if (commissionNotifyChannelCleanup) {
-                commissionNotifyChannelCleanup();
-            }
-            if (errandNotifyChannelCleanup) {
-                errandNotifyChannelCleanup();
             }
         };
     }, []);

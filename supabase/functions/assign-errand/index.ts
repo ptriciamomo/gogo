@@ -339,7 +339,6 @@ serve(async (req) => {
       })
       .eq("id", errand.id)
       .is("notified_runner_id", null)
-      .eq("status", "pending")
       .select();
     
     // DIAGNOSTIC: Log UPDATE result

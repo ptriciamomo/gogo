@@ -1121,6 +1121,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 .select("id, title, category, status, created_at, buddycaller_id, runner_id, notified_runner_id, notified_at, timeout_runner_ids")
                 .eq("status", "pending")
                 .is("runner_id", null)
+                .eq("notified_runner_id", uid)
                 .order("created_at", { ascending: false })
                 .neq(uid ? "buddycaller_id" : "id", uid ?? -1);
             if (error) throw error;
@@ -1486,6 +1487,7 @@ function useAvailableCommissions(options?: { availableMode?: boolean }) {
                 .select("id, title, commission_type, created_at, buddycaller_id, status, runner_id, declined_runner_id, notified_runner_id, notified_at, timeout_runner_ids")
                 .eq("status", "pending")
                 .is("runner_id", null)
+                .eq("notified_runner_id", uid)
                 .order("created_at", { ascending: false })
                 .neq(uid ? "buddycaller_id" : "id", uid ?? -1);
 

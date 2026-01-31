@@ -208,14 +208,23 @@ serve(async (req) => {
             continue;
           }
 
-          // Check if queue is exhausted
-          if (currentQueueIndex >= rankedRunnerIds.length) {
-            console.log(`[Reassign Timeout] Queue exhausted for errand ${errand.id}, cancelling task`);
+          // Check if queue will be exhausted after incrementing index
+          // This handles both single-runner queues (index 0 -> 1, length 1) and multi-runner queues
+          const nextQueueIndex = currentQueueIndex + 1;
+          if (nextQueueIndex >= rankedRunnerIds.length) {
+            console.log(`[Reassign Timeout] Queue exhausted for errand ${errand.id} (index ${currentQueueIndex} -> ${nextQueueIndex}, queue length ${rankedRunnerIds.length}), cancelling task`);
             
-            // Cancel errand and notify caller
+            // Cancel errand, clear notified_runner_id, and notify caller
             const { error: cancelError } = await supabase
               .from("errand")
-              .update({ status: 'cancelled' })
+              .update({ 
+                status: 'cancelled',
+                notified_runner_id: null,
+                notified_at: null,
+                is_notified: false,
+                current_queue_index: nextQueueIndex, // Update index even if exhausted
+                timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
+              })
               .eq("id", errand.id)
               .eq("status", "pending");
 
@@ -235,14 +244,21 @@ serve(async (req) => {
               });
 
               result.processed.errands.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cancelled errand ${errand.id} (queue exhausted)`);
+              console.log(`[Reassign Timeout] ✅ Cancelled errand ${errand.id} (queue exhausted), cleared notified_runner_id`);
+            } else {
+              result.errors.push({
+                taskId: errand.id,
+                taskType: "errand",
+                error: `Failed to cancel errand after queue exhaustion: ${cancelError.message}`,
+              });
+              console.error(`[Reassign Timeout] ❌ Failed to cancel errand ${errand.id} after queue exhaustion:`, cancelError);
             }
             continue;
           }
 
-          // Advance to next runner in queue
-          const nextRunnerId = rankedRunnerIds[currentQueueIndex];
-          const newQueueIndex = currentQueueIndex + 1;
+          // Advance to next runner in queue (queue is not exhausted)
+          const nextRunnerId = rankedRunnerIds[nextQueueIndex];
+          const newQueueIndex = nextQueueIndex;
           const assignedAt = new Date().toISOString();
 
           // Atomic update: only if still assigned to previous runner
@@ -365,14 +381,23 @@ serve(async (req) => {
             continue;
           }
 
-          // Check if queue is exhausted
-          if (currentQueueIndex >= rankedRunnerIds.length) {
-            console.log(`[Reassign Timeout] Queue exhausted for commission ${commission.id}, cancelling task`);
+          // Check if queue will be exhausted after incrementing index
+          // This handles both single-runner queues (index 0 -> 1, length 1) and multi-runner queues
+          const nextQueueIndex = currentQueueIndex + 1;
+          if (nextQueueIndex >= rankedRunnerIds.length) {
+            console.log(`[Reassign Timeout] Queue exhausted for commission ${commission.id} (index ${currentQueueIndex} -> ${nextQueueIndex}, queue length ${rankedRunnerIds.length}), cancelling task`);
             
-            // Cancel commission and notify caller
+            // Cancel commission, clear notified_runner_id, and notify caller
             const { error: cancelError } = await supabase
               .from("commission")
-              .update({ status: 'cancelled' })
+              .update({ 
+                status: 'cancelled',
+                notified_runner_id: null,
+                notified_at: null,
+                is_notified: false,
+                current_queue_index: nextQueueIndex, // Update index even if exhausted
+                timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
+              })
               .eq("id", commission.id)
               .eq("status", "pending");
 
@@ -392,14 +417,21 @@ serve(async (req) => {
               });
 
               result.processed.commissions.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cancelled commission ${commission.id} (queue exhausted)`);
+              console.log(`[Reassign Timeout] ✅ Cancelled commission ${commission.id} (queue exhausted), cleared notified_runner_id`);
+            } else {
+              result.errors.push({
+                taskId: commission.id,
+                taskType: "commission",
+                error: `Failed to cancel commission after queue exhaustion: ${cancelError.message}`,
+              });
+              console.error(`[Reassign Timeout] ❌ Failed to cancel commission ${commission.id} after queue exhaustion:`, cancelError);
             }
             continue;
           }
 
-          // Advance to next runner in queue
-          const nextRunnerId = rankedRunnerIds[currentQueueIndex];
-          const newQueueIndex = currentQueueIndex + 1;
+          // Advance to next runner in queue (queue is not exhausted)
+          const nextRunnerId = rankedRunnerIds[nextQueueIndex];
+          const newQueueIndex = nextQueueIndex;
           const assignedAt = new Date().toISOString();
 
           // Atomic update: only if still assigned to previous runner

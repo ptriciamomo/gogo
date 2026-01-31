@@ -181,6 +181,7 @@ serve(async (req) => {
 
     // Handle empty result after distance filtering
     if (!filteredRunners || filteredRunners.length === 0) {
+      console.warn(`[ASSIGN-ERRAND] No runners within 500m for errand ${errand.id}. Caller coords: (${callerLat}, ${callerLon})`);
       // DEBUG: Return diagnostic info when no runners within distance
       const debugRunnerCoords = runners.map((r: any) => ({
         id: r.id,
@@ -206,6 +207,8 @@ serve(async (req) => {
       );
     }
 
+    console.log(`[ASSIGN-ERRAND] ${filteredRunners.length} runners within 500m for errand ${errand.id}`);
+
     // Normalize errand categories for ranking (empty array allowed)
     const errandCategories =
       errand.category && errand.category.trim().length > 0
@@ -214,6 +217,7 @@ serve(async (req) => {
 
     // QUEUE-BASED RANKING: Rank runners ONCE and store queue
     // This prevents re-ranking on timeout, eliminating UI glitching
+    console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id}`);
     const rankedRunners = await rankRunners(
       filteredRunners as RunnerForRanking[],
       errandCategories,
@@ -230,8 +234,11 @@ serve(async (req) => {
       }
     );
 
+    console.log(`[ASSIGN-ERRAND] Ranked ${rankedRunners.length} runners for errand ${errand.id}`);
+
     // Check if no runners to assign
     if (rankedRunners.length === 0) {
+      console.warn(`[ASSIGN-ERRAND] Ranking returned 0 runners for errand ${errand.id}`);
       return corsResponse(
         JSON.stringify({
           status: "no_runner_to_assign",
@@ -242,6 +249,7 @@ serve(async (req) => {
 
     // Extract runner IDs in ranked order for queue storage
     const rankedRunnerIds = rankedRunners.map(r => r.id);
+    console.log(`[ASSIGN-ERRAND] Ranked runner IDs for errand ${errand.id}:`, rankedRunnerIds);
 
     // Get top runner (index 0)
     const topRunner = rankedRunners[0];
@@ -263,6 +271,61 @@ serve(async (req) => {
 
     // Perform DB update (only if errand is still unassigned and pending)
     // Store ranked_runner_ids queue and set current_queue_index = 0
+    
+    // DIAGNOSTIC: Fetch fresh database state immediately before UPDATE
+    const { data: freshErrand, error: freshError } = await supabase
+      .from("errand")
+      .select("id, status, notified_runner_id")
+      .eq("id", errand.id)
+      .single();
+    
+    // DIAGNOSTIC: Log all values that will be used in UPDATE conditions
+    console.log(`[ASSIGN-ERRAND] DIAGNOSTIC: Pre-UPDATE state check for errand ${errand.id}:`, {
+      // Values from initial fetch (Step 1)
+      initial_fetch: {
+        errand_id: errand.id,
+        errand_status: errand.status,
+        errand_status_typeof: typeof errand.status,
+        errand_status_length: errand.status ? String(errand.status).length : null,
+        errand_status_stringified: JSON.stringify(errand.status),
+        errand_notified_runner_id: errand.notified_runner_id,
+        errand_notified_runner_id_typeof: typeof errand.notified_runner_id,
+      },
+      // Values from fresh database query (current state)
+      fresh_database: {
+        fresh_id: freshErrand?.id,
+        fresh_status: freshErrand?.status,
+        fresh_status_typeof: typeof freshErrand?.status,
+        fresh_status_length: freshErrand?.status ? String(freshErrand?.status).length : null,
+        fresh_status_stringified: JSON.stringify(freshErrand?.status),
+        fresh_notified_runner_id: freshErrand?.notified_runner_id,
+        fresh_notified_runner_id_typeof: typeof freshErrand?.notified_runner_id,
+        fresh_query_error: freshError,
+      },
+      // UPDATE filter conditions that will be applied
+      update_conditions: {
+        condition_1_eq_id: errand.id,
+        condition_2_is_notified_runner_id_null: null,
+        condition_3_eq_status_pending: "pending",
+      },
+      // Comparison: Will conditions match?
+      condition_match_analysis: {
+        id_matches: freshErrand?.id === errand.id,
+        notified_runner_id_is_null: freshErrand?.notified_runner_id === null,
+        status_is_pending: freshErrand?.status === "pending",
+        status_exact_match: String(freshErrand?.status) === String("pending"),
+        status_case_sensitive_match: freshErrand?.status === "pending",
+      },
+    });
+
+    console.log(`[ASSIGN-ERRAND] Attempting to update errand ${errand.id} with:`, {
+      notified_runner_id: topRunner.id,
+      ranked_runner_ids: rankedRunnerIds,
+      current_queue_index: 0,
+      errand_current_status: errand.status,
+      errand_current_notified_runner_id: errand.notified_runner_id,
+    });
+
     const { data: updateData, error: updateError } = await supabase
       .from("errand")
       .update({
@@ -278,16 +341,36 @@ serve(async (req) => {
       .is("notified_runner_id", null)
       .eq("status", "pending")
       .select();
+    
+    // DIAGNOSTIC: Log UPDATE result
+    console.log(`[ASSIGN-ERRAND] DIAGNOSTIC: UPDATE result for errand ${errand.id}:`, {
+      update_error: updateError,
+      update_data_length: updateData?.length || 0,
+      update_data: updateData,
+      rows_affected: updateData?.length || 0,
+      update_succeeded: !updateError && updateData && updateData.length > 0,
+    });
 
     // Handle update error
     if (updateError) {
-      return corsResponse(JSON.stringify({ error: "assignment_failed" }), 500);
+      console.error(`[ASSIGN-ERRAND] Update error for errand ${errand.id}:`, updateError);
+      return corsResponse(JSON.stringify({ error: "assignment_failed", details: updateError.message }), 500);
     }
 
     // Check if errand was already assigned during the process (no rows updated)
     if (!updateData || updateData.length === 0) {
+      console.warn(`[ASSIGN-ERRAND] Update returned no rows for errand ${errand.id}. Errand may have been assigned or status changed.`);
+      // Verify current state
+      const { data: currentErrand } = await supabase
+        .from("errand")
+        .select("status, notified_runner_id, ranked_runner_ids")
+        .eq("id", errand.id)
+        .single();
+      console.warn(`[ASSIGN-ERRAND] Current errand state:`, currentErrand);
       return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
+
+    console.log(`[ASSIGN-ERRAND] Successfully updated errand ${errand.id}. Updated data:`, updateData[0]);
 
     // Broadcast notification to assigned runner's private channel
     const channelName = `errand_notify_${topRunner.id}`;

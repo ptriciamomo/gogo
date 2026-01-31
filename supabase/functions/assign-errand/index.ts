@@ -250,8 +250,9 @@ serve(async (req) => {
     // Persists the top-ranked runner to the errand record.
     // This converts the A7.1 dry-run result into an actual assignment.
 
-    // Generate assignment timestamp
+    // Generate assignment timestamp and expiration (60 seconds from now)
     const assignedAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
 
     // QUEUE-BASED ASSIGNMENT: Store queue and assign index 0
     // Prepare timeout_runner_ids (kept for backward compatibility, not used for selection)
@@ -267,6 +268,7 @@ serve(async (req) => {
       .update({
         notified_runner_id: topRunner.id,
         notified_at: assignedAt,
+        notified_expires_at: expiresAt,  // Set expiration 60 seconds from now
         ranked_runner_ids: rankedRunnerIds,  // Store complete queue
         current_queue_index: 0,  // Start at index 0
         timeout_runner_ids: updatedTimeoutRunnerIds,  // Backward compatibility only

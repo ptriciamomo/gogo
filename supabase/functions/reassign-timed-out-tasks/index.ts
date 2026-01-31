@@ -23,8 +23,9 @@ serve(async (req) => {
       errors: [] as Array<{ taskId: number; taskType: string; error: string }>,
     };
 
-    // Calculate timeout threshold: 60 seconds ago
-    const timeoutThreshold = new Date(Date.now() - 60 * 1000).toISOString();
+    // Use database time for timeout queries (notified_expires_at <= now())
+    const now = new Date().toISOString();
+    console.log(`[Reassign Timeout] Current time: ${now}`);
 
     // ============================================
     // Shared Utilities (reused from assign-* functions)
@@ -144,18 +145,22 @@ serve(async (req) => {
     // ============================================
     // Process Errands
     // ============================================
-    console.log(`[Reassign Timeout] Checking errands with notified_at < ${timeoutThreshold}`);
+    console.log(`[Reassign Timeout] Checking errands with notified_expires_at <= ${now}`);
 
     const { data: timedOutErrands, error: errandsQueryError } = await supabase
       .from("errand")
-      .select("id, title, category, buddycaller_id, notified_runner_id, notified_at, timeout_runner_ids, ranked_runner_ids, current_queue_index, status, runner_id")
+      .select("id, title, category, buddycaller_id, notified_runner_id, notified_at, notified_expires_at, timeout_runner_ids, ranked_runner_ids, current_queue_index, status, runner_id")
       .eq("status", "pending")
       .is("runner_id", null)
       .not("notified_runner_id", "is", null)
-      .not("notified_at", "is", null)
-      .lt("notified_at", timeoutThreshold)
-      .order("notified_at", { ascending: true })
+      .not("notified_expires_at", "is", null)
+      .lte("notified_expires_at", now)
+      .order("notified_expires_at", { ascending: true })
       .limit(50); // Limit to prevent function timeout
+
+    if (timedOutErrands && timedOutErrands.length > 0) {
+      console.log(`[Reassign Timeout] Found ${timedOutErrands.length} timed-out errands`);
+    }
 
     if (errandsQueryError) {
       console.error("[Reassign Timeout] Error querying errands:", errandsQueryError);
@@ -268,6 +273,7 @@ serve(async (req) => {
             .update({
               notified_runner_id: nextRunnerId,
               notified_at: assignedAt,
+              notified_expires_at: expiresAt,  // Set expiration 60 seconds from now
               current_queue_index: newQueueIndex,
               timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
               is_notified: true,
@@ -317,18 +323,22 @@ serve(async (req) => {
     // ============================================
     // Process Commissions
     // ============================================
-    console.log(`[Reassign Timeout] Checking commissions with notified_at < ${timeoutThreshold}`);
+    console.log(`[Reassign Timeout] Checking commissions with notified_expires_at <= ${now}`);
 
     const { data: timedOutCommissions, error: commissionsQueryError } = await supabase
       .from("commission")
-      .select("id, title, commission_type, buddycaller_id, notified_runner_id, notified_at, timeout_runner_ids, ranked_runner_ids, current_queue_index, declined_runner_id, status, runner_id")
+      .select("id, title, commission_type, buddycaller_id, notified_runner_id, notified_at, notified_expires_at, timeout_runner_ids, ranked_runner_ids, current_queue_index, declined_runner_id, status, runner_id")
       .eq("status", "pending")
       .is("runner_id", null)
       .not("notified_runner_id", "is", null)
-      .not("notified_at", "is", null)
-      .lt("notified_at", timeoutThreshold)
-      .order("notified_at", { ascending: true })
+      .not("notified_expires_at", "is", null)
+      .lte("notified_expires_at", now)
+      .order("notified_expires_at", { ascending: true })
       .limit(50);
+
+    if (timedOutCommissions && timedOutCommissions.length > 0) {
+      console.log(`[Reassign Timeout] Found ${timedOutCommissions.length} timed-out commissions`);
+    }
 
     if (commissionsQueryError) {
       console.error("[Reassign Timeout] Error querying commissions:", commissionsQueryError);
@@ -433,6 +443,7 @@ serve(async (req) => {
           const nextRunnerId = rankedRunnerIds[nextQueueIndex];
           const newQueueIndex = nextQueueIndex;
           const assignedAt = new Date().toISOString();
+          const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
 
           // Atomic update: only if still assigned to previous runner
           // Update timeout_runner_ids atomically with queue index (for audit/history)
@@ -441,6 +452,7 @@ serve(async (req) => {
             .update({
               notified_runner_id: nextRunnerId,
               notified_at: assignedAt,
+              notified_expires_at: expiresAt,  // Set expiration 60 seconds from now
               current_queue_index: newQueueIndex,
               timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
               is_notified: true,

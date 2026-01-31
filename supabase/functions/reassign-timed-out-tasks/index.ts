@@ -148,7 +148,7 @@ serve(async (req) => {
 
     const { data: timedOutErrands, error: errandsQueryError } = await supabase
       .from("errand")
-      .select("id, title, category, buddycaller_id, notified_runner_id, notified_at, timeout_runner_ids, status, runner_id")
+      .select("id, title, category, buddycaller_id, notified_runner_id, notified_at, timeout_runner_ids, ranked_runner_ids, current_queue_index, status, runner_id")
       .eq("status", "pending")
       .is("runner_id", null)
       .not("notified_runner_id", "is", null)
@@ -175,7 +175,7 @@ serve(async (req) => {
           // Verify task is still in timeout state (idempotency check)
           const { data: currentErrand, error: verifyError } = await supabase
             .from("errand")
-            .select("notified_runner_id, status, runner_id")
+            .select("notified_runner_id, status, runner_id, ranked_runner_ids, current_queue_index, timeout_runner_ids")
             .eq("id", errand.id)
             .single();
 
@@ -187,192 +187,73 @@ serve(async (req) => {
             continue;
           }
 
-          // Fetch caller location
-          const { data: callerData, error: callerError } = await supabase
-            .from("users")
-            .select("latitude, longitude")
-            .eq("id", errand.buddycaller_id)
-            .single();
+          // QUEUE-BASED REASSIGNMENT: Read queue from database, advance index
+          // NO re-querying, NO re-ranking, NO distance filtering
+          const rankedRunnerIds = currentErrand?.ranked_runner_ids;
+          const currentQueueIndex = currentErrand?.current_queue_index ?? 0;
+          
+          // Prepare timeout_runner_ids: append previousRunnerId if not already present
+          // This is for audit/history only (not used for selection)
+          let updatedTimeoutRunnerIds: string[] = [];
+          if (currentErrand?.timeout_runner_ids && Array.isArray(currentErrand.timeout_runner_ids)) {
+            updatedTimeoutRunnerIds = [...currentErrand.timeout_runner_ids];
+          }
+          if (previousRunnerId && !updatedTimeoutRunnerIds.includes(previousRunnerId)) {
+            updatedTimeoutRunnerIds.push(previousRunnerId);
+          }
 
-          if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-            // No caller location, clear notification
-            const { error: clearError } = await supabase.rpc('clear_errand_notification', {
-              p_errand_id: errand.id
-            });
-            if (!clearError) {
-              result.processed.errands.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared errand ${errand.id} (no caller location)`);
-            }
+          // Backward compatibility: If no queue exists, fallback to old logic (skip for now)
+          if (!rankedRunnerIds || !Array.isArray(rankedRunnerIds) || rankedRunnerIds.length === 0) {
+            console.log(`[Reassign Timeout] Errand ${errand.id} has no queue (old errand), skipping queue-based reassignment`);
             continue;
           }
 
-          const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
-          const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
-
-          if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-            const { error: clearError } = await supabase.rpc('clear_errand_notification', {
-              p_errand_id: errand.id
-            });
-            if (!clearError) {
-              result.processed.errands.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared errand ${errand.id} (invalid caller location)`);
-            }
-            continue;
-          }
-
-          // Fetch eligible runners (exclude previous runner and timeout runners)
-          // NOTE: Presence filtering relaxed for errands (same as initial assignment)
-          let runnersQuery = supabase
-            .from("users")
-            .select("id, latitude, longitude, last_seen_at, location_updated_at, is_available, average_rating")
-            .eq("role", "BuddyRunner")
-            .eq("is_available", true)
-            .neq("id", previousRunnerId);
-
-          // Exclude timeout runners
-          if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids) && errand.timeout_runner_ids.length > 0) {
-            for (const timeoutRunnerId of errand.timeout_runner_ids) {
-              runnersQuery = runnersQuery.neq("id", timeoutRunnerId);
-            }
-          }
-
-          const { data: runners, error: runnersError } = await runnersQuery;
-
-          if (runnersError || !runners || runners.length === 0) {
-            // No eligible runners, clear notification
-            const { error: clearError } = await supabase.rpc('clear_errand_notification', {
-              p_errand_id: errand.id
-            });
-            if (!clearError) {
-              result.processed.errands.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared errand ${errand.id} (no eligible runners)`);
-            }
-            continue;
-          }
-
-          // Apply distance filter (≤ 500m)
-          const filteredRunners = runners.filter((runner) => {
-            if (!runner.latitude || !runner.longitude) return false;
-            const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-            const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-            if (!lat || !lon || isNaN(lat) || isNaN(lon)) return false;
-            const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
-            const distanceMeters = distanceKm * 1000;
-            return distanceMeters <= 500;
-          });
-
-          if (!filteredRunners || filteredRunners.length === 0) {
-            // No runners within distance, clear notification
-            const { error: clearError } = await supabase.rpc('clear_errand_notification', {
-              p_errand_id: errand.id
-            });
-            if (!clearError) {
-              result.processed.errands.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared errand ${errand.id} (no runners within 500m)`);
-            }
-            continue;
-          }
-
-          // Normalize errand categories for TF-IDF
-          const errandCategories = errand.category && errand.category.trim().length > 0
-            ? [errand.category.trim().toLowerCase()]
-            : [];
-
-          // Rank runners (same logic as initial assignment)
-          const rankedRunners: Array<{
-            id: string;
-            distance: number;
-            distanceScore: number;
-            ratingScore: number;
-            tfidfScore: number;
-            finalScore: number;
-          }> = [];
-
-          for (const runner of filteredRunners) {
-            const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-            const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-            const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
-            const distanceMeters = distanceKm * 1000;
-
-            const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
-            const ratingScore = (runner.average_rating || 0) / 5;
-
-            // Fetch runner category history for TF-IDF
-            let tfidfScore = 0;
-            const { data: historyData } = await supabase
+          // Check if queue is exhausted
+          if (currentQueueIndex >= rankedRunnerIds.length) {
+            console.log(`[Reassign Timeout] Queue exhausted for errand ${errand.id}, cancelling task`);
+            
+            // Cancel errand and notify caller
+            const { error: cancelError } = await supabase
               .from("errand")
-              .select("category")
-              .eq("runner_id", runner.id)
-              .eq("status", "completed");
+              .update({ status: 'cancelled' })
+              .eq("id", errand.id)
+              .eq("status", "pending");
 
-            if (historyData && historyData.length > 0) {
-              const totalTasks = historyData.length;
-              const taskCategories: string[][] = [];
-              historyData.forEach((completedErrand: any) => {
-                if (!completedErrand.category) return;
-                taskCategories.push([completedErrand.category.trim().toLowerCase()]);
+            if (!cancelError) {
+              // Notify caller that no runners are available
+              const callerChannel = `caller_notify_${errand.buddycaller_id}`;
+              const broadcastChannel = supabase.channel(callerChannel);
+              await broadcastChannel.send({
+                type: 'broadcast',
+                event: 'task_cancelled',
+                payload: {
+                  task_id: errand.id,
+                  task_type: 'errand',
+                  task_title: errand.title,
+                  reason: 'no_runners_available',
+                },
               });
-              const runnerHistory = taskCategories.flat();
-              tfidfScore = calculateTFIDFCosineSimilarity(
-                errandCategories,
-                runnerHistory,
-                taskCategories,
-                totalTasks
-              );
-            }
 
-            const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
-
-            rankedRunners.push({
-              id: runner.id,
-              distance: distanceMeters,
-              distanceScore: distanceScore,
-              ratingScore: ratingScore,
-              tfidfScore: tfidfScore,
-              finalScore: finalScore,
-            });
-          }
-
-          // Sort by final score (descending), then distance (ascending)
-          rankedRunners.sort((a, b) => {
-            if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-            return a.distance - b.distance;
-          });
-
-          if (rankedRunners.length === 0) {
-            // No ranked runners, clear notification
-            const { error: clearError } = await supabase.rpc('clear_errand_notification', {
-              p_errand_id: errand.id
-            });
-            if (!clearError) {
               result.processed.errands.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared errand ${errand.id} (no ranked runners)`);
+              console.log(`[Reassign Timeout] ✅ Cancelled errand ${errand.id} (queue exhausted)`);
             }
             continue;
           }
 
-          const nextRunner = rankedRunners[0];
+          // Advance to next runner in queue
+          const nextRunnerId = rankedRunnerIds[currentQueueIndex];
+          const newQueueIndex = currentQueueIndex + 1;
           const assignedAt = new Date().toISOString();
 
-          // Prepare timeout_runner_ids (append previous runner ID)
-          let updatedTimeoutRunnerIds: string[];
-          if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids)) {
-            if (!errand.timeout_runner_ids.includes(previousRunnerId)) {
-              updatedTimeoutRunnerIds = [...errand.timeout_runner_ids, previousRunnerId];
-            } else {
-              updatedTimeoutRunnerIds = errand.timeout_runner_ids;
-            }
-          } else {
-            updatedTimeoutRunnerIds = [previousRunnerId];
-          }
-
           // Atomic update: only if still assigned to previous runner
+          // Update timeout_runner_ids atomically with queue index (for audit/history)
           const { data: updateData, error: updateError } = await supabase
             .from("errand")
             .update({
-              notified_runner_id: nextRunner.id,
+              notified_runner_id: nextRunnerId,
               notified_at: assignedAt,
-              timeout_runner_ids: updatedTimeoutRunnerIds,
+              current_queue_index: newQueueIndex,
+              timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
               is_notified: true,
             })
             .eq("id", errand.id)
@@ -387,7 +268,7 @@ serve(async (req) => {
           }
 
           // Broadcast notification to new runner
-          const channelName = `errand_notify_${nextRunner.id}`;
+          const channelName = `errand_notify_${nextRunnerId}`;
           const broadcastChannel = supabase.channel(channelName);
           await broadcastChannel.send({
             type: 'broadcast',
@@ -402,7 +283,7 @@ serve(async (req) => {
           });
 
           result.processed.errands.reassigned++;
-          console.log(`[Reassign Timeout] ✅ Reassigned errand ${errand.id} to runner ${nextRunner.id}`);
+          console.log(`[Reassign Timeout] ✅ Reassigned errand ${errand.id} to runner ${nextRunnerId} (queue index ${currentQueueIndex})`);
 
         } catch (error) {
           result.processed.errands.errors++;
@@ -424,7 +305,7 @@ serve(async (req) => {
 
     const { data: timedOutCommissions, error: commissionsQueryError } = await supabase
       .from("commission")
-      .select("id, title, commission_type, buddycaller_id, notified_runner_id, notified_at, timeout_runner_ids, declined_runner_id, status, runner_id")
+      .select("id, title, commission_type, buddycaller_id, notified_runner_id, notified_at, timeout_runner_ids, ranked_runner_ids, current_queue_index, declined_runner_id, status, runner_id")
       .eq("status", "pending")
       .is("runner_id", null)
       .not("notified_runner_id", "is", null)
@@ -448,10 +329,10 @@ serve(async (req) => {
         try {
           const previousRunnerId = commission.notified_runner_id;
 
-          // Verify task is still in timeout state
+          // Verify task is still in timeout state (idempotency check)
           const { data: currentCommission, error: verifyError } = await supabase
             .from("commission")
-            .select("notified_runner_id, status, runner_id")
+            .select("notified_runner_id, status, runner_id, ranked_runner_ids, current_queue_index, timeout_runner_ids")
             .eq("id", commission.id)
             .single();
 
@@ -463,203 +344,73 @@ serve(async (req) => {
             continue;
           }
 
-          // Fetch caller location
-          const { data: callerData, error: callerError } = await supabase
-            .from("users")
-            .select("latitude, longitude")
-            .eq("id", commission.buddycaller_id)
-            .single();
+          // QUEUE-BASED REASSIGNMENT: Read queue from database, advance index
+          // NO re-querying, NO re-ranking, NO distance filtering
+          const rankedRunnerIds = currentCommission?.ranked_runner_ids;
+          const currentQueueIndex = currentCommission?.current_queue_index ?? 0;
+          
+          // Prepare timeout_runner_ids: append previousRunnerId if not already present
+          // This is for audit/history only (not used for selection)
+          let updatedTimeoutRunnerIds: string[] = [];
+          if (currentCommission?.timeout_runner_ids && Array.isArray(currentCommission.timeout_runner_ids)) {
+            updatedTimeoutRunnerIds = [...currentCommission.timeout_runner_ids];
+          }
+          if (previousRunnerId && !updatedTimeoutRunnerIds.includes(previousRunnerId)) {
+            updatedTimeoutRunnerIds.push(previousRunnerId);
+          }
 
-          if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-            const { error: clearError } = await supabase.rpc('clear_commission_notification', {
-              p_commission_id: commission.id
-            });
-            if (!clearError) {
+          // Backward compatibility: If no queue exists, fallback to old logic (skip for now)
+          if (!rankedRunnerIds || !Array.isArray(rankedRunnerIds) || rankedRunnerIds.length === 0) {
+            console.log(`[Reassign Timeout] Commission ${commission.id} has no queue (old commission), skipping queue-based reassignment`);
+            continue;
+          }
+
+          // Check if queue is exhausted
+          if (currentQueueIndex >= rankedRunnerIds.length) {
+            console.log(`[Reassign Timeout] Queue exhausted for commission ${commission.id}, cancelling task`);
+            
+            // Cancel commission and notify caller
+            const { error: cancelError } = await supabase
+              .from("commission")
+              .update({ status: 'cancelled' })
+              .eq("id", commission.id)
+              .eq("status", "pending");
+
+            if (!cancelError) {
+              // Notify caller that no runners are available
+              const callerChannel = `caller_notify_${commission.buddycaller_id}`;
+              const broadcastChannel = supabase.channel(callerChannel);
+              await broadcastChannel.send({
+                type: 'broadcast',
+                event: 'task_cancelled',
+                payload: {
+                  task_id: commission.id,
+                  task_type: 'commission',
+                  task_title: commission.title,
+                  reason: 'no_runners_available',
+                },
+              });
+
               result.processed.commissions.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared commission ${commission.id} (no caller location)`);
+              console.log(`[Reassign Timeout] ✅ Cancelled commission ${commission.id} (queue exhausted)`);
             }
             continue;
           }
 
-          const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
-          const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
-
-          if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-            const { error: clearError } = await supabase.rpc('clear_commission_notification', {
-              p_commission_id: commission.id
-            });
-            if (!clearError) {
-              result.processed.commissions.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared commission ${commission.id} (invalid caller location)`);
-            }
-            continue;
-          }
-
-          // Define presence thresholds (75 seconds, same as initial assignment)
-          const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
-
-          // Fetch eligible runners (exclude previous runner, declined runner, and timeout runners)
-          let runnersQuery = supabase
-            .from("users")
-            .select("id, latitude, longitude, last_seen_at, location_updated_at, is_available, average_rating")
-            .eq("role", "BuddyRunner")
-            .eq("is_available", true)
-            .neq("id", previousRunnerId)
-            .gte("last_seen_at", seventyFiveSecondsAgo)
-            .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`);
-
-          // Exclude declined runner
-          if (commission.declined_runner_id) {
-            runnersQuery = runnersQuery.neq("id", commission.declined_runner_id);
-          }
-
-          // Exclude timeout runners
-          if (commission.timeout_runner_ids && Array.isArray(commission.timeout_runner_ids) && commission.timeout_runner_ids.length > 0) {
-            for (const timeoutRunnerId of commission.timeout_runner_ids) {
-              runnersQuery = runnersQuery.neq("id", timeoutRunnerId);
-            }
-          }
-
-          const { data: runners, error: runnersError } = await runnersQuery;
-
-          if (runnersError || !runners || runners.length === 0) {
-            const { error: clearError } = await supabase.rpc('clear_commission_notification', {
-              p_commission_id: commission.id
-            });
-            if (!clearError) {
-              result.processed.commissions.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared commission ${commission.id} (no eligible runners)`);
-            }
-            continue;
-          }
-
-          // Apply distance filter (≤ 500m)
-          const filteredRunners = runners.filter((runner) => {
-            if (!runner.latitude || !runner.longitude) return false;
-            const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-            const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-            if (!lat || !lon || isNaN(lat) || isNaN(lon)) return false;
-            const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
-            const distanceMeters = distanceKm * 1000;
-            return distanceMeters <= 500;
-          });
-
-          if (!filteredRunners || filteredRunners.length === 0) {
-            const { error: clearError } = await supabase.rpc('clear_commission_notification', {
-              p_commission_id: commission.id
-            });
-            if (!clearError) {
-              result.processed.commissions.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared commission ${commission.id} (no runners within 500m)`);
-            }
-            continue;
-          }
-
-          // Parse commission types
-          const commissionTypes = commission.commission_type 
-            ? commission.commission_type.split(',').map(t => t.trim()).filter(t => t.length > 0)
-            : [];
-          const normalizedCommissionTypes = commissionTypes.length > 0
-            ? commissionTypes.map(t => t.trim().toLowerCase()).filter(t => t.length > 0)
-            : [];
-
-          // Rank runners (same logic as initial assignment)
-          const rankedRunners: Array<{
-            id: string;
-            distance: number;
-            distanceScore: number;
-            ratingScore: number;
-            tfidfScore: number;
-            finalScore: number;
-          }> = [];
-
-          for (const runner of filteredRunners) {
-            const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-            const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-            const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
-            const distanceMeters = distanceKm * 1000;
-
-            const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
-            const ratingScore = (runner.average_rating || 0) / 5;
-
-            // Fetch runner category history for TF-IDF
-            let tfidfScore = 0;
-            if (normalizedCommissionTypes.length > 0) {
-              const { data: historyData } = await supabase
-                .from("commission")
-                .select("commission_type")
-                .eq("runner_id", runner.id)
-                .eq("status", "completed");
-
-              if (historyData && historyData.length > 0) {
-                const totalTasks = historyData.length;
-                const taskCategories: string[][] = [];
-                historyData.forEach((c: any) => {
-                  if (!c.commission_type) return;
-                  const types = c.commission_type.split(',').map((t: string) => t.trim().toLowerCase());
-                  taskCategories.push(types);
-                });
-                const runnerHistory = taskCategories.flat();
-                tfidfScore = calculateTFIDFCosineSimilarity(
-                  normalizedCommissionTypes,
-                  runnerHistory,
-                  taskCategories,
-                  totalTasks
-                );
-              }
-            }
-
-            const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
-
-            rankedRunners.push({
-              id: runner.id,
-              distance: distanceMeters,
-              distanceScore: distanceScore,
-              ratingScore: ratingScore,
-              tfidfScore: tfidfScore,
-              finalScore: finalScore,
-            });
-          }
-
-          // Sort by final score (descending), then distance (ascending)
-          rankedRunners.sort((a, b) => {
-            if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-            return a.distance - b.distance;
-          });
-
-          if (rankedRunners.length === 0) {
-            const { error: clearError } = await supabase.rpc('clear_commission_notification', {
-              p_commission_id: commission.id
-            });
-            if (!clearError) {
-              result.processed.commissions.cleared++;
-              console.log(`[Reassign Timeout] ✅ Cleared commission ${commission.id} (no ranked runners)`);
-            }
-            continue;
-          }
-
-          const nextRunner = rankedRunners[0];
+          // Advance to next runner in queue
+          const nextRunnerId = rankedRunnerIds[currentQueueIndex];
+          const newQueueIndex = currentQueueIndex + 1;
           const assignedAt = new Date().toISOString();
 
-          // Prepare timeout_runner_ids (append previous runner ID)
-          let updatedTimeoutRunnerIds: string[];
-          if (commission.timeout_runner_ids && Array.isArray(commission.timeout_runner_ids)) {
-            if (!commission.timeout_runner_ids.includes(previousRunnerId)) {
-              updatedTimeoutRunnerIds = [...commission.timeout_runner_ids, previousRunnerId];
-            } else {
-              updatedTimeoutRunnerIds = commission.timeout_runner_ids;
-            }
-          } else {
-            updatedTimeoutRunnerIds = [previousRunnerId];
-          }
-
           // Atomic update: only if still assigned to previous runner
+          // Update timeout_runner_ids atomically with queue index (for audit/history)
           const { data: updateData, error: updateError } = await supabase
             .from("commission")
             .update({
-              notified_runner_id: nextRunner.id,
+              notified_runner_id: nextRunnerId,
               notified_at: assignedAt,
-              timeout_runner_ids: updatedTimeoutRunnerIds,
+              current_queue_index: newQueueIndex,
+              timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
               is_notified: true,
             })
             .eq("id", commission.id)
@@ -674,7 +425,7 @@ serve(async (req) => {
           }
 
           // Broadcast notification to new runner
-          const channelName = `commission_notify_${nextRunner.id}`;
+          const channelName = `commission_notify_${nextRunnerId}`;
           const broadcastChannel = supabase.channel(channelName);
           await broadcastChannel.send({
             type: 'broadcast',
@@ -689,7 +440,7 @@ serve(async (req) => {
           });
 
           result.processed.commissions.reassigned++;
-          console.log(`[Reassign Timeout] ✅ Reassigned commission ${commission.id} to runner ${nextRunner.id}`);
+          console.log(`[Reassign Timeout] ✅ Reassigned commission ${commission.id} to runner ${nextRunnerId} (queue index ${currentQueueIndex})`);
 
         } catch (error) {
           result.processed.commissions.errors++;

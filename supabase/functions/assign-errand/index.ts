@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { rankRunners, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking";
 
 // CORS headers for browser compatibility
 const corsHeaders = {
@@ -154,29 +155,7 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ status: "no_runners_within_distance" }), 200);
     }
 
-    // A5: Haversine distance calculation function (audit-aligned)
-    function calculateDistanceKm(
-      lat1: number,
-      lon1: number,
-      lat2: number,
-      lon2: number
-    ): number {
-      const R = 6371; // Earth radius in km
-      const toRad = (deg: number) => (deg * Math.PI) / 180;
-
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(toRad(lat1)) *
-          Math.cos(toRad(lat2)) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
-
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    }
+    // Distance calculation now uses shared module (calculateDistanceKm imported)
 
     // A5: Apply distance hard filter (≤ 500m)
     const filteredRunners = runners.filter((runner) => {
@@ -227,204 +206,31 @@ serve(async (req) => {
       );
     }
 
-    // A6: TF-IDF & Cosine Similarity Utilities (exact replication)
-    function calculateTF(term: string, document: string[]): number {
-      if (document.length === 0) return 0;
-      const termCount = document.filter(word => word === term).length;
-      return termCount / document.length;
-    }
-
-    function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
-      if (totalTasks === 0) return 0;
-      const tasksWithCategory = taskCategories.filter(taskCats => 
-        taskCats.some(cat => cat === term.toLowerCase())
-      ).length;
-      return tasksWithCategory / totalTasks;
-    }
-
-    function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
-      const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
-      if (documentsContainingTerm === 0) return 0;
-      
-      // IDF smoothing: return 0.1 when term appears in all documents (prevents zero IDF)
-      if (documentsContainingTerm === allDocuments.length) {
-        return 0.1;
-      }
-      
-      return Math.log(allDocuments.length / documentsContainingTerm);
-    }
-
-    function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
-      const uniqueTerms = Array.from(new Set(document));
-      const tfidfMap = new Map<string, number>();
-      
-      uniqueTerms.forEach(term => {
-        const tf = calculateTF(term, document);
-        const idf = calculateIDFAdjusted(term, allDocuments);
-        tfidfMap.set(term, tf * idf);
-      });
-      
-      return tfidfMap;
-    }
-
-    function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
-      const allTerms = new Set<string>();
-      taskCategories.forEach(taskCats => {
-        taskCats.forEach(cat => allTerms.add(cat.toLowerCase()));
-      });
-      
-      const tfidfMap = new Map<string, number>();
-      
-      allTerms.forEach(term => {
-        const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks);
-        const idf = calculateIDFAdjusted(term, allDocuments);
-        tfidfMap.set(term, tf * idf);
-      });
-      
-      return tfidfMap;
-    }
-
-    function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
-      const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
-      
-      let dotProduct = 0;
-      let magnitude1 = 0;
-      let magnitude2 = 0;
-      
-      allTerms.forEach(term => {
-        const val1 = vector1.get(term) || 0;
-        const val2 = vector2.get(term) || 0;
-        dotProduct += val1 * val2;
-        magnitude1 += val1 * val1;
-        magnitude2 += val2 * val2;
-      });
-      
-      const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
-      if (denominator === 0) return 0;
-      
-      return dotProduct / denominator;
-    }
-
-    function calculateTFIDFCosineSimilarity(
-      commissionCategories: string[],
-      runnerHistory: string[],
-      runnerTaskCategories: string[][] = [],
-      runnerTotalTasks: number = 0
-    ): number {
-      if (commissionCategories.length === 0 || runnerHistory.length === 0) {
-        return 0;
-      }
-      
-      const queryDoc = commissionCategories.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
-      const runnerDoc = runnerHistory.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
-      
-      if (queryDoc.length === 0 || runnerDoc.length === 0) {
-        return 0;
-      }
-      
-      // Build document corpus: exactly 2 documents (query and runner)
-      const allDocuments = [queryDoc, runnerDoc];
-      
-      // Construct TF-IDF vectors
-      const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
-      let runnerVector: Map<string, number>;
-      
-      if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-        // Use task-based TF calculation (preferred)
-        runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
-      } else {
-        // Fallback to token-based TF calculation
-        runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
-      }
-      
-      // Calculate cosine similarity
-      const similarity = cosineSimilarity(queryVector, runnerVector);
-      const finalScore = isNaN(similarity) ? 0 : similarity;
-      
-      return finalScore;
-    }
-
-    // A6: Normalize errand categories for TF-IDF query (empty array allowed)
+    // Normalize errand categories for ranking (empty array allowed)
     const errandCategories =
       errand.category && errand.category.trim().length > 0
         ? [errand.category.trim().toLowerCase()]
         : [];
 
-    // A6: Compute per-runner scores (sequential execution)
-    const rankedRunners: Array<{
-      id: string;
-      distance: number;
-      distanceScore: number;
-      ratingScore: number;
-      tfidfScore: number;
-      finalScore: number;
-    }> = [];
-
-    for (const runner of filteredRunners) {
-      // Calculate distance in meters (already filtered, but need for score)
-      const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-      const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-      const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
-      const distanceMeters = distanceKm * 1000;
-
-      // 1️⃣ Distance score
-      const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
-
-      // 2️⃣ Rating score
-      const ratingScore = (runner.average_rating || 0) / 5;
-
-      // 3️⃣ TF-IDF score
-      // Fetch runner category history (sequential, per runner)
-      const { data: historyData, error: historyError } = await supabase
-        .from("errand")
-        .select("category")
-        .eq("runner_id", runner.id)
-        .eq("status", "completed");
-
-      let tfidfScore = 0;
-      
-      if (!historyError && historyData && historyData.length > 0) {
-        const totalTasks = historyData.length;
-        const taskCategories: string[][] = [];
-        
-        historyData.forEach((completedErrand: any) => {
-          if (!completedErrand.category) return;
-          taskCategories.push([completedErrand.category.trim().toLowerCase()]);
-        });
-        
-        const runnerHistory = taskCategories.flat();
-        
-        tfidfScore = calculateTFIDFCosineSimilarity(
-          errandCategories,
-          runnerHistory,
-          taskCategories,
-          totalTasks
-        );
+    // QUEUE-BASED RANKING: Rank runners ONCE and store queue
+    // This prevents re-ranking on timeout, eliminating UI glitching
+    const rankedRunners = await rankRunners(
+      filteredRunners as RunnerForRanking[],
+      errandCategories,
+      callerLat,
+      callerLon,
+      async (runnerId: string) => {
+        // Fetch runner category history for TF-IDF
+        const { data: historyData } = await supabase
+          .from("errand")
+          .select("category")
+          .eq("runner_id", runnerId)
+          .eq("status", "completed");
+        return historyData || [];
       }
+    );
 
-      // Calculate final weighted score
-      const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
-
-      rankedRunners.push({
-        id: runner.id,
-        distance: distanceMeters,
-        distanceScore: distanceScore,
-        ratingScore: ratingScore,
-        tfidfScore: tfidfScore,
-        finalScore: finalScore,
-      });
-    }
-
-    // A6: Sort and rank runners
-    rankedRunners.sort((a, b) => {
-      // Primary: finalScore descending
-      if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-      // Tie-breaker: distance ascending
-      return a.distance - b.distance;
-    });
-
-    // A7.1: Dry-Run Assignment (NO DB WRITES)
-    // Determine which runner WOULD be assigned without modifying the database
+    // Check if no runners to assign
     if (rankedRunners.length === 0) {
       return corsResponse(
         JSON.stringify({
@@ -434,7 +240,10 @@ serve(async (req) => {
       );
     }
 
-    // Get top runner (would be assigned)
+    // Extract runner IDs in ranked order for queue storage
+    const rankedRunnerIds = rankedRunners.map(r => r.id);
+
+    // Get top runner (index 0)
     const topRunner = rankedRunners[0];
 
     // A7.2: Real Assignment
@@ -444,27 +253,23 @@ serve(async (req) => {
     // Generate assignment timestamp
     const assignedAt = new Date().toISOString();
 
-    // Prepare timeout_runner_ids update (append topRunner.id if not already present)
-    let updatedTimeoutRunnerIds: string[];
+    // QUEUE-BASED ASSIGNMENT: Store queue and assign index 0
+    // Prepare timeout_runner_ids (kept for backward compatibility, not used for selection)
+    let updatedTimeoutRunnerIds: string[] = [];
     if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids)) {
-      // Append only if not already present
-      if (!errand.timeout_runner_ids.includes(topRunner.id)) {
-        updatedTimeoutRunnerIds = [...errand.timeout_runner_ids, topRunner.id];
-      } else {
-        updatedTimeoutRunnerIds = errand.timeout_runner_ids;
-      }
-    } else {
-      // Initialize as array with topRunner.id
-      updatedTimeoutRunnerIds = [topRunner.id];
+      updatedTimeoutRunnerIds = errand.timeout_runner_ids;
     }
 
     // Perform DB update (only if errand is still unassigned and pending)
+    // Store ranked_runner_ids queue and set current_queue_index = 0
     const { data: updateData, error: updateError } = await supabase
       .from("errand")
       .update({
         notified_runner_id: topRunner.id,
         notified_at: assignedAt,
-        timeout_runner_ids: updatedTimeoutRunnerIds,
+        ranked_runner_ids: rankedRunnerIds,  // Store complete queue
+        current_queue_index: 0,  // Start at index 0
+        timeout_runner_ids: updatedTimeoutRunnerIds,  // Backward compatibility only
         is_notified: true,
       })
       .eq("id", errand.id)

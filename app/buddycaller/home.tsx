@@ -2113,6 +2113,59 @@ function HomeWeb() {
         };
     }, [router, isWeb, webPhase3Ready]);
 
+    // Monitor caller notifications for task cancellation (queue exhaustion)
+    React.useEffect(() => {
+        if (isWeb && !webPhase3Ready) return;
+        const setupCallerNotificationMonitoring = async () => {
+            const user = await getCallerAuthUser('WEB_CALLER_NOTIFICATION_MONITOR_GET_USER');
+            if (!user) return;
+
+            logCaller(`Caller notification monitor: Setting up monitoring for user: ${user.id.substring(0, 8)}`);
+
+            const callerNotifyChannel = supabase
+                .channel(`caller_notify_${user.id}`)
+                .on(
+                    'broadcast',
+                    { event: 'task_cancelled' },
+                    (payload) => {
+                        logCaller(`Caller notification monitor: Received task_cancelled event:`, payload);
+                        const { task_id, task_type, task_title, reason } = payload.payload || {};
+                        
+                        if (reason === 'no_runners_available') {
+                            if (task_type === 'errand') {
+                                noRunnersAvailableService.notify({
+                                    type: 'errand',
+                                    errandId: task_id,
+                                    errandTitle: task_title || 'Untitled Errand'
+                                });
+                                logCaller(`Caller notification monitor: ✅ Triggered NoRunnersAvailable modal for errand ${task_id}`);
+                            } else if (task_type === 'commission') {
+                                noRunnersAvailableService.notify({
+                                    type: 'commission',
+                                    commissionId: task_id,
+                                    commissionTitle: task_title || 'Untitled Commission'
+                                });
+                                logCaller(`Caller notification monitor: ✅ Triggered NoRunnersAvailable modal for commission ${task_id}`);
+                            }
+                        }
+                    }
+                )
+                .subscribe((status) => {
+                    logCaller(`Caller notification monitor: Subscription status: ${status}`);
+                });
+
+            return () => {
+                logCaller("Caller notification monitor: Cleaning up subscription");
+                supabase.removeChannel(callerNotifyChannel);
+            };
+        };
+
+        const cleanup = setupCallerNotificationMonitoring();
+        return () => {
+            cleanup.then(cleanupFn => cleanupFn?.());
+        };
+    }, [isWeb, webPhase3Ready]);
+
     const requestLogout = () => setConfirmOpen(true);
     const performLogout = async () => {
         if (loggingOut) return;
@@ -3044,6 +3097,58 @@ function HomeMobile() {
         };
 
         const cleanup = setupErrandMonitoring();
+        return () => {
+            cleanup.then(cleanupFn => cleanupFn?.());
+        };
+    }, [router]);
+
+    // Monitor caller notifications for task cancellation (queue exhaustion) - Mobile
+    React.useEffect(() => {
+        const setupCallerNotificationMonitoring = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+
+            logCaller(`Caller notification monitor (mobile): Setting up monitoring for user: ${user.id.substring(0, 8)}`);
+
+            const callerNotifyChannel = supabase
+                .channel(`caller_notify_${user.id}`)
+                .on(
+                    'broadcast',
+                    { event: 'task_cancelled' },
+                    (payload) => {
+                        logCaller(`Caller notification monitor (mobile): Received task_cancelled event:`, payload);
+                        const { task_id, task_type, task_title, reason } = payload.payload || {};
+                        
+                        if (reason === 'no_runners_available') {
+                            if (task_type === 'errand') {
+                                noRunnersAvailableService.notify({
+                                    type: 'errand',
+                                    errandId: task_id,
+                                    errandTitle: task_title || 'Untitled Errand'
+                                });
+                                logCaller(`Caller notification monitor (mobile): ✅ Triggered NoRunnersAvailable modal for errand ${task_id}`);
+                            } else if (task_type === 'commission') {
+                                noRunnersAvailableService.notify({
+                                    type: 'commission',
+                                    commissionId: task_id,
+                                    commissionTitle: task_title || 'Untitled Commission'
+                                });
+                                logCaller(`Caller notification monitor (mobile): ✅ Triggered NoRunnersAvailable modal for commission ${task_id}`);
+                            }
+                        }
+                    }
+                )
+                .subscribe((status) => {
+                    logCaller(`Caller notification monitor (mobile): Subscription status: ${status}`);
+                });
+
+            return () => {
+                logCaller("Caller notification monitor (mobile): Cleaning up subscription");
+                supabase.removeChannel(callerNotifyChannel);
+            };
+        };
+
+        const cleanup = setupCallerNotificationMonitoring();
         return () => {
             cleanup.then(cleanupFn => cleanupFn?.());
         };

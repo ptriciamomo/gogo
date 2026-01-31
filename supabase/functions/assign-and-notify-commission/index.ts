@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { rankRunners, RunnerForRanking, calculateDistanceKm } from "../_shared/runner-ranking.ts";
 
 serve(async (req) => {
   // Initialize Supabase client with service role key
@@ -142,28 +143,14 @@ serve(async (req) => {
       );
     }
 
-    // Haversine distance calculation function
-    function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-      const R = 6371; // Earth radius in km
-      const toRad = (deg: number) => (deg * Math.PI) / 180;
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(toRad(lat1)) *
-          Math.cos(toRad(lat2)) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    }
-
-    // Apply distance hard filter (≤ 500m)
+    // Apply distance hard filter (≤ 500m) - filter before ranking
     const filteredRunners = runners.filter((runner) => {
       if (!runner.latitude || !runner.longitude) return false;
       const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
       const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
       if (!lat || !lon || isNaN(lat) || isNaN(lon)) return false;
+      
+      // Use shared distance calculation
       const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
       const distanceMeters = distanceKm * 1000;
       return distanceMeters <= 500;
@@ -176,174 +163,49 @@ serve(async (req) => {
       );
     }
 
-    // Parse commission types
+    // Parse commission types for ranking
     const commissionTypes = commission.commission_type 
       ? commission.commission_type.split(',').map(t => t.trim()).filter(t => t.length > 0)
       : [];
-
-    // TF-IDF & Cosine Similarity Utilities
-    function calculateTF(term: string, document: string[]): number {
-      if (document.length === 0) return 0;
-      const termCount = document.filter(word => word === term).length;
-      return termCount / document.length;
-    }
-
-    function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
-      if (totalTasks === 0) return 0;
-      const tasksWithCategory = taskCategories.filter(taskCats => 
-        taskCats.some(cat => cat === term.toLowerCase())
-      ).length;
-      return tasksWithCategory / totalTasks;
-    }
-
-    function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
-      const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
-      if (documentsContainingTerm === 0) return 0;
-      if (documentsContainingTerm === allDocuments.length) return 0.1;
-      return Math.log(allDocuments.length / documentsContainingTerm);
-    }
-
-    function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
-      const uniqueTerms = Array.from(new Set(document));
-      const tfidfMap = new Map<string, number>();
-      uniqueTerms.forEach(term => {
-        const tf = calculateTF(term, document);
-        const idf = calculateIDFAdjusted(term, allDocuments);
-        tfidfMap.set(term, tf * idf);
-      });
-      return tfidfMap;
-    }
-
-    function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
-      const allTerms = new Set<string>();
-      taskCategories.forEach(taskCats => {
-        taskCats.forEach(cat => allTerms.add(cat.toLowerCase()));
-      });
-      const tfidfMap = new Map<string, number>();
-      allTerms.forEach(term => {
-        const tf = calculateTFWithTaskCount(term, taskCategories, totalTasks);
-        const idf = calculateIDFAdjusted(term, allDocuments);
-        tfidfMap.set(term, tf * idf);
-      });
-      return tfidfMap;
-    }
-
-    function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
-      const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
-      let dotProduct = 0;
-      let magnitude1 = 0;
-      let magnitude2 = 0;
-      allTerms.forEach(term => {
-        const val1 = vector1.get(term) || 0;
-        const val2 = vector2.get(term) || 0;
-        dotProduct += val1 * val2;
-        magnitude1 += val1 * val1;
-        magnitude2 += val2 * val2;
-      });
-      const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
-      if (denominator === 0) return 0;
-      return dotProduct / denominator;
-    }
-
-    function calculateTFIDFCosineSimilarity(
-      commissionCategories: string[],
-      runnerHistory: string[],
-      runnerTaskCategories: string[][] = [],
-      runnerTotalTasks: number = 0
-    ): number {
-      if (commissionCategories.length === 0 || runnerHistory.length === 0) {
-        return 0;
-      }
-      const queryDoc = commissionCategories.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
-      const runnerDoc = runnerHistory.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
-      if (queryDoc.length === 0 || runnerDoc.length === 0) {
-        return 0;
-      }
-      const allDocuments = [queryDoc, runnerDoc];
-      const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
-      let runnerVector: Map<string, number>;
-      if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-        runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
-      } else {
-        runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
-      }
-      const similarity = cosineSimilarity(queryVector, runnerVector);
-      return isNaN(similarity) ? 0 : similarity;
-    }
-
-    // Normalize commission types for TF-IDF query
+    
+    // Normalize commission types for ranking (empty array allowed)
     const normalizedCommissionTypes = commissionTypes.length > 0
       ? commissionTypes.map(t => t.trim().toLowerCase()).filter(t => t.length > 0)
       : [];
 
-    // Compute per-runner scores
-    const rankedRunners: Array<{
-      id: string;
-      distance: number;
-      distanceScore: number;
-      ratingScore: number;
-      tfidfScore: number;
-      finalScore: number;
-    }> = [];
-
-    for (const runner of filteredRunners) {
-      const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-      const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-      const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
-      const distanceMeters = distanceKm * 1000;
-
-      // Distance score
-      const distanceScore = Math.max(0, 1 - (distanceMeters / 500));
-
-      // Rating score
-      const ratingScore = (runner.average_rating || 0) / 5;
-
-      // TF-IDF score
-      let tfidfScore = 0;
-      if (normalizedCommissionTypes.length > 0) {
+    // QUEUE-BASED RANKING: Rank runners ONCE and store queue
+    // This prevents re-ranking on timeout, eliminating UI glitching
+    const rankedRunners = await rankRunners(
+      filteredRunners as RunnerForRanking[],
+      normalizedCommissionTypes,
+      callerLat,
+      callerLon,
+      async (runnerId: string) => {
+        // Fetch runner commission history for TF-IDF
+        // Transform commission_type (comma-separated) to category format for shared module
         const { data: historyData } = await supabase
           .from("commission")
           .select("commission_type")
-          .eq("runner_id", runner.id)
+          .eq("runner_id", runnerId)
           .eq("status", "completed");
-
+        
+        // Transform commission_type to category format expected by shared module
+        // Each commission_type becomes a category entry
         if (historyData && historyData.length > 0) {
-          const totalTasks = historyData.length;
-          const taskCategories: string[][] = [];
-          historyData.forEach((c: any) => {
-            if (!c.commission_type) return;
-            const types = c.commission_type.split(',').map((t: string) => t.trim().toLowerCase());
-            taskCategories.push(types);
+          return historyData.map((c: any) => {
+            // Use first commission type as category, or join all types
+            if (c.commission_type) {
+              const types = c.commission_type.split(',').map((t: string) => t.trim().toLowerCase());
+              return { category: types[0] || null }; // Use first type as primary category
+            }
+            return { category: null };
           });
-          const runnerHistory = taskCategories.flat();
-          tfidfScore = calculateTFIDFCosineSimilarity(
-            normalizedCommissionTypes,
-            runnerHistory,
-            taskCategories,
-            totalTasks
-          );
         }
+        return [];
       }
+    );
 
-      // Final weighted score
-      const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
-
-      rankedRunners.push({
-        id: runner.id,
-        distance: distanceMeters,
-        distanceScore: distanceScore,
-        ratingScore: ratingScore,
-        tfidfScore: tfidfScore,
-        finalScore: finalScore,
-      });
-    }
-
-    // Sort and rank runners
-    rankedRunners.sort((a, b) => {
-      if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-      return a.distance - b.distance;
-    });
-
+    // Check if no runners to assign
     if (rankedRunners.length === 0) {
       return new Response(
         JSON.stringify({ status: "no_runner_to_assign" }),
@@ -351,28 +213,30 @@ serve(async (req) => {
       );
     }
 
+    // Extract runner IDs in ranked order for queue storage
+    const rankedRunnerIds = rankedRunners.map(r => r.id);
+
+    // Get top runner (index 0)
     const topRunner = rankedRunners[0];
     const assignedAt = new Date().toISOString();
 
-    // Prepare timeout_runner_ids update
-    let updatedTimeoutRunnerIds: string[];
+    // QUEUE-BASED ASSIGNMENT: Store queue and assign index 0
+    // Prepare timeout_runner_ids (kept for backward compatibility, not used for selection)
+    let updatedTimeoutRunnerIds: string[] = [];
     if (commission.timeout_runner_ids && Array.isArray(commission.timeout_runner_ids)) {
-      if (!commission.timeout_runner_ids.includes(topRunner.id)) {
-        updatedTimeoutRunnerIds = [...commission.timeout_runner_ids, topRunner.id];
-      } else {
-        updatedTimeoutRunnerIds = commission.timeout_runner_ids;
-      }
-    } else {
-      updatedTimeoutRunnerIds = [topRunner.id];
+      updatedTimeoutRunnerIds = commission.timeout_runner_ids;
     }
 
-    // Perform DB update (atomic: only if still unassigned and pending)
+    // Perform DB update (only if commission is still unassigned and pending)
+    // Store ranked_runner_ids queue and set current_queue_index = 0
     const { data: updateData, error: updateError } = await supabase
       .from("commission")
       .update({
         notified_runner_id: topRunner.id,
         notified_at: assignedAt,
-        timeout_runner_ids: updatedTimeoutRunnerIds,
+        ranked_runner_ids: rankedRunnerIds,  // Store complete queue
+        current_queue_index: 0,  // Start at index 0
+        timeout_runner_ids: updatedTimeoutRunnerIds,  // Backward compatibility only
         is_notified: true,
       })
       .eq("id", commission.id)

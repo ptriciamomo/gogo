@@ -744,7 +744,9 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                                     .order("first_name", { ascending: true });
 
                                 // If the is_available field doesn't exist, fall back to getting all runners
-                                if (error && error.message.includes('column "is_available" does not exist')) {
+                                if (error && typeof error === 'object' && 'message' in error && 
+                                    typeof (error as { message?: string }).message === 'string' &&
+                                    (error as { message: string }).message.includes('column "is_available" does not exist')) {
                                     if (Platform.OS === 'web' && __DEV__) {
                                         webPerfTimeEnd('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                                         webPerfTime('WEB_CALLER_AVAILABLE_RUNNERS_FALLBACK_QUERY');
@@ -807,7 +809,9 @@ function useAvailableRunners(options?: { enableInitialFetch?: boolean }) {
                     .order("first_name", { ascending: true });
 
                 // If the is_available field doesn't exist, fall back to getting all runners
-                if (error && error.message.includes('column "is_available" does not exist')) {
+                if (error && typeof error === 'object' && 'message' in error && 
+                    typeof (error as { message?: string }).message === 'string' &&
+                    (error as { message: string }).message.includes('column "is_available" does not exist')) {
                     if (Platform.OS === 'web' && __DEV__) {
                         webPerfTimeEnd('WEB_CALLER_AVAILABLE_RUNNERS_QUERY');
                         webPerfTime('WEB_CALLER_AVAILABLE_RUNNERS_FALLBACK_QUERY');
@@ -1907,7 +1911,13 @@ function HomeWeb() {
                         // Use warn instead of error for expected polling failures (network issues, etc.)
                         const errorMsg = error instanceof Error 
                             ? error.message 
-                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                            : (error && typeof error === 'object' && 'message' in error
+                                ? (error as { message?: string; details?: string; hint?: string }).message || 
+                                  (error as { message?: string; details?: string; hint?: string }).details || 
+                                  (error as { message?: string; details?: string; hint?: string }).hint || 
+                                  JSON.stringify(error) || 
+                                  String(error)
+                                : String(error));
                         logCallerWarn("Commission monitor: Polling error", errorMsg);
                         return;
                     }
@@ -1929,8 +1939,11 @@ function HomeWeb() {
                     // Use warn instead of error for expected polling failures (network issues, etc.)
                     const errorMsg = error instanceof Error 
                         ? error.message 
-                        : (error && typeof error === 'object' 
-                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                        : (error && typeof error === 'object' && ('message' in error || 'details' in error || 'hint' in error)
+                            ? ((error as { message?: string; details?: string; hint?: string }).message || 
+                               (error as { message?: string; details?: string; hint?: string }).details || 
+                               (error as { message?: string; details?: string; hint?: string }).hint || 
+                               JSON.stringify(error))
                             : String(error));
                     logCallerWarn("Commission monitor: Polling error", errorMsg);
                 }
@@ -2014,6 +2027,181 @@ function HomeWeb() {
         };
     }, [router, isWeb, webPhase3Ready]);
 
+    // Monitor for timeout-based cancellations (row-based modal trigger)
+    React.useEffect(() => {
+        if (isWeb && !webPhase3Ready) return;
+        const setupCancellationMonitoring = async () => {
+            const user = await getCallerAuthUser('WEB_CALLER_CANCELLATION_MONITOR_GET_USER');
+            if (!user) return;
+
+            logCaller(`Cancellation monitor: Setting up row-based cancellation monitoring for user: ${user.id.substring(0, 8)}`);
+
+            // Track handled task IDs to prevent duplicate modals
+            const handledTaskIds = new Set<string>();
+
+            // Monitor errand cancellations
+            const errandCancellationChannel = supabase
+                .channel(`errand_cancellation_${user.id}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'errand',
+                        filter: `buddycaller_id=eq.${user.id}`
+                    },
+                    (payload) => {
+                        const oldData = payload.old as any;
+                        const newData = payload.new as any;
+                        const taskId = String(newData?.id || '');
+
+                        // DEBUG: Log all realtime events
+                        console.log('[CANCELLATION MONITOR] Errand update received:', {
+                            taskId,
+                            oldStatus: oldData?.status,
+                            newStatus: newData?.status,
+                            oldRunnerId: oldData?.runner_id,
+                            newRunnerId: newData?.runner_id,
+                            oldNotifiedRunnerId: oldData?.notified_runner_id,
+                            newNotifiedRunnerId: newData?.notified_runner_id,
+                            timeoutRunnerIds: newData?.timeout_runner_ids,
+                            timeoutRunnerIdsLength: Array.isArray(newData?.timeout_runner_ids) ? newData.timeout_runner_ids.length : 0,
+                            alreadyHandled: handledTaskIds.has(taskId)
+                        });
+
+                        // Check all conditions for timeout-based cancellation
+                        const condition1 = newData?.status === 'cancelled';
+                        const condition2 = oldData?.status === 'pending';
+                        const condition3 = newData?.runner_id === null;
+                        const condition4 = newData?.notified_runner_id === null;
+                        const condition5 = Array.isArray(newData?.timeout_runner_ids) && newData.timeout_runner_ids.length > 0;
+                        const condition6 = oldData?.notified_runner_id !== null;
+                        const condition7 = !handledTaskIds.has(taskId);
+
+                        console.log('[CANCELLATION MONITOR] Condition check:', {
+                            condition1,
+                            condition2,
+                            condition3,
+                            condition4,
+                            condition5,
+                            condition6,
+                            condition7,
+                            allConditionsMet: condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7
+                        });
+
+                        if (condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7) {
+                            handledTaskIds.add(taskId);
+                            console.log('[CANCELLATION MONITOR] ✅ ALL CONDITIONS MET - Triggering modal for errand', taskId);
+                            logCaller(`Cancellation monitor: ✅ Triggering modal for cancelled errand ${taskId}`);
+                            
+                            noRunnersAvailableService.notify({
+                                type: 'errand',
+                                errandId: Number(taskId),
+                                errandTitle: newData.title || 'Untitled Errand'
+                            });
+
+                            // Clean up handled ID after 5 seconds to allow re-trigger if needed
+                            setTimeout(() => {
+                                handledTaskIds.delete(taskId);
+                                console.log('[CANCELLATION MONITOR] Cleared handled ID for errand', taskId);
+                            }, 5000);
+                        } else {
+                            console.log('[CANCELLATION MONITOR] Conditions not met, skipping modal trigger');
+                        }
+                    }
+                )
+                .subscribe((status) => {
+                    logCaller(`Cancellation monitor: Errand subscription status: ${status}`);
+                });
+
+            // Monitor commission cancellations
+            const commissionCancellationChannel = supabase
+                .channel(`commission_cancellation_${user.id}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'commission',
+                        filter: `buddycaller_id=eq.${user.id}`
+                    },
+                    (payload) => {
+                        const oldData = payload.old as any;
+                        const newData = payload.new as any;
+                        const taskId = String(newData?.id || '');
+
+                        // DEBUG: Log all realtime events
+                        console.log('[CANCELLATION MONITOR] Commission update received:', {
+                            taskId,
+                            oldStatus: oldData?.status,
+                            newStatus: newData?.status,
+                            oldRunnerId: oldData?.runner_id,
+                            newRunnerId: newData?.runner_id,
+                            oldNotifiedRunnerId: oldData?.notified_runner_id,
+                            newNotifiedRunnerId: newData?.notified_runner_id,
+                            timeoutRunnerIds: newData?.timeout_runner_ids,
+                            timeoutRunnerIdsLength: Array.isArray(newData?.timeout_runner_ids) ? newData.timeout_runner_ids.length : 0,
+                            alreadyHandled: handledTaskIds.has(taskId)
+                        });
+
+                        // Check all conditions for timeout-based cancellation
+                        const condition1 = newData?.status === 'cancelled';
+                        const condition2 = oldData?.status === 'pending';
+                        const condition3 = newData?.runner_id === null;
+                        const condition4 = newData?.notified_runner_id === null;
+                        const condition5 = Array.isArray(newData?.timeout_runner_ids) && newData.timeout_runner_ids.length > 0;
+                        const condition6 = oldData?.notified_runner_id !== null;
+                        const condition7 = !handledTaskIds.has(taskId);
+
+                        console.log('[CANCELLATION MONITOR] Condition check:', {
+                            condition1,
+                            condition2,
+                            condition3,
+                            condition4,
+                            condition5,
+                            condition6,
+                            condition7,
+                            allConditionsMet: condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7
+                        });
+
+                        if (condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7) {
+                            handledTaskIds.add(taskId);
+                            console.log('[CANCELLATION MONITOR] ✅ ALL CONDITIONS MET - Triggering modal for commission', taskId);
+                            logCaller(`Cancellation monitor: ✅ Triggering modal for cancelled commission ${taskId}`);
+                            
+                            noRunnersAvailableService.notify({
+                                type: 'commission',
+                                commissionId: Number(taskId),
+                                commissionTitle: newData.title || 'Untitled Commission'
+                            });
+
+                            // Clean up handled ID after 5 seconds to allow re-trigger if needed
+                            setTimeout(() => {
+                                handledTaskIds.delete(taskId);
+                                console.log('[CANCELLATION MONITOR] Cleared handled ID for commission', taskId);
+                            }, 5000);
+                        } else {
+                            console.log('[CANCELLATION MONITOR] Conditions not met, skipping modal trigger');
+                        }
+                    }
+                )
+                .subscribe((status) => {
+                    logCaller(`Cancellation monitor: Commission subscription status: ${status}`);
+                });
+
+            return () => {
+                logCaller("Cancellation monitor: Cleaning up subscriptions");
+                supabase.removeChannel(errandCancellationChannel);
+                supabase.removeChannel(commissionCancellationChannel);
+            };
+        };
+
+        const cleanup = setupCancellationMonitoring();
+        return () => {
+            cleanup.then(cleanupFn => cleanupFn?.());
+        };
+    }, [isWeb, webPhase3Ready]);
+
     // Monitor errand acceptance and redirect to map
     React.useEffect(() => {
         if (isWeb && !webPhase3Ready) return;
@@ -2059,7 +2247,13 @@ function HomeWeb() {
                         // Use warn instead of error for expected polling failures (network issues, etc.)
                         const errorMsg = error instanceof Error 
                             ? error.message 
-                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                            : (error && typeof error === 'object' && 'message' in error
+                                ? (error as { message?: string; details?: string; hint?: string }).message || 
+                                  (error as { message?: string; details?: string; hint?: string }).details || 
+                                  (error as { message?: string; details?: string; hint?: string }).hint || 
+                                  JSON.stringify(error) || 
+                                  String(error)
+                                : String(error));
                         logCallerWarn("Errand monitor: Polling error", errorMsg);
                         return;
                     }
@@ -2081,8 +2275,11 @@ function HomeWeb() {
                     // Use warn instead of error for expected polling failures (network issues, etc.)
                     const errorMsg = error instanceof Error 
                         ? error.message 
-                        : (error && typeof error === 'object' 
-                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                        : (error && typeof error === 'object' && ('message' in error || 'details' in error || 'hint' in error)
+                            ? ((error as { message?: string; details?: string; hint?: string }).message || 
+                               (error as { message?: string; details?: string; hint?: string }).details || 
+                               (error as { message?: string; details?: string; hint?: string }).hint || 
+                               JSON.stringify(error))
                             : String(error));
                     logCallerWarn("Errand monitor: Polling error", errorMsg);
                 }
@@ -2100,59 +2297,6 @@ function HomeWeb() {
             cleanup.then(cleanupFn => cleanupFn?.());
         };
     }, [router, isWeb, webPhase3Ready]);
-
-    // Monitor caller notifications for task cancellation (queue exhaustion)
-    React.useEffect(() => {
-        if (isWeb && !webPhase3Ready) return;
-        const setupCallerNotificationMonitoring = async () => {
-            const user = await getCallerAuthUser('WEB_CALLER_NOTIFICATION_MONITOR_GET_USER');
-            if (!user) return;
-
-            logCaller(`Caller notification monitor: Setting up monitoring for user: ${user.id.substring(0, 8)}`);
-
-            const callerNotifyChannel = supabase
-                .channel(`caller_notify_${user.id}`)
-                .on(
-                    'broadcast',
-                    { event: 'task_cancelled' },
-                    (payload) => {
-                        logCaller(`Caller notification monitor: Received task_cancelled event:`, payload);
-                        const { task_id, task_type, task_title, reason } = payload.payload || {};
-                        
-                        if (reason === 'no_runners_available') {
-                            if (task_type === 'errand') {
-                                noRunnersAvailableService.notify({
-                                    type: 'errand',
-                                    errandId: task_id,
-                                    errandTitle: task_title || 'Untitled Errand'
-                                });
-                                logCaller(`Caller notification monitor: ✅ Triggered NoRunnersAvailable modal for errand ${task_id}`);
-                            } else if (task_type === 'commission') {
-                                noRunnersAvailableService.notify({
-                                    type: 'commission',
-                                    commissionId: task_id,
-                                    commissionTitle: task_title || 'Untitled Commission'
-                                });
-                                logCaller(`Caller notification monitor: ✅ Triggered NoRunnersAvailable modal for commission ${task_id}`);
-                            }
-                        }
-                    }
-                )
-                .subscribe((status) => {
-                    logCaller(`Caller notification monitor: Subscription status: ${status}`);
-                });
-
-            return () => {
-                logCaller("Caller notification monitor: Cleaning up subscription");
-                supabase.removeChannel(callerNotifyChannel);
-            };
-        };
-
-        const cleanup = setupCallerNotificationMonitoring();
-        return () => {
-            cleanup.then(cleanupFn => cleanupFn?.());
-        };
-    }, [isWeb, webPhase3Ready]);
 
     const requestLogout = () => setConfirmOpen(true);
     const performLogout = async () => {
@@ -2882,7 +3026,13 @@ function HomeMobile() {
                         // Use warn instead of error for expected polling failures (network issues, etc.)
                         const errorMsg = error instanceof Error 
                             ? error.message 
-                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                            : (error && typeof error === 'object' && 'message' in error
+                                ? (error as { message?: string; details?: string; hint?: string }).message || 
+                                  (error as { message?: string; details?: string; hint?: string }).details || 
+                                  (error as { message?: string; details?: string; hint?: string }).hint || 
+                                  JSON.stringify(error) || 
+                                  String(error)
+                                : String(error));
                         logCallerWarn("Commission monitor: Polling error", errorMsg);
                         return;
                     }
@@ -2903,8 +3053,11 @@ function HomeMobile() {
                     // Use warn instead of error for expected polling failures (network issues, etc.)
                     const errorMsg = error instanceof Error 
                         ? error.message 
-                        : (error && typeof error === 'object' 
-                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                        : (error && typeof error === 'object' && ('message' in error || 'details' in error || 'hint' in error)
+                            ? ((error as { message?: string; details?: string; hint?: string }).message || 
+                               (error as { message?: string; details?: string; hint?: string }).details || 
+                               (error as { message?: string; details?: string; hint?: string }).hint || 
+                               JSON.stringify(error))
                             : String(error));
                     logCallerWarn("Commission monitor: Polling error", errorMsg);
                 }
@@ -3034,7 +3187,13 @@ function HomeMobile() {
                         // Use warn instead of error for expected polling failures (network issues, etc.)
                         const errorMsg = error instanceof Error 
                             ? error.message 
-                            : (error?.message || error?.details || error?.hint || JSON.stringify(error) || String(error));
+                            : (error && typeof error === 'object' && 'message' in error
+                                ? (error as { message?: string; details?: string; hint?: string }).message || 
+                                  (error as { message?: string; details?: string; hint?: string }).details || 
+                                  (error as { message?: string; details?: string; hint?: string }).hint || 
+                                  JSON.stringify(error) || 
+                                  String(error)
+                                : String(error));
                         logCallerWarn("Errand monitor: Polling error", errorMsg);
                         return;
                     }
@@ -3055,8 +3214,11 @@ function HomeMobile() {
                     // Use warn instead of error for expected polling failures (network issues, etc.)
                     const errorMsg = error instanceof Error 
                         ? error.message 
-                        : (error && typeof error === 'object' 
-                            ? (error.message || error.details || error.hint || JSON.stringify(error))
+                        : (error && typeof error === 'object' && ('message' in error || 'details' in error || 'hint' in error)
+                            ? ((error as { message?: string; details?: string; hint?: string }).message || 
+                               (error as { message?: string; details?: string; hint?: string }).details || 
+                               (error as { message?: string; details?: string; hint?: string }).hint || 
+                               JSON.stringify(error))
                             : String(error));
                     logCallerWarn("Errand monitor: Polling error", errorMsg);
                 }
@@ -3075,53 +3237,175 @@ function HomeMobile() {
         };
     }, [router]);
 
-    // Monitor caller notifications for task cancellation (queue exhaustion) - Mobile
+    // Monitor for timeout-based cancellations (row-based modal trigger) - Mobile
     React.useEffect(() => {
-        const setupCallerNotificationMonitoring = async () => {
+        const setupCancellationMonitoring = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            logCaller(`Caller notification monitor (mobile): Setting up monitoring for user: ${user.id.substring(0, 8)}`);
+            logCaller(`Cancellation monitor (mobile): Setting up row-based cancellation monitoring for user: ${user.id.substring(0, 8)}`);
 
-            const callerNotifyChannel = supabase
-                .channel(`caller_notify_${user.id}`)
+            // Track handled task IDs to prevent duplicate modals
+            const handledTaskIds = new Set<string>();
+
+            // Monitor errand cancellations
+            const errandCancellationChannel = supabase
+                .channel(`errand_cancellation_mobile_${user.id}`)
                 .on(
-                    'broadcast',
-                    { event: 'task_cancelled' },
+                    'postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'errand',
+                        filter: `buddycaller_id=eq.${user.id}`
+                    },
                     (payload) => {
-                        logCaller(`Caller notification monitor (mobile): Received task_cancelled event:`, payload);
-                        const { task_id, task_type, task_title, reason } = payload.payload || {};
-                        
-                        if (reason === 'no_runners_available') {
-                            if (task_type === 'errand') {
-                                noRunnersAvailableService.notify({
-                                    type: 'errand',
-                                    errandId: task_id,
-                                    errandTitle: task_title || 'Untitled Errand'
-                                });
-                                logCaller(`Caller notification monitor (mobile): ✅ Triggered NoRunnersAvailable modal for errand ${task_id}`);
-                            } else if (task_type === 'commission') {
-                                noRunnersAvailableService.notify({
-                                    type: 'commission',
-                                    commissionId: task_id,
-                                    commissionTitle: task_title || 'Untitled Commission'
-                                });
-                                logCaller(`Caller notification monitor (mobile): ✅ Triggered NoRunnersAvailable modal for commission ${task_id}`);
-                            }
+                        const oldData = payload.old as any;
+                        const newData = payload.new as any;
+                        const taskId = String(newData?.id || '');
+
+                        // DEBUG: Log all realtime events
+                        console.log('[CANCELLATION MONITOR MOBILE] Errand update received:', {
+                            taskId,
+                            oldStatus: oldData?.status,
+                            newStatus: newData?.status,
+                            oldRunnerId: oldData?.runner_id,
+                            newRunnerId: newData?.runner_id,
+                            oldNotifiedRunnerId: oldData?.notified_runner_id,
+                            newNotifiedRunnerId: newData?.notified_runner_id,
+                            timeoutRunnerIds: newData?.timeout_runner_ids,
+                            timeoutRunnerIdsLength: Array.isArray(newData?.timeout_runner_ids) ? newData.timeout_runner_ids.length : 0,
+                            alreadyHandled: handledTaskIds.has(taskId)
+                        });
+
+                        // Check all conditions for timeout-based cancellation
+                        const condition1 = newData?.status === 'cancelled';
+                        const condition2 = oldData?.status === 'pending';
+                        const condition3 = newData?.runner_id === null;
+                        const condition4 = newData?.notified_runner_id === null;
+                        const condition5 = Array.isArray(newData?.timeout_runner_ids) && newData.timeout_runner_ids.length > 0;
+                        const condition6 = oldData?.notified_runner_id !== null;
+                        const condition7 = !handledTaskIds.has(taskId);
+
+                        console.log('[CANCELLATION MONITOR MOBILE] Condition check:', {
+                            condition1,
+                            condition2,
+                            condition3,
+                            condition4,
+                            condition5,
+                            condition6,
+                            condition7,
+                            allConditionsMet: condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7
+                        });
+
+                        if (condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7) {
+                            handledTaskIds.add(taskId);
+                            console.log('[CANCELLATION MONITOR MOBILE] ✅ ALL CONDITIONS MET - Triggering modal for errand', taskId);
+                            logCaller(`Cancellation monitor (mobile): ✅ Triggering modal for cancelled errand ${taskId}`);
+                            
+                            noRunnersAvailableService.notify({
+                                type: 'errand',
+                                errandId: Number(taskId),
+                                errandTitle: newData.title || 'Untitled Errand'
+                            });
+
+                            // Clean up handled ID after 5 seconds to allow re-trigger if needed
+                            setTimeout(() => {
+                                handledTaskIds.delete(taskId);
+                                console.log('[CANCELLATION MONITOR MOBILE] Cleared handled ID for errand', taskId);
+                            }, 5000);
+                        } else {
+                            console.log('[CANCELLATION MONITOR MOBILE] Conditions not met, skipping modal trigger');
                         }
                     }
                 )
                 .subscribe((status) => {
-                    logCaller(`Caller notification monitor (mobile): Subscription status: ${status}`);
+                    logCaller(`Cancellation monitor (mobile): Errand subscription status: ${status}`);
+                });
+
+            // Monitor commission cancellations
+            const commissionCancellationChannel = supabase
+                .channel(`commission_cancellation_mobile_${user.id}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'commission',
+                        filter: `buddycaller_id=eq.${user.id}`
+                    },
+                    (payload) => {
+                        const oldData = payload.old as any;
+                        const newData = payload.new as any;
+                        const taskId = String(newData?.id || '');
+
+                        // DEBUG: Log all realtime events
+                        console.log('[CANCELLATION MONITOR MOBILE] Commission update received:', {
+                            taskId,
+                            oldStatus: oldData?.status,
+                            newStatus: newData?.status,
+                            oldRunnerId: oldData?.runner_id,
+                            newRunnerId: newData?.runner_id,
+                            oldNotifiedRunnerId: oldData?.notified_runner_id,
+                            newNotifiedRunnerId: newData?.notified_runner_id,
+                            timeoutRunnerIds: newData?.timeout_runner_ids,
+                            timeoutRunnerIdsLength: Array.isArray(newData?.timeout_runner_ids) ? newData.timeout_runner_ids.length : 0,
+                            alreadyHandled: handledTaskIds.has(taskId)
+                        });
+
+                        // Check all conditions for timeout-based cancellation
+                        const condition1 = newData?.status === 'cancelled';
+                        const condition2 = oldData?.status === 'pending';
+                        const condition3 = newData?.runner_id === null;
+                        const condition4 = newData?.notified_runner_id === null;
+                        const condition5 = Array.isArray(newData?.timeout_runner_ids) && newData.timeout_runner_ids.length > 0;
+                        const condition6 = oldData?.notified_runner_id !== null;
+                        const condition7 = !handledTaskIds.has(taskId);
+
+                        console.log('[CANCELLATION MONITOR MOBILE] Condition check:', {
+                            condition1,
+                            condition2,
+                            condition3,
+                            condition4,
+                            condition5,
+                            condition6,
+                            condition7,
+                            allConditionsMet: condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7
+                        });
+
+                        if (condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7) {
+                            handledTaskIds.add(taskId);
+                            console.log('[CANCELLATION MONITOR MOBILE] ✅ ALL CONDITIONS MET - Triggering modal for commission', taskId);
+                            logCaller(`Cancellation monitor (mobile): ✅ Triggering modal for cancelled commission ${taskId}`);
+                            
+                            noRunnersAvailableService.notify({
+                                type: 'commission',
+                                commissionId: Number(taskId),
+                                commissionTitle: newData.title || 'Untitled Commission'
+                            });
+
+                            // Clean up handled ID after 5 seconds to allow re-trigger if needed
+                            setTimeout(() => {
+                                handledTaskIds.delete(taskId);
+                                console.log('[CANCELLATION MONITOR MOBILE] Cleared handled ID for commission', taskId);
+                            }, 5000);
+                        } else {
+                            console.log('[CANCELLATION MONITOR MOBILE] Conditions not met, skipping modal trigger');
+                        }
+                    }
+                )
+                .subscribe((status) => {
+                    logCaller(`Cancellation monitor (mobile): Commission subscription status: ${status}`);
                 });
 
             return () => {
-                logCaller("Caller notification monitor (mobile): Cleaning up subscription");
-                supabase.removeChannel(callerNotifyChannel);
+                logCaller("Cancellation monitor (mobile): Cleaning up subscriptions");
+                supabase.removeChannel(errandCancellationChannel);
+                supabase.removeChannel(commissionCancellationChannel);
             };
         };
 
-        const cleanup = setupCallerNotificationMonitoring();
+        const cleanup = setupCancellationMonitoring();
         return () => {
             cleanup.then(cleanupFn => cleanupFn?.());
         };

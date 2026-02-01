@@ -1172,6 +1172,7 @@ export default function ErrandForm() {
 
     const [posting, setPosting] = useState(false);
     const [successOpen, setSuccessOpen] = useState(false);
+    const [pendingNoRunnerModal, setPendingNoRunnerModal] = useState<null | { errandId: number; title: string }>(null);
 
     // location confirmation & posting state
     const [showLocationConfirm, setShowLocationConfirm] = useState(false);
@@ -1802,6 +1803,15 @@ export default function ErrandForm() {
                         );
                     } else {
                         console.log('✅ [ASSIGN-ERRAND] Assignment successful:', assignData);
+                        
+                        // Store cancellation state to show modal after Success modal
+                        if (assignData?.cancelled === true && assignData?.status === 'no_eligible_runners') {
+                            console.log('[CALLER] No eligible runners — will show modal after Success modal');
+                            setPendingNoRunnerModal({
+                                errandId: insertedData[0].id,
+                                title: insertedData[0].title || 'Untitled Errand'
+                            });
+                        }
                     }
                 } catch (edgeError: any) {
                     console.error('❌ [ASSIGN-ERRAND] Exception during invocation:', edgeError);
@@ -2163,9 +2173,26 @@ export default function ErrandForm() {
 
                 <PostSuccessModal
                     visible={successOpen}
-                    onClose={() => {
+                    onClose={async () => {
                         setSuccessOpen(false);
+                        // Restore original behavior: navigate away first
                         router.replace("/buddycaller/home?refresh=1");
+                        
+                        // Show "No Runners Available" modal if cancellation was detected
+                        // This happens after navigation, so the home page will receive it
+                        if (pendingNoRunnerModal) {
+                            console.log('[CALLER] Showing No Runners Available modal after Success modal');
+                            // Small delay to ensure navigation completes
+                            setTimeout(async () => {
+                                const { noRunnersAvailableService } = await import('../../services/NoRunnersAvailableService');
+                                noRunnersAvailableService.notify({
+                                    type: 'errand',
+                                    errandId: pendingNoRunnerModal.errandId,
+                                    errandTitle: pendingNoRunnerModal.title
+                                });
+                                setPendingNoRunnerModal(null);
+                            }, 100);
+                        }
                     }}
                 />
 

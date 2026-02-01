@@ -1385,6 +1385,8 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
 // Monitor errands and trigger notification if all runners have timed out
 async function monitorErrandsForTimeout(userId: string, errandId?: number) {
     try {
+        // Check for "all runners timed out" notification (when notified_runner_id is NULL)
+        // NOTE: Timeout enforcement (notified_expires_at) is handled by backend cron + Edge Function only
         // If specific errand ID provided, check only that one
         let errands;
         if (errandId) {
@@ -1458,6 +1460,8 @@ async function monitorErrandsForTimeout(userId: string, errandId?: number) {
 // Monitor commissions and trigger notification if all runners have timed out
 async function monitorCommissionsForTimeout(userId: string, commissionId?: number) {
     try {
+        // Check for "all runners timed out" notification (when notified_runner_id is NULL)
+        // NOTE: Timeout enforcement (notified_expires_at) is handled by backend cron + Edge Function only
         // If specific commission ID provided, check only that one
         let commissions;
         if (commissionId) {
@@ -1845,19 +1849,7 @@ function HomeWeb() {
         cleanupOldRedirects();
     }, [isWeb, webPhase2Ready]);
 
-    // Check for commissions and errands that need timeout notification on mount
-    React.useEffect(() => {
-        if (isWeb && !webPhase3Ready) return;
-        const checkOnMount = async () => {
-            const user = await getCallerAuthUser('WEB_CALLER_TIMEOUT_MONITOR_GET_USER');
-            if (user) {
-                logCaller('Timeout monitor: Checking for pending timeout notifications on mount');
-                monitorCommissionsForTimeout(user.id);
-                monitorErrandsForTimeout(user.id);
-            }
-        };
-        checkOnMount();
-    }, [isWeb, webPhase3Ready]);
+    // NOTE: Timeout enforcement removed from client - handled by backend cron + Edge Function only
 
     // Web-only: accepted popup before redirect
     const [acceptedOpen, setAcceptedOpen] = React.useState(false);
@@ -1944,11 +1936,8 @@ function HomeWeb() {
                 }
             }, 3000);
 
-            // Monitor commissions and errands for timeout (check every 5 seconds for more responsive detection)
-            const timeoutMonitorInterval = setInterval(() => {
-                monitorCommissionsForTimeout(user.id);
-                monitorErrandsForTimeout(user.id);
-            }, 5000);
+            // NOTE: Timeout enforcement (notified_expires_at) is handled by backend cron + Edge Function only
+            // Client no longer polls for timeouts - backend is single source of truth
 
             // Also monitor on commission updates - specifically when notified_runner_id becomes NULL
             const timeoutCheckChannel = supabase
@@ -2016,7 +2005,6 @@ function HomeWeb() {
                 supabase.removeChannel(timeoutCheckChannel);
                 supabase.removeChannel(errandTimeoutCheckChannel);
                 clearInterval(pollInterval);
-                clearInterval(timeoutMonitorInterval);
             };
         };
 
@@ -2844,18 +2832,7 @@ function HomeMobile() {
         cleanupOldRedirects();
     }, []);
 
-    // Check for commissions and errands that need timeout notification on mount
-    React.useEffect(() => {
-        const checkOnMount = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                logCaller('Timeout monitor: Checking for pending timeout notifications on mount');
-                monitorCommissionsForTimeout(user.id);
-                monitorErrandsForTimeout(user.id);
-            }
-        };
-        checkOnMount();
-    }, []);
+    // NOTE: Timeout enforcement removed from client - handled by backend cron + Edge Function only
 
     // Monitor commission acceptance and redirect to chat
     React.useEffect(() => {
@@ -2933,11 +2910,8 @@ function HomeMobile() {
                 }
             }, 3000);
 
-            // Monitor commissions and errands for timeout (check every 5 seconds for more responsive detection)
-            const timeoutMonitorInterval = setInterval(() => {
-                monitorCommissionsForTimeout(user.id);
-                monitorErrandsForTimeout(user.id);
-            }, 5000);
+            // NOTE: Timeout enforcement (notified_expires_at) is handled by backend cron + Edge Function only
+            // Client no longer polls for timeouts - backend is single source of truth
 
             // Also monitor on commission updates - specifically when notified_runner_id becomes NULL
             const timeoutCheckChannel = supabase
@@ -3003,7 +2977,6 @@ function HomeMobile() {
                 supabase.removeChannel(timeoutCheckChannel);
                 supabase.removeChannel(errandTimeoutCheckChannel);
                 clearInterval(pollInterval);
-                clearInterval(timeoutMonitorInterval);
             };
         };
 

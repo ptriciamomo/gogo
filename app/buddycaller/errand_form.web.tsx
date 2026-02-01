@@ -436,7 +436,10 @@ function CategoryDropdown({
                                                 <View style={s.categoryContent}>
                                                     <TouchableOpacity
                                                         style={s.checkboxContainer}
-                                                        onPress={() => handlePrintingSizeSelect("A3")}
+                                                        onPress={() => {
+                                                            const a3Size = printingSizes.find(s => s.label === "A3") || { id: "A3", label: "A3", price: 0 };
+                                                            handlePrintingSizeSelect(a3Size);
+                                                        }}
                                                         activeOpacity={0.8}
                                                     >
                                                         <View style={[s.checkbox, printingSize === "A3" && s.checkboxSelected]}>
@@ -446,7 +449,10 @@ function CategoryDropdown({
                                                     </TouchableOpacity>
                                                     <TouchableOpacity
                                                         style={s.checkboxContainer}
-                                                        onPress={() => handlePrintingSizeSelect("A4")}
+                                                        onPress={() => {
+                                                            const a4Size = printingSizes.find(s => s.label === "A4") || { id: "A4", label: "A4", price: 0 };
+                                                            handlePrintingSizeSelect(a4Size);
+                                                        }}
                                                         activeOpacity={0.8}
                                                     >
                                                         <View style={[s.checkbox, printingSize === "A4" && s.checkboxSelected]}>
@@ -1723,13 +1729,68 @@ export default function ErrandForm() {
             }
 
             const { error: insertError, data: insertedData } = await supabase.from("errand").insert([payload]).select();
+            
+            // DIAGNOSTIC LOG 1: Immediately after errand insert
+            console.log('🔍 [DIAGNOSTIC] Errand insert result:', {
+                hasInsertError: !!insertError,
+                insertError: insertError,
+                insertedData: insertedData,
+                insertedDataLength: insertedData?.length || 0,
+                insertedDataFirstId: insertedData?.[0]?.id || null
+            });
+            
             if (insertError) throw insertError;
+
+            // DIAGNOSTIC LOG 2: Right before conditional check
+            console.log('🔍 [DIAGNOSTIC] Before conditional check:', {
+                insertedDataExists: !!insertedData,
+                insertedDataLength: insertedData?.length || 0,
+                insertedDataFirstId: insertedData?.[0]?.id || null,
+                conditionWillPass: !!(insertedData && insertedData.length > 0 && insertedData[0]?.id)
+            });
 
             // Call Edge Function to assign top runner and notify
             if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
                 try {
+                    // DIAGNOSTIC LOG 3: Right before fetching session
+                    console.log('🔍 [DIAGNOSTIC] Fetching session before assign-errand');
+                    
+                    // Get current session to pass JWT token for authorization
+                    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+                    
+                    // DIAGNOSTIC LOG 4: Immediately after fetching session
+                    console.log('🔍 [DIAGNOSTIC] Session fetch result:', {
+                        hasSessionError: !!sessionError,
+                        sessionError: sessionError,
+                        sessionExists: !!session,
+                        accessTokenExists: !!session?.access_token,
+                        accessTokenLength: session?.access_token?.length || 0
+                    });
+                    
+                    if (sessionError || !session?.access_token) {
+                        console.error('❌ [ASSIGN-ERRAND] No valid session found:', sessionError);
+                        Alert.alert(
+                            'Authentication Error',
+                            'Unable to assign runner: User session is missing or invalid. Please try again.'
+                        );
+                        return;
+                    }
+                    
+                    // DIAGNOSTIC LOG 5: Right before invoking Edge Function
+                    console.log('🔍 [DIAGNOSTIC] About to invoke assign-errand');
+                    
                     const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-errand', {
                         body: { errand_id: insertedData[0].id },
+                        headers: {
+                            Authorization: `Bearer ${session.access_token}`,
+                        },
+                    });
+                    
+                    // DIAGNOSTIC LOG 6: Immediately after invocation completes
+                    console.log('🔍 [DIAGNOSTIC] assign-errand invocation completed:', {
+                        invocationFinished: true,
+                        hasError: !!assignError,
+                        hasData: !!assignData
                     });
                     
                     if (assignError) {

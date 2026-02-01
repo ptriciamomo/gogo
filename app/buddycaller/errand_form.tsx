@@ -1814,8 +1814,23 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             // Call Edge Function to assign top runner and notify
             if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
                 try {
+                    // Get current session to pass JWT token for authorization
+                    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+                    
+                    if (sessionError || !session?.access_token) {
+                        console.error('❌ [ASSIGN-ERRAND] No valid session found:', sessionError);
+                        Alert.alert(
+                            'Authentication Error',
+                            'Unable to assign runner: User session is missing or invalid. Please try again.'
+                        );
+                        return;
+                    }
+                    
                     const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-errand', {
                         body: { errand_id: insertedData[0].id },
+                        headers: {
+                            Authorization: `Bearer ${session.access_token}`,
+                        },
                     });
                     
                     if (assignError) {

@@ -7,6 +7,8 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 serve(async (req) => {
+  console.log("[CRON TRACE] reassign-timed-out-tasks invoked", new Date().toISOString());
+  
   // Initialize Supabase client with service role key (bypasses RLS)
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -158,6 +160,8 @@ serve(async (req) => {
       .order("notified_expires_at", { ascending: true })
       .limit(50); // Limit to prevent function timeout
 
+    console.log("[CRON TRACE] Timed-out errands found:", timedOutErrands?.length ?? 0);
+
     if (timedOutErrands && timedOutErrands.length > 0) {
       console.log(`[Reassign Timeout] Found ${timedOutErrands.length} timed-out errands`);
     }
@@ -175,7 +179,16 @@ serve(async (req) => {
 
       for (const errand of timedOutErrands || []) {
         try {
+          console.log("[CRON TRACE] Processing errand", errand.id, {
+            notified_runner_id: errand.notified_runner_id,
+            notified_expires_at: errand.notified_expires_at,
+            now
+          });
+          
           const previousRunnerId = errand.notified_runner_id;
+          
+          // Normalize previousRunnerId to ensure proper comparison (string + trim)
+          const normalizedPreviousRunnerId = previousRunnerId ? String(previousRunnerId).trim() : null;
 
           // Verify task is still in timeout state (idempotency check)
           const { data: currentErrand, error: verifyError } = await supabase
@@ -184,11 +197,34 @@ serve(async (req) => {
             .eq("id", errand.id)
             .single();
 
+          // Normalize current notified_runner_id for comparison
+          const normalizedCurrentRunnerId = currentErrand?.notified_runner_id ? String(currentErrand.notified_runner_id).trim() : null;
+
+          // DIAGNOSTIC: Log values being compared
+          console.log(`[Reassign Timeout] DIAGNOSTIC for errand ${errand.id}:`, {
+            previousRunnerId: normalizedPreviousRunnerId,
+            currentNotifiedRunnerId: normalizedCurrentRunnerId,
+            currentStatus: currentErrand?.status,
+            currentRunnerId: currentErrand?.runner_id,
+            verifyError: verifyError,
+            idempotencyCheck: {
+              hasVerifyError: !!verifyError,
+              notifiedRunnerIdMatches: normalizedCurrentRunnerId === normalizedPreviousRunnerId,
+              statusIsPending: currentErrand?.status === "pending",
+              runnerIdIsNull: currentErrand?.runner_id === null,
+            }
+          });
+
           if (verifyError || 
-              currentErrand?.notified_runner_id !== previousRunnerId ||
+              normalizedCurrentRunnerId !== normalizedPreviousRunnerId ||
               currentErrand?.status !== "pending" ||
               currentErrand?.runner_id !== null) {
-            console.log(`[Reassign Timeout] Errand ${errand.id} already processed, skipping`);
+            console.log(`[Reassign Timeout] Errand ${errand.id} already processed, skipping. Reason:`, {
+              verifyError: !!verifyError,
+              runnerIdMismatch: normalizedCurrentRunnerId !== normalizedPreviousRunnerId,
+              statusNotPending: currentErrand?.status !== "pending",
+              runnerIdNotNull: currentErrand?.runner_id !== null,
+            });
             continue;
           }
 
@@ -203,8 +239,8 @@ serve(async (req) => {
           if (currentErrand?.timeout_runner_ids && Array.isArray(currentErrand.timeout_runner_ids)) {
             updatedTimeoutRunnerIds = [...currentErrand.timeout_runner_ids];
           }
-          if (previousRunnerId && !updatedTimeoutRunnerIds.includes(previousRunnerId)) {
-            updatedTimeoutRunnerIds.push(previousRunnerId);
+          if (normalizedPreviousRunnerId && !updatedTimeoutRunnerIds.includes(normalizedPreviousRunnerId)) {
+            updatedTimeoutRunnerIds.push(normalizedPreviousRunnerId);
           }
 
           // Backward compatibility: If no queue exists, fallback to old logic (skip for now)
@@ -220,20 +256,23 @@ serve(async (req) => {
             console.log(`[Reassign Timeout] Queue exhausted for errand ${errand.id} (index ${currentQueueIndex} -> ${nextQueueIndex}, queue length ${rankedRunnerIds.length}), cancelling task`);
             
             // Cancel errand, clear notified_runner_id, and notify caller
-            const { error: cancelError } = await supabase
+            const { data: cancelData, error: cancelError } = await supabase
               .from("errand")
               .update({ 
                 status: 'cancelled',
                 notified_runner_id: null,
                 notified_at: null,
+                notified_expires_at: null, // Clear expiration
                 is_notified: false,
                 current_queue_index: nextQueueIndex, // Update index even if exhausted
                 timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
               })
               .eq("id", errand.id)
-              .eq("status", "pending");
+              .eq("status", "pending")
+              .eq("notified_runner_id", normalizedCurrentRunnerId) // Atomic guard: use current value from idempotency check
+              .select();
 
-            if (!cancelError) {
+            if (!cancelError && cancelData && cancelData.length > 0) {
               // Notify caller that no runners are available
               const callerChannel = `caller_notify_${errand.buddycaller_id}`;
               const broadcastChannel = supabase.channel(callerChannel);
@@ -254,9 +293,15 @@ serve(async (req) => {
               result.errors.push({
                 taskId: errand.id,
                 taskType: "errand",
-                error: `Failed to cancel errand after queue exhaustion: ${cancelError.message}`,
+                error: `Failed to cancel errand after queue exhaustion: ${cancelError?.message || 'UPDATE matched 0 rows'}`,
               });
-              console.error(`[Reassign Timeout] ❌ Failed to cancel errand ${errand.id} after queue exhaustion:`, cancelError);
+              console.error(`[Reassign Timeout] ❌ Failed to cancel errand ${errand.id} after queue exhaustion:`, {
+                error: cancelError,
+                rowsUpdated: cancelData?.length || 0,
+                previousRunnerId: normalizedPreviousRunnerId,
+                expectedRunnerId: normalizedPreviousRunnerId,
+                currentRunnerId: normalizedCurrentRunnerId,
+              });
             }
             continue;
           }
@@ -265,6 +310,7 @@ serve(async (req) => {
           const nextRunnerId = rankedRunnerIds[nextQueueIndex];
           const newQueueIndex = nextQueueIndex;
           const assignedAt = new Date().toISOString();
+          const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
 
           // Atomic update: only if still assigned to previous runner
           // Update timeout_runner_ids atomically with queue index (for audit/history)
@@ -281,7 +327,7 @@ serve(async (req) => {
             .eq("id", errand.id)
             .eq("status", "pending")
             .is("runner_id", null)
-            .eq("notified_runner_id", previousRunnerId)
+            .eq("notified_runner_id", normalizedCurrentRunnerId) // Atomic guard: use current value from idempotency check
             .select();
 
           if (updateError || !updateData || updateData.length === 0) {
@@ -354,6 +400,9 @@ serve(async (req) => {
       for (const commission of timedOutCommissions || []) {
         try {
           const previousRunnerId = commission.notified_runner_id;
+          
+          // Normalize previousRunnerId to ensure proper comparison (string + trim)
+          const normalizedPreviousRunnerId = previousRunnerId ? String(previousRunnerId).trim() : null;
 
           // Verify task is still in timeout state (idempotency check)
           const { data: currentCommission, error: verifyError } = await supabase
@@ -362,11 +411,34 @@ serve(async (req) => {
             .eq("id", commission.id)
             .single();
 
+          // Normalize current notified_runner_id for comparison
+          const normalizedCurrentRunnerId = currentCommission?.notified_runner_id ? String(currentCommission.notified_runner_id).trim() : null;
+
+          // DIAGNOSTIC: Log values being compared
+          console.log(`[Reassign Timeout] DIAGNOSTIC for commission ${commission.id}:`, {
+            previousRunnerId: normalizedPreviousRunnerId,
+            currentNotifiedRunnerId: normalizedCurrentRunnerId,
+            currentStatus: currentCommission?.status,
+            currentRunnerId: currentCommission?.runner_id,
+            verifyError: verifyError,
+            idempotencyCheck: {
+              hasVerifyError: !!verifyError,
+              notifiedRunnerIdMatches: normalizedCurrentRunnerId === normalizedPreviousRunnerId,
+              statusIsPending: currentCommission?.status === "pending",
+              runnerIdIsNull: currentCommission?.runner_id === null,
+            }
+          });
+
           if (verifyError || 
-              currentCommission?.notified_runner_id !== previousRunnerId ||
+              normalizedCurrentRunnerId !== normalizedPreviousRunnerId ||
               currentCommission?.status !== "pending" ||
               currentCommission?.runner_id !== null) {
-            console.log(`[Reassign Timeout] Commission ${commission.id} already processed, skipping`);
+            console.log(`[Reassign Timeout] Commission ${commission.id} already processed, skipping. Reason:`, {
+              verifyError: !!verifyError,
+              runnerIdMismatch: normalizedCurrentRunnerId !== normalizedPreviousRunnerId,
+              statusNotPending: currentCommission?.status !== "pending",
+              runnerIdNotNull: currentCommission?.runner_id !== null,
+            });
             continue;
           }
 
@@ -381,8 +453,8 @@ serve(async (req) => {
           if (currentCommission?.timeout_runner_ids && Array.isArray(currentCommission.timeout_runner_ids)) {
             updatedTimeoutRunnerIds = [...currentCommission.timeout_runner_ids];
           }
-          if (previousRunnerId && !updatedTimeoutRunnerIds.includes(previousRunnerId)) {
-            updatedTimeoutRunnerIds.push(previousRunnerId);
+          if (normalizedPreviousRunnerId && !updatedTimeoutRunnerIds.includes(normalizedPreviousRunnerId)) {
+            updatedTimeoutRunnerIds.push(normalizedPreviousRunnerId);
           }
 
           // Backward compatibility: If no queue exists, fallback to old logic (skip for now)
@@ -398,20 +470,23 @@ serve(async (req) => {
             console.log(`[Reassign Timeout] Queue exhausted for commission ${commission.id} (index ${currentQueueIndex} -> ${nextQueueIndex}, queue length ${rankedRunnerIds.length}), cancelling task`);
             
             // Cancel commission, clear notified_runner_id, and notify caller
-            const { error: cancelError } = await supabase
+            const { data: cancelData, error: cancelError } = await supabase
               .from("commission")
               .update({ 
                 status: 'cancelled',
                 notified_runner_id: null,
                 notified_at: null,
+                notified_expires_at: null, // Clear expiration
                 is_notified: false,
                 current_queue_index: nextQueueIndex, // Update index even if exhausted
                 timeout_runner_ids: updatedTimeoutRunnerIds, // Append previousRunnerId for audit
               })
               .eq("id", commission.id)
-              .eq("status", "pending");
+              .eq("status", "pending")
+              .eq("notified_runner_id", normalizedCurrentRunnerId) // Atomic guard: use current value from idempotency check
+              .select();
 
-            if (!cancelError) {
+            if (!cancelError && cancelData && cancelData.length > 0) {
               // Notify caller that no runners are available
               const callerChannel = `caller_notify_${commission.buddycaller_id}`;
               const broadcastChannel = supabase.channel(callerChannel);
@@ -432,9 +507,15 @@ serve(async (req) => {
               result.errors.push({
                 taskId: commission.id,
                 taskType: "commission",
-                error: `Failed to cancel commission after queue exhaustion: ${cancelError.message}`,
+                error: `Failed to cancel commission after queue exhaustion: ${cancelError?.message || 'UPDATE matched 0 rows'}`,
               });
-              console.error(`[Reassign Timeout] ❌ Failed to cancel commission ${commission.id} after queue exhaustion:`, cancelError);
+              console.error(`[Reassign Timeout] ❌ Failed to cancel commission ${commission.id} after queue exhaustion:`, {
+                error: cancelError,
+                rowsUpdated: cancelData?.length || 0,
+                previousRunnerId: normalizedPreviousRunnerId,
+                expectedRunnerId: normalizedPreviousRunnerId,
+                currentRunnerId: normalizedCurrentRunnerId,
+              });
             }
             continue;
           }
@@ -460,7 +541,7 @@ serve(async (req) => {
             .eq("id", commission.id)
             .eq("status", "pending")
             .is("runner_id", null)
-            .eq("notified_runner_id", previousRunnerId)
+            .eq("notified_runner_id", normalizedCurrentRunnerId) // Atomic guard: use current value from idempotency check
             .select();
 
           if (updateError || !updateData || updateData.length === 0) {

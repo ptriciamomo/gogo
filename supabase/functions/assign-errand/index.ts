@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { rankRunners, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking";
+import { rankRunners, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking.ts";
 
 // CORS headers for browser compatibility
 const corsHeaders = {
@@ -22,16 +22,19 @@ function corsResponse(body: string, status: number = 200, additionalHeaders: Rec
 }
 
 serve(async (req) => {
+  console.log("[ASSIGN-ERRAND] Handler entered");
+  
   // Handle OPTIONS preflight request
   if (req.method === "OPTIONS") {
     return corsResponse("", 200);
   }
 
-  // Initialize Supabase client with service role key
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
+  try {
+    // Initialize Supabase client with service role key
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
 
   // NOTE: Test Mode Bypass (Development/Testing Only)
   // The x-test-mode header allows manual testing in Supabase Dashboard or other testing tools
@@ -68,6 +71,9 @@ serve(async (req) => {
     const body = await req.json();
     const { errand_id } = body;
 
+    // DIAGNOSTIC LOG 2: After parsing request body
+    console.log("[ASSIGN-ERRAND] Request body parsed:", { errandId: errand_id });
+
     // Basic validation
     if (!errand_id) {
       return corsResponse(JSON.stringify({ error: "Missing errand_id" }), 400);
@@ -95,14 +101,18 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
 
+    // Define presence thresholds (must match runner-side logic exactly)
+    const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
+
     // Fetch eligible runners (READ-ONLY)
-    // Eligibility: role = BuddyRunner AND is_available = true
-    // NOTE: Presence timestamp filtering relaxed for errands - runners with is_available=true and valid location are eligible
+    // Eligibility: role = BuddyRunner, is_available = true, last_seen_at >= 75s, location_updated_at >= 75s OR NULL
     let runnersQuery = supabase
       .from("users")
       .select("id, latitude, longitude, last_seen_at, location_updated_at, is_available, average_rating")
       .eq("role", "BuddyRunner")
-      .eq("is_available", true);
+      .eq("is_available", true)
+      .gte("last_seen_at", seventyFiveSecondsAgo)
+      .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`);
 
     // Exclude timeout runners if present (READ-ONLY filtering)
     if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids) && errand.timeout_runner_ids.length > 0) {
@@ -128,7 +138,7 @@ serve(async (req) => {
             errand_id: errand.id,
             buddycaller_id: errand.buddycaller_id,
             timeout_runner_ids: errand.timeout_runner_ids || [],
-            note: "No runners matched: role=BuddyRunner, is_available=true (presence timestamp filtering relaxed for errands)",
+            note: "No runners matched: role=BuddyRunner, is_available=true, last_seen_at>=75s, location_updated_at>=75s OR NULL",
           },
         }),
         200
@@ -236,6 +246,12 @@ serve(async (req) => {
 
     console.log(`[ASSIGN-ERRAND] Ranked ${rankedRunners.length} runners for errand ${errand.id}`);
 
+    // DIAGNOSTIC LOG 3: After fetching eligible runners and BEFORE selecting topRunner
+    console.log("[ASSIGN-ERRAND] Eligible runners fetched:", {
+      count: rankedRunners?.length || 0,
+      runnerIds: rankedRunners?.map(r => r.id),
+    });
+
     // Check if no runners to assign
     if (rankedRunners.length === 0) {
       console.warn(`[ASSIGN-ERRAND] Ranking returned 0 runners for errand ${errand.id}`);
@@ -253,6 +269,12 @@ serve(async (req) => {
 
     // Get top runner (index 0)
     const topRunner = rankedRunners[0];
+
+    // DIAGNOSTIC LOG 4: After determining topRunner
+    console.log("[ASSIGN-ERRAND] Top runner selected:", {
+      runnerId: topRunner?.id || null,
+      score: topRunner?.finalScore || null,
+    });
 
     // A7.2: Real Assignment
     // Persists the top-ranked runner to the errand record.
@@ -326,6 +348,12 @@ serve(async (req) => {
       errand_current_notified_runner_id: errand.notified_runner_id,
     });
 
+    // DIAGNOSTIC LOG 5: Right before database UPDATE
+    console.log("[ASSIGN-ERRAND] Attempting errand assignment:", {
+      errandId: errand.id,
+      runnerId: topRunner?.id,
+    });
+
     const { data: updateData, error: updateError } = await supabase
       .from("errand")
       .update({
@@ -340,6 +368,12 @@ serve(async (req) => {
       .eq("id", errand.id)
       .is("notified_runner_id", null)
       .select();
+    
+    // DIAGNOSTIC LOG 6: Immediately after UPDATE query
+    console.log("[ASSIGN-ERRAND] Assignment UPDATE result:", {
+      updateError: updateError,
+      updatedRows: updateData?.length || 0,
+    });
     
     // DIAGNOSTIC: Log UPDATE result
     console.log(`[ASSIGN-ERRAND] DIAGNOSTIC: UPDATE result for errand ${errand.id}:`, {
@@ -370,6 +404,9 @@ serve(async (req) => {
     }
 
     console.log(`[ASSIGN-ERRAND] Successfully updated errand ${errand.id}. Updated data:`, updateData[0]);
+
+    // DIAGNOSTIC LOG 7: Right before broadcasting
+    console.log("[ASSIGN-ERRAND] Broadcasting assignment to runner");
 
     // Broadcast notification to assigned runner's private channel
     const channelName = `errand_notify_${topRunner.id}`;
@@ -410,6 +447,23 @@ serve(async (req) => {
       JSON.stringify({
         error: "Invalid request body",
         details: String(error),
+      }),
+      500
+    );
+  }
+  } catch (err: any) {
+    // TOP-LEVEL ERROR HANDLER: Catch any unhandled errors
+    console.error("[ASSIGN-ERRAND] TOP-LEVEL CRASH:", {
+      message: err?.message,
+      stack: err?.stack,
+      typeof: typeof err,
+      stringified: JSON.stringify(err),
+    });
+    
+    return corsResponse(
+      JSON.stringify({
+        error: "assign-errand-crash",
+        message: err?.message || String(err),
       }),
       500
     );

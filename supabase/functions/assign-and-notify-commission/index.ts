@@ -110,6 +110,17 @@ serve(async (req) => {
 
     const { data: runners, error: runnersError } = await runnersQuery;
 
+    // DEBUG: Log eligibility query results
+    console.log('[DEBUG][COMMISSION] Commission ID:', commission.id);
+    console.log('[DEBUG][COMMISSION] Eligibility threshold (75s ago):', seventyFiveSecondsAgo);
+    console.log('[DEBUG][COMMISSION] Raw runners result:', runners);
+    console.log('[DEBUG][COMMISSION] Runner count:', runners?.length ?? 0);
+    console.log('[DEBUG][COMMISSION] Commission exclusion state:', {
+      declined_runner_id: commission.declined_runner_id,
+      timeout_runner_ids: commission.timeout_runner_ids,
+      status: commission.status,
+    });
+
     if (runnersError) {
       return new Response(
         JSON.stringify({ error: "Failed to fetch eligible runners" }),
@@ -118,6 +129,7 @@ serve(async (req) => {
     }
 
     if (!runners || runners.length === 0) {
+      console.warn('[DEBUG][COMMISSION] No eligible runners returned by DB query');
       console.warn(`[ASSIGN-COMMISSION] No eligible runners found for commission ${commission.id} - cancelling immediately`);
       
       // Immediately cancel the commission since no runners are available

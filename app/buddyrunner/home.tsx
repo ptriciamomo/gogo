@@ -2316,6 +2316,11 @@ function HomeWeb() {
             // Prepare update data
             const updateData: any = { is_available: newStatus };
             
+            // If turning ON, refresh presence to ensure immediate eligibility
+            if (newStatus) {
+                updateData.last_seen_at = new Date().toISOString();
+            }
+            
             // If turning OFF, clear location data
             if (!newStatus) {
                 updateData.latitude = null;
@@ -3951,6 +3956,11 @@ function HomeMobile() {
 
             // Prepare update data
             const updateData: any = { is_available: newStatus };
+            
+            // If turning ON, refresh presence to ensure immediate eligibility
+            if (newStatus) {
+                updateData.last_seen_at = new Date().toISOString();
+            }
             
             // If turning OFF, clear location data
             if (!newStatus) {

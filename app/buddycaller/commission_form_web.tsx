@@ -116,13 +116,91 @@ async function createCommission(input: {
 
     // Call Edge Function to assign top runner and notify
     if (data?.id) {
+        let assignmentSuccess = false;
+        let lastError: any = null;
+
+        // First attempt
         try {
-            await supabase.functions.invoke('assign-and-notify-commission', {
+            const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-and-notify-commission', {
                 body: { commission_id: data.id },
             });
+
+            if (assignError) {
+                lastError = assignError;
+                console.error('[Commission] First assignment attempt failed:', assignError);
+            } else if (assignData) {
+                // Check if assignment was successful
+                if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
+                    assignmentSuccess = true;
+                } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
+                    // Commission was cancelled due to no runners - this is a valid outcome
+                    assignmentSuccess = true;
+                } else {
+                    lastError = new Error(`Assignment returned unexpected status: ${assignData.status}`);
+                }
+            }
         } catch (edgeError) {
-            console.error('Failed to assign and notify commission:', edgeError);
-            // Don't throw - commission was created successfully
+            lastError = edgeError;
+            console.error('[Commission] First assignment attempt exception:', edgeError);
+        }
+
+        // Retry once if first attempt failed
+        if (!assignmentSuccess) {
+            console.log('[Commission] Retrying assignment...');
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+
+            try {
+                const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-and-notify-commission', {
+                    body: { commission_id: data.id },
+                });
+
+                if (assignError) {
+                    lastError = assignError;
+                    console.error('[Commission] Retry assignment attempt failed:', assignError);
+                } else if (assignData) {
+                    if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
+                        assignmentSuccess = true;
+                    } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
+                        assignmentSuccess = true;
+                    } else {
+                        lastError = new Error(`Retry assignment returned unexpected status: ${assignData.status}`);
+                    }
+                }
+            } catch (edgeError) {
+                lastError = edgeError;
+                console.error('[Commission] Retry assignment attempt exception:', edgeError);
+            }
+        }
+
+        // Verify assignment succeeded by checking database
+        if (assignmentSuccess) {
+            // Re-fetch commission to verify notified_runner_id was set (or commission was cancelled)
+            const { data: verifyData, error: verifyError } = await supabase
+                .from('commission')
+                .select('id, status, notified_runner_id')
+                .eq('id', data.id)
+                .single();
+
+            if (verifyError) {
+                console.error('[Commission] Verification fetch failed:', verifyError);
+                throw new Error('Commission was created but assignment verification failed. Please check if a runner was notified.');
+            }
+
+            // If commission is still pending, notified_runner_id must be set
+            if (verifyData?.status === 'pending' && verifyData.notified_runner_id === null) {
+                console.error('[Commission] Assignment verification failed: notified_runner_id is still NULL');
+                throw new Error('Commission was created but no runner was assigned. Please try posting again or contact support.');
+            }
+
+            // If commission was cancelled (no eligible runners), that's acceptable
+            if (verifyData?.status === 'cancelled') {
+                // This is a valid outcome - no runners available
+                console.log('[Commission] Commission cancelled due to no eligible runners');
+            }
+        } else {
+            // Assignment failed after retry
+            console.error('[Commission] Assignment failed after retry:', lastError);
+            throw new Error('Commission was created but failed to assign a runner. Please try posting again or contact support.');
         }
     }
 

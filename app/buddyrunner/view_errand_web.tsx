@@ -41,6 +41,9 @@ type Errand = {
     amount_price?: number | null;
     status?: string | null;
     buddycaller_id?: string | null;
+    runner_id?: string | null;
+    notified_runner_id?: string | null;
+    notified_expires_at?: string | null;
     items?: any;
     files?: any;
     pickup_status?: string | null;
@@ -376,9 +379,136 @@ export default function ViewErrandWeb() {
         }
     }, [router]);
 
+    /* ---------- TIMEOUT HANDLER ---------- */
+    const timeoutTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const startedTimerForErrandIdRef = useRef<number | string | null>(null);
+    
+    // Start timeout timer when errand is loaded and runner is notified
+    useEffect(() => {
+        if (!errand) return;
+        
+        // Only start timer if runner is notified and task is pending
+        supabase.auth.getUser().then(({ data: { user } }) => {
+            if (!user) return;
+            
+            if (errand.status === 'pending' && errand.notified_runner_id === user.id && errand.runner_id === null) {
+                // Only start timer once per errand ID (prevent restart on re-render)
+                if (startedTimerForErrandIdRef.current === errand.id) {
+                    return;
+                }
+                
+                // Clear any existing timer
+                if (timeoutTimerRef.current) {
+                    clearTimeout(timeoutTimerRef.current);
+                    timeoutTimerRef.current = null;
+                }
+                
+                // Calculate remaining time from database field
+                const expiresAt = (errand as any).notified_expires_at;
+                if (!expiresAt) {
+                    console.warn('[Timeout] No notified_expires_at found, skipping timer');
+                    startedTimerForErrandIdRef.current = errand.id;
+                    return;
+                }
+                
+                // Validate date before calculating remaining time
+                const expiresAtTime = new Date(expiresAt).getTime();
+                if (isNaN(expiresAtTime)) {
+                    console.warn('[Timeout] Invalid notified_expires_at, skipping timer');
+                    startedTimerForErrandIdRef.current = errand.id;
+                    return;
+                }
+                
+                const remainingMs = expiresAtTime - Date.now();
+                
+                // If already expired, call RPC immediately
+                if (remainingMs <= 0) {
+                    // Mark that we've handled this errand ID to prevent duplicate calls
+                    startedTimerForErrandIdRef.current = errand.id;
+                    (async () => {
+                        try {
+                            const { data, error } = await supabase.rpc('handle_errand_timeout', {
+                                p_errand_id: errand.id,
+                                p_runner_id: user.id
+                            });
+                            
+                            if (error) {
+                                console.warn('[Timeout] RPC call failed (cron will handle):', error);
+                                return;
+                            }
+                            
+                            if (data?.success) {
+                                console.log('[Timeout] Handled by runner client (already expired):', data);
+                            } else {
+                                console.log('[Timeout] Already processed or invalid:', data?.reason);
+                            }
+                        } catch (e) {
+                            console.warn('[Timeout] Error calling RPC (cron will handle):', e);
+                        }
+                    })();
+                    return;
+                }
+                
+                // Mark that we've started a timer for this errand ID
+                startedTimerForErrandIdRef.current = errand.id;
+                
+                // Start timer with calculated remaining time
+                timeoutTimerRef.current = setTimeout(async () => {
+                    try {
+                        // Call backend RPC function (idempotent, safe)
+                        const { data, error } = await supabase.rpc('handle_errand_timeout', {
+                            p_errand_id: errand.id,
+                            p_runner_id: user.id
+                        });
+                        
+                        if (error) {
+                            console.warn('[Timeout] RPC call failed (cron will handle):', error);
+                            return;
+                        }
+                        
+                        if (data?.success) {
+                            console.log('[Timeout] Handled by runner client:', data);
+                            // Task status will update via realtime subscription
+                        } else {
+                            console.log('[Timeout] Already processed or invalid:', data?.reason);
+                        }
+                    } catch (e) {
+                        console.warn('[Timeout] Error calling RPC (cron will handle):', e);
+                    } finally {
+                        // Clear the ref when timer fires
+                        startedTimerForErrandIdRef.current = null;
+                    }
+                }, remainingMs);
+            } else {
+                // Conditions no longer match, clear timer and ref
+                if (timeoutTimerRef.current) {
+                    clearTimeout(timeoutTimerRef.current);
+                    timeoutTimerRef.current = null;
+                }
+                startedTimerForErrandIdRef.current = null;
+            }
+        });
+        
+        // Cleanup on unmount or when conditions change
+        return () => {
+            if (timeoutTimerRef.current) {
+                clearTimeout(timeoutTimerRef.current);
+                timeoutTimerRef.current = null;
+            }
+        };
+    }, [errand?.id, errand?.status, errand?.notified_runner_id, errand?.runner_id, errand?.notified_expires_at]);
+    
     /* ---------- Accept errand ---------- */
     const accept = useCallback(async () => {
         if (!errand) return;
+        
+        // Clear timeout timer immediately on accept
+        if (timeoutTimerRef.current) {
+            clearTimeout(timeoutTimerRef.current);
+            timeoutTimerRef.current = null;
+        }
+        startedTimerForErrandIdRef.current = null;
+        
         setAccepting(true);
         try {
             const { data: { user }, error: authErr } = await supabase.auth.getUser();

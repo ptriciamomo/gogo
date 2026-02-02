@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -40,6 +40,8 @@ type Commission = {
     status?: string | null;
     buddycaller_id?: string | null;
     runner_id?: string | null;
+    notified_runner_id?: string | null;
+    notified_expires_at?: string | null;
     accepted_at?: string | null;
     invoice_status?: string | null;
 };
@@ -306,8 +308,134 @@ export default function ViewCommissionWeb() {
             ? "Finish the accepted commission first"
             : "Accept Commission";
 
+    /* ---------- TIMEOUT HANDLER ---------- */
+    const timeoutTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const startedTimerForCommissionIdRef = useRef<number | string | null>(null);
+    
+    // Start timeout timer when commission is loaded and runner is notified
+    useEffect(() => {
+        if (!commission) return;
+        
+        // Only start timer if runner is notified and task is pending
+        supabase.auth.getUser().then(({ data: { user } }) => {
+            if (!user) return;
+            
+            if (commission.status === 'pending' && commission.notified_runner_id === user.id && commission.runner_id === null) {
+                // Only start timer once per commission ID (prevent restart on re-render)
+                if (startedTimerForCommissionIdRef.current === commission.id) {
+                    return;
+                }
+                
+                // Clear any existing timer
+                if (timeoutTimerRef.current) {
+                    clearTimeout(timeoutTimerRef.current);
+                    timeoutTimerRef.current = null;
+                }
+                
+                // Calculate remaining time from database field
+                const expiresAt = (commission as any).notified_expires_at;
+                if (!expiresAt) {
+                    console.warn('[Timeout] No notified_expires_at found, skipping timer');
+                    startedTimerForCommissionIdRef.current = commission.id;
+                    return;
+                }
+                
+                // Validate date before calculating remaining time
+                const expiresAtTime = new Date(expiresAt).getTime();
+                if (isNaN(expiresAtTime)) {
+                    console.warn('[Timeout] Invalid notified_expires_at, skipping timer');
+                    startedTimerForCommissionIdRef.current = commission.id;
+                    return;
+                }
+                
+                const remainingMs = expiresAtTime - Date.now();
+                
+                // If already expired, call RPC immediately
+                if (remainingMs <= 0) {
+                    // Mark that we've handled this commission ID to prevent duplicate calls
+                    startedTimerForCommissionIdRef.current = commission.id;
+                    (async () => {
+                        try {
+                            const { data, error } = await supabase.rpc('handle_commission_timeout', {
+                                p_commission_id: commission.id,
+                                p_runner_id: user.id
+                            });
+                            
+                            if (error) {
+                                console.warn('[Timeout] RPC call failed (cron will handle):', error);
+                                return;
+                            }
+                            
+                            if (data?.success) {
+                                console.log('[Timeout] Handled by runner client (already expired):', data);
+                            } else {
+                                console.log('[Timeout] Already processed or invalid:', data?.reason);
+                            }
+                        } catch (e) {
+                            console.warn('[Timeout] Error calling RPC (cron will handle):', e);
+                        }
+                    })();
+                    return;
+                }
+                
+                // Mark that we've started a timer for this commission ID
+                startedTimerForCommissionIdRef.current = commission.id;
+                
+                // Start timer with calculated remaining time
+                timeoutTimerRef.current = setTimeout(async () => {
+                    try {
+                        // Call backend RPC function (idempotent, safe)
+                        const { data, error } = await supabase.rpc('handle_commission_timeout', {
+                            p_commission_id: commission.id,
+                            p_runner_id: user.id
+                        });
+                        
+                        if (error) {
+                            console.warn('[Timeout] RPC call failed (cron will handle):', error);
+                            return;
+                        }
+                        
+                        if (data?.success) {
+                            console.log('[Timeout] Handled by runner client:', data);
+                            // Task status will update via realtime subscription
+                        } else {
+                            console.log('[Timeout] Already processed or invalid:', data?.reason);
+                        }
+                    } catch (e) {
+                        console.warn('[Timeout] Error calling RPC (cron will handle):', e);
+                    } finally {
+                        // Clear the ref when timer fires
+                        startedTimerForCommissionIdRef.current = null;
+                    }
+                }, remainingMs);
+            } else {
+                // Conditions no longer match, clear timer and ref
+                if (timeoutTimerRef.current) {
+                    clearTimeout(timeoutTimerRef.current);
+                    timeoutTimerRef.current = null;
+                }
+                startedTimerForCommissionIdRef.current = null;
+            }
+        });
+        
+        // Cleanup on unmount or when conditions change
+        return () => {
+            if (timeoutTimerRef.current) {
+                clearTimeout(timeoutTimerRef.current);
+                timeoutTimerRef.current = null;
+            }
+        };
+    }, [commission?.id, commission?.status, commission?.notified_runner_id, commission?.runner_id, commission?.notified_expires_at]);
+    
     const handleAccept = useCallback(async () => {
         if (!commission || !canAccept || accepting) return;
+
+        // Clear timeout timer immediately on accept
+        if (timeoutTimerRef.current) {
+            clearTimeout(timeoutTimerRef.current);
+            timeoutTimerRef.current = null;
+        }
+        startedTimerForCommissionIdRef.current = null;
 
         setAccepting(true);
         try {

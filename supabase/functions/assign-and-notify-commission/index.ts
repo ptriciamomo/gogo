@@ -406,9 +406,47 @@ serve(async (req) => {
     }
 
     if (!updateData || updateData.length === 0) {
+      // Re-fetch commission to verify actual state
+      const { data: currentCommission, error: fetchError } = await supabase
+        .from("commission")
+        .select("id, status, notified_runner_id, runner_id")
+        .eq("id", commission.id)
+        .single();
+
+      if (fetchError) {
+        console.error(`[ASSIGN-COMMISSION] Failed to re-fetch commission ${commission.id} after 0 rows updated:`, fetchError);
+        return new Response(
+          JSON.stringify({ error: "assignment_failed", details: "Could not verify assignment state" }),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      // If runner is actually assigned, return already_assigned
+      if (currentCommission?.notified_runner_id !== null) {
+        console.log(`[ASSIGN-COMMISSION] Commission ${commission.id} already assigned to runner ${currentCommission.notified_runner_id}`);
+        return new Response(
+          JSON.stringify({ status: "already_assigned" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      // If notified_runner_id is still NULL, treat as assignment failure
+      // This can happen if status changed or concurrent modification occurred
+      console.warn(`[ASSIGN-COMMISSION] UPDATE affected 0 rows for commission ${commission.id}, but notified_runner_id is still NULL. Treating as assignment failure.`);
+      console.warn(`[ASSIGN-COMMISSION] Current commission state:`, {
+        id: currentCommission?.id,
+        status: currentCommission?.status,
+        notified_runner_id: currentCommission?.notified_runner_id,
+        runner_id: currentCommission?.runner_id
+      });
+
+      // Return assignment_failed so frontend can handle retry
       return new Response(
-        JSON.stringify({ status: "already_assigned" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        JSON.stringify({ 
+          error: "assignment_failed", 
+          details: "UPDATE affected 0 rows and notified_runner_id is NULL. Assignment may have failed due to concurrent modification." 
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }
 

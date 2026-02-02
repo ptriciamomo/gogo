@@ -3,6 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { rankRunners, RunnerForRanking, calculateDistanceKm } from "../_shared/runner-ranking.ts";
 
 serve(async (req) => {
+  console.log("[ASSIGN-COMMISSION] ========== FUNCTION ENTERED ==========");
+  console.log("[ASSIGN-COMMISSION] Timestamp:", new Date().toISOString());
+  console.log("[ASSIGN-COMMISSION] Method:", req.method);
+  console.log("[ASSIGN-COMMISSION] URL:", req.url);
+  
   // Initialize Supabase client with service role key
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -113,8 +118,56 @@ serve(async (req) => {
     }
 
     if (!runners || runners.length === 0) {
+      console.warn(`[ASSIGN-COMMISSION] No eligible runners found for commission ${commission.id} - cancelling immediately`);
+      
+      // Immediately cancel the commission since no runners are available
+      console.log(`[ASSIGN-COMMISSION] ========== PATH 1: NO ELIGIBLE RUNNERS ==========`);
+      console.log(`[ASSIGN-COMMISSION] PRE-UPDATE: About to cancel commission ${commission.id} (no eligible runners)`);
+      console.log(`[ASSIGN-COMMISSION] Current commission state:`, {
+        id: commission.id,
+        status: commission.status,
+        notified_runner_id: commission.notified_runner_id,
+        runner_id: commission.runner_id
+      });
+      
+      console.log("[ASSIGN-COMMISSION] Status before cancel attempt:", commission.status);
+      
+      const { error: cancelError, data: cancelData } = await supabase
+        .from("commission")
+        .update({
+          status: 'cancelled',
+          ranked_runner_ids: [],
+          current_queue_index: 0,
+          timeout_runner_ids: [],
+          notified_runner_id: null,
+          notified_at: null,
+          notified_expires_at: null,
+          is_notified: false
+        })
+        .eq("id", commission.id)
+        .select();
+      
+      console.log(`[ASSIGN-COMMISSION] POST-UPDATE: Cancellation result for commission ${commission.id}:`, {
+        error: cancelError,
+        error_message: cancelError?.message,
+        error_code: cancelError?.code,
+        error_details: cancelError?.details,
+        error_hint: cancelError?.hint,
+        rows_updated: cancelData?.length || 0,
+        updated_data: cancelData,
+        update_succeeded: !cancelError && cancelData && cancelData.length > 0
+      });
+      
+      if (cancelError) {
+        console.error(`[ASSIGN-COMMISSION] Failed to cancel commission ${commission.id}:`, cancelError);
+        return new Response(
+          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      
       return new Response(
-        JSON.stringify({ status: "no_eligible_runners" }),
+        JSON.stringify({ status: "no_eligible_runners", cancelled: true }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -157,8 +210,56 @@ serve(async (req) => {
     });
 
     if (!filteredRunners || filteredRunners.length === 0) {
+      console.warn(`[ASSIGN-COMMISSION] No runners within 500m for commission ${commission.id} - cancelling immediately`);
+      
+      // Immediately cancel the commission since no runners are within distance
+      console.log(`[ASSIGN-COMMISSION] ========== PATH 2: NO RUNNERS WITHIN DISTANCE ==========`);
+      console.log(`[ASSIGN-COMMISSION] PRE-UPDATE: About to cancel commission ${commission.id} (no runners within 500m)`);
+      console.log(`[ASSIGN-COMMISSION] Current commission state:`, {
+        id: commission.id,
+        status: commission.status,
+        notified_runner_id: commission.notified_runner_id,
+        runner_id: commission.runner_id
+      });
+      
+      console.log("[ASSIGN-COMMISSION] Status before cancel attempt:", commission.status);
+      
+      const { error: cancelError, data: cancelData } = await supabase
+        .from("commission")
+        .update({
+          status: 'cancelled',
+          ranked_runner_ids: [],
+          current_queue_index: 0,
+          timeout_runner_ids: [],
+          notified_runner_id: null,
+          notified_at: null,
+          notified_expires_at: null,
+          is_notified: false
+        })
+        .eq("id", commission.id)
+        .select();
+      
+      console.log(`[ASSIGN-COMMISSION] POST-UPDATE: Cancellation result for commission ${commission.id}:`, {
+        error: cancelError,
+        error_message: cancelError?.message,
+        error_code: cancelError?.code,
+        error_details: cancelError?.details,
+        error_hint: cancelError?.hint,
+        rows_updated: cancelData?.length || 0,
+        updated_data: cancelData,
+        update_succeeded: !cancelError && cancelData && cancelData.length > 0
+      });
+      
+      if (cancelError) {
+        console.error(`[ASSIGN-COMMISSION] Failed to cancel commission ${commission.id}:`, cancelError);
+        return new Response(
+          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      
       return new Response(
-        JSON.stringify({ status: "no_runners_within_distance" }),
+        JSON.stringify({ status: "no_runners_within_distance", cancelled: true }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -207,8 +308,59 @@ serve(async (req) => {
 
     // Check if no runners to assign
     if (rankedRunners.length === 0) {
+      console.warn(`[ASSIGN-COMMISSION] Ranking returned 0 runners for commission ${commission.id} - cancelling immediately`);
+      
+      // Immediately cancel the commission since no runners are available
+      console.log(`[ASSIGN-COMMISSION] ========== PATH 3: RANKING RETURNED 0 RUNNERS ==========`);
+      console.log(`[ASSIGN-COMMISSION] PRE-UPDATE: About to cancel commission ${commission.id} (ranking returned 0 runners)`);
+      console.log(`[ASSIGN-COMMISSION] Current commission state:`, {
+        id: commission.id,
+        status: commission.status,
+        notified_runner_id: commission.notified_runner_id,
+        runner_id: commission.runner_id
+      });
+      
+      console.log("[ASSIGN-COMMISSION] Status before cancel attempt:", commission.status);
+      
+      const { error: cancelError, data: cancelData } = await supabase
+        .from("commission")
+        .update({
+          status: 'cancelled',
+          ranked_runner_ids: [],
+          current_queue_index: 0,
+          timeout_runner_ids: [],
+          notified_runner_id: null,
+          notified_at: null,
+          notified_expires_at: null,
+          is_notified: false
+        })
+        .eq("id", commission.id)
+        .select();
+      
+      console.log(`[ASSIGN-COMMISSION] POST-UPDATE: Cancellation result for commission ${commission.id}:`, {
+        error: cancelError,
+        error_message: cancelError?.message,
+        error_code: cancelError?.code,
+        error_details: cancelError?.details,
+        error_hint: cancelError?.hint,
+        rows_updated: cancelData?.length || 0,
+        updated_data: cancelData,
+        update_succeeded: !cancelError && cancelData && cancelData.length > 0
+      });
+      
+      if (cancelError) {
+        console.error(`[ASSIGN-COMMISSION] Failed to cancel commission ${commission.id}:`, cancelError);
+        return new Response(
+          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      
       return new Response(
-        JSON.stringify({ status: "no_runner_to_assign" }),
+        JSON.stringify({
+          status: "no_runner_to_assign",
+          cancelled: true
+        }),
         { headers: { "Content-Type": "application/json" } }
       );
     }

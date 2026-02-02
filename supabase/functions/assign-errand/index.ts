@@ -22,7 +22,10 @@ function corsResponse(body: string, status: number = 200, additionalHeaders: Rec
 }
 
 serve(async (req) => {
-  console.log("[ASSIGN-ERRAND] Handler entered");
+  console.log("[ASSIGN-ERRAND] ========== FUNCTION ENTERED ==========");
+  console.log("[ASSIGN-ERRAND] Timestamp:", new Date().toISOString());
+  console.log("[ASSIGN-ERRAND] Method:", req.method);
+  console.log("[ASSIGN-ERRAND] URL:", req.url);
   
   // Handle OPTIONS preflight request
   if (req.method === "OPTIONS") {
@@ -72,6 +75,8 @@ serve(async (req) => {
     const { errand_id } = body;
 
     // DIAGNOSTIC LOG 2: After parsing request body
+    console.log("[ASSIGN-ERRAND] ========== PROCESSING ERRAND ==========");
+    console.log("[ASSIGN-ERRAND] ENTERED FUNCTION for errand_id:", errand_id);
     console.log("[ASSIGN-ERRAND] Request body parsed:", { errandId: errand_id });
 
     // Basic validation
@@ -130,10 +135,58 @@ serve(async (req) => {
 
     // Check if no runners found
     if (!runners || runners.length === 0) {
-      // DEBUG: Return diagnostic info when no eligible runners found
+      console.warn(`[ASSIGN-ERRAND] No eligible runners found for errand ${errand.id} - cancelling immediately`);
+      
+      // Immediately cancel the errand since no runners are available
+      console.log(`[ASSIGN-ERRAND] ========== PATH 1: NO ELIGIBLE RUNNERS ==========`);
+      console.log(`[ASSIGN-ERRAND] PRE-UPDATE: About to cancel errand ${errand.id} (no eligible runners)`);
+      console.log(`[ASSIGN-ERRAND] Current errand state:`, {
+        id: errand.id,
+        status: errand.status,
+        notified_runner_id: errand.notified_runner_id,
+        runner_id: errand.runner_id
+      });
+      
+      console.log("[ASSIGN-ERRAND] Status before cancel attempt:", errand.status);
+      
+      const { error: cancelError, data: cancelData } = await supabase
+        .from("errand")
+        .update({
+          status: 'cancelled',
+          ranked_runner_ids: [],
+          current_queue_index: 0,
+          timeout_runner_ids: [],
+          notified_runner_id: null,
+          notified_at: null,
+          notified_expires_at: null,
+          is_notified: false
+        })
+        .eq("id", errand.id)
+        .select();
+      
+      console.log(`[ASSIGN-ERRAND] POST-UPDATE: Cancellation result for errand ${errand.id}:`, {
+        error: cancelError,
+        error_message: cancelError?.message,
+        error_code: cancelError?.code,
+        error_details: cancelError?.details,
+        error_hint: cancelError?.hint,
+        rows_updated: cancelData?.length || 0,
+        updated_data: cancelData,
+        update_succeeded: !cancelError && cancelData && cancelData.length > 0
+      });
+      
+      if (cancelError) {
+        console.error(`[ASSIGN-ERRAND] Failed to cancel errand ${errand.id}:`, cancelError);
+        return corsResponse(
+          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
+          500
+        );
+      }
+      
       return corsResponse(
         JSON.stringify({
           status: "no_eligible_runners",
+          cancelled: true,
           debug: {
             errand_id: errand.id,
             buddycaller_id: errand.buddycaller_id,
@@ -191,7 +244,54 @@ serve(async (req) => {
 
     // Handle empty result after distance filtering
     if (!filteredRunners || filteredRunners.length === 0) {
-      console.warn(`[ASSIGN-ERRAND] No runners within 500m for errand ${errand.id}. Caller coords: (${callerLat}, ${callerLon})`);
+      console.warn(`[ASSIGN-ERRAND] No runners within 500m for errand ${errand.id}. Caller coords: (${callerLat}, ${callerLon}) - cancelling immediately`);
+      
+      // Immediately cancel the errand since no runners are within distance
+      console.log(`[ASSIGN-ERRAND] ========== PATH 2: NO RUNNERS WITHIN DISTANCE ==========`);
+      console.log(`[ASSIGN-ERRAND] PRE-UPDATE: About to cancel errand ${errand.id} (no runners within 500m)`);
+      console.log(`[ASSIGN-ERRAND] Current errand state:`, {
+        id: errand.id,
+        status: errand.status,
+        notified_runner_id: errand.notified_runner_id,
+        runner_id: errand.runner_id
+      });
+      
+      console.log("[ASSIGN-ERRAND] Status before cancel attempt:", errand.status);
+      
+      const { error: cancelError, data: cancelData } = await supabase
+        .from("errand")
+        .update({
+          status: 'cancelled',
+          ranked_runner_ids: [],
+          current_queue_index: 0,
+          timeout_runner_ids: [],
+          notified_runner_id: null,
+          notified_at: null,
+          notified_expires_at: null,
+          is_notified: false
+        })
+        .eq("id", errand.id)
+        .select();
+      
+      console.log(`[ASSIGN-ERRAND] POST-UPDATE: Cancellation result for errand ${errand.id}:`, {
+        error: cancelError,
+        error_message: cancelError?.message,
+        error_code: cancelError?.code,
+        error_details: cancelError?.details,
+        error_hint: cancelError?.hint,
+        rows_updated: cancelData?.length || 0,
+        updated_data: cancelData,
+        update_succeeded: !cancelError && cancelData && cancelData.length > 0
+      });
+      
+      if (cancelError) {
+        console.error(`[ASSIGN-ERRAND] Failed to cancel errand ${errand.id}:`, cancelError);
+        return corsResponse(
+          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
+          500
+        );
+      }
+      
       // DEBUG: Return diagnostic info when no runners within distance
       const debugRunnerCoords = runners.map((r: any) => ({
         id: r.id,
@@ -206,6 +306,7 @@ serve(async (req) => {
       return corsResponse(
         JSON.stringify({
           status: "no_runners_within_distance",
+          cancelled: true,
           debug: {
             caller_coords: { lat: callerLat, lng: callerLon },
             distance_threshold_km: 0.5,
@@ -254,10 +355,58 @@ serve(async (req) => {
 
     // Check if no runners to assign
     if (rankedRunners.length === 0) {
-      console.warn(`[ASSIGN-ERRAND] Ranking returned 0 runners for errand ${errand.id}`);
+      console.warn(`[ASSIGN-ERRAND] Ranking returned 0 runners for errand ${errand.id} - cancelling immediately`);
+      
+      // Immediately cancel the errand since no runners are available
+      console.log(`[ASSIGN-ERRAND] ========== PATH 3: RANKING RETURNED 0 RUNNERS ==========`);
+      console.log(`[ASSIGN-ERRAND] PRE-UPDATE: About to cancel errand ${errand.id} (ranking returned 0 runners)`);
+      console.log(`[ASSIGN-ERRAND] Current errand state:`, {
+        id: errand.id,
+        status: errand.status,
+        notified_runner_id: errand.notified_runner_id,
+        runner_id: errand.runner_id
+      });
+      
+      console.log("[ASSIGN-ERRAND] Status before cancel attempt:", errand.status);
+      
+      const { error: cancelError, data: cancelData } = await supabase
+        .from("errand")
+        .update({
+          status: 'cancelled',
+          ranked_runner_ids: [],
+          current_queue_index: 0,
+          timeout_runner_ids: [],
+          notified_runner_id: null,
+          notified_at: null,
+          notified_expires_at: null,
+          is_notified: false
+        })
+        .eq("id", errand.id)
+        .select();
+      
+      console.log(`[ASSIGN-ERRAND] POST-UPDATE: Cancellation result for errand ${errand.id}:`, {
+        error: cancelError,
+        error_message: cancelError?.message,
+        error_code: cancelError?.code,
+        error_details: cancelError?.details,
+        error_hint: cancelError?.hint,
+        rows_updated: cancelData?.length || 0,
+        updated_data: cancelData,
+        update_succeeded: !cancelError && cancelData && cancelData.length > 0
+      });
+      
+      if (cancelError) {
+        console.error(`[ASSIGN-ERRAND] Failed to cancel errand ${errand.id}:`, cancelError);
+        return corsResponse(
+          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
+          500
+        );
+      }
+      
       return corsResponse(
         JSON.stringify({
           status: "no_runner_to_assign",
+          cancelled: true
         }),
         200
       );

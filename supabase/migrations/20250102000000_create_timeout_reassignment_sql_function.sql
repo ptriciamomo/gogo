@@ -41,6 +41,7 @@ DECLARE
   errand_timeout_runner_ids TEXT[];
   errand_updated_timeout_ids TEXT[];
   errand_previous_runner_id TEXT;
+  errand_current_notified_runner_id TEXT;  -- For idempotency check
   errand_update_count INTEGER;
   
   -- Commission processing variables
@@ -52,6 +53,7 @@ DECLARE
   commission_timeout_runner_ids TEXT[];
   commission_updated_timeout_ids TEXT[];
   commission_previous_runner_id TEXT;
+  commission_current_notified_runner_id TEXT;  -- For idempotency check
   commission_update_count INTEGER;
 BEGIN
   now_ts := NOW();
@@ -85,7 +87,15 @@ BEGIN
       errands_processed := errands_processed + 1;
       errand_previous_runner_id := timed_out_errand.notified_runner_id;
       
+      -- DEBUG: Log initial state
+      RAISE NOTICE '[TIMEOUT SQL] Processing errand %: notified_runner_id=%, notified_expires_at=%, NOW()=%', 
+        timed_out_errand.id, 
+        timed_out_errand.notified_runner_id, 
+        timed_out_errand.notified_expires_at,
+        now_ts;
+      
       -- Idempotency check: Re-fetch to verify state hasn't changed
+      -- Use separate variable to store current DB value (don't overwrite errand_previous_runner_id)
       SELECT 
         notified_runner_id,
         status,
@@ -94,7 +104,7 @@ BEGIN
         current_queue_index,
         timeout_runner_ids
       INTO
-        errand_previous_runner_id,
+        errand_current_notified_runner_id,
         timed_out_errand.status,
         timed_out_errand.runner_id,
         errand_ranked_runner_ids,
@@ -108,9 +118,21 @@ BEGIN
       
       -- Skip if idempotency check failed (already processed)
       IF NOT FOUND THEN
-        RAISE NOTICE '[TIMEOUT SQL] Errand % already processed, skipping', timed_out_errand.id;
+        RAISE NOTICE '[TIMEOUT SQL] Errand % already processed (idempotency check failed), skipping. Expected notified_runner_id=%, but row not found', 
+          timed_out_errand.id, errand_previous_runner_id;
         CONTINUE;
       END IF;
+      
+      -- Verify the fetched value matches (sanity check)
+      IF errand_current_notified_runner_id IS DISTINCT FROM errand_previous_runner_id THEN
+        RAISE WARNING '[TIMEOUT SQL] Errand % notified_runner_id mismatch: expected %, got %, skipping', 
+          timed_out_errand.id, errand_previous_runner_id, errand_current_notified_runner_id;
+        CONTINUE;
+      END IF;
+      
+      -- DEBUG: Log idempotency check passed
+      RAISE NOTICE '[TIMEOUT SQL] Idempotency check passed for errand %: notified_runner_id matches (%)', 
+        timed_out_errand.id, errand_previous_runner_id;
       
       -- Default current_queue_index to 0 if NULL
       errand_current_index := COALESCE(errand_current_index, 0);
@@ -130,10 +152,22 @@ BEGIN
       -- Check if queue will be exhausted
       errand_next_index := errand_current_index + 1;
       
+      -- DEBUG: Log queue state
+      RAISE NOTICE '[TIMEOUT SQL] Errand % queue state: current_index=%, next_index=%, queue_length=%, timeout_runner_ids before=%', 
+        timed_out_errand.id, 
+        errand_current_index, 
+        errand_next_index, 
+        array_length(errand_ranked_runner_ids, 1),
+        errand_updated_timeout_ids;
+      
       IF errand_next_index >= array_length(errand_ranked_runner_ids, 1) THEN
         -- Queue exhausted: Cancel errand
         RAISE NOTICE '[TIMEOUT SQL] Queue exhausted for errand % (index % -> %, length %), cancelling', 
           timed_out_errand.id, errand_current_index, errand_next_index, array_length(errand_ranked_runner_ids, 1);
+        
+        -- DEBUG: Log UPDATE attempt
+        RAISE NOTICE '[TIMEOUT SQL] Attempting CANCEL UPDATE for errand %: WHERE id=% AND status=pending AND notified_runner_id=%', 
+          timed_out_errand.id, timed_out_errand.id, errand_previous_runner_id;
         
         UPDATE errand
         SET 
@@ -149,6 +183,10 @@ BEGIN
           AND notified_runner_id = errand_previous_runner_id;
         
         GET DIAGNOSTICS errand_update_count = ROW_COUNT;
+        
+        -- DEBUG: Log UPDATE result
+        RAISE NOTICE '[TIMEOUT SQL] CANCEL UPDATE result for errand %: rows_updated=%', 
+          timed_out_errand.id, errand_update_count;
         
         IF errand_update_count > 0 THEN
           errands_cancelled := errands_cancelled + 1;
@@ -180,6 +218,10 @@ BEGIN
         RAISE NOTICE '[TIMEOUT SQL] Reassigning errand % to runner % (index % -> %)', 
           timed_out_errand.id, errand_next_runner_id, errand_current_index, errand_next_index;
         
+        -- DEBUG: Log UPDATE attempt
+        RAISE NOTICE '[TIMEOUT SQL] Attempting REASSIGN UPDATE for errand %: WHERE id=% AND status=pending AND runner_id IS NULL AND notified_runner_id=%', 
+          timed_out_errand.id, timed_out_errand.id, errand_previous_runner_id;
+        
         UPDATE errand
         SET 
           notified_runner_id = errand_next_runner_id,
@@ -194,6 +236,10 @@ BEGIN
           AND notified_runner_id = errand_previous_runner_id;
         
         GET DIAGNOSTICS errand_update_count = ROW_COUNT;
+        
+        -- DEBUG: Log UPDATE result
+        RAISE NOTICE '[TIMEOUT SQL] REASSIGN UPDATE result for errand %: rows_updated=%', 
+          timed_out_errand.id, errand_update_count;
         
         IF errand_update_count > 0 THEN
           errands_reassigned := errands_reassigned + 1;
@@ -252,7 +298,15 @@ BEGIN
       commissions_processed := commissions_processed + 1;
       commission_previous_runner_id := timed_out_commission.notified_runner_id;
       
+      -- DEBUG: Log initial state
+      RAISE NOTICE '[TIMEOUT SQL] Processing commission %: notified_runner_id=%, notified_expires_at=%, NOW()=%', 
+        timed_out_commission.id, 
+        timed_out_commission.notified_runner_id, 
+        timed_out_commission.notified_expires_at,
+        now_ts;
+      
       -- Idempotency check: Re-fetch to verify state hasn't changed
+      -- Use separate variable to store current DB value (don't overwrite commission_previous_runner_id)
       SELECT 
         notified_runner_id,
         status,
@@ -261,7 +315,7 @@ BEGIN
         current_queue_index,
         timeout_runner_ids
       INTO
-        commission_previous_runner_id,
+        commission_current_notified_runner_id,
         timed_out_commission.status,
         timed_out_commission.runner_id,
         commission_ranked_runner_ids,
@@ -275,9 +329,21 @@ BEGIN
       
       -- Skip if idempotency check failed (already processed)
       IF NOT FOUND THEN
-        RAISE NOTICE '[TIMEOUT SQL] Commission % already processed, skipping', timed_out_commission.id;
+        RAISE NOTICE '[TIMEOUT SQL] Commission % already processed (idempotency check failed), skipping. Expected notified_runner_id=%, but row not found', 
+          timed_out_commission.id, commission_previous_runner_id;
         CONTINUE;
       END IF;
+      
+      -- Verify the fetched value matches (sanity check)
+      IF commission_current_notified_runner_id IS DISTINCT FROM commission_previous_runner_id THEN
+        RAISE WARNING '[TIMEOUT SQL] Commission % notified_runner_id mismatch: expected %, got %, skipping', 
+          timed_out_commission.id, commission_previous_runner_id, commission_current_notified_runner_id;
+        CONTINUE;
+      END IF;
+      
+      -- DEBUG: Log idempotency check passed
+      RAISE NOTICE '[TIMEOUT SQL] Idempotency check passed for commission %: notified_runner_id matches (%)', 
+        timed_out_commission.id, commission_previous_runner_id;
       
       -- Default current_queue_index to 0 if NULL
       commission_current_index := COALESCE(commission_current_index, 0);
@@ -297,10 +363,22 @@ BEGIN
       -- Check if queue will be exhausted
       commission_next_index := commission_current_index + 1;
       
+      -- DEBUG: Log queue state
+      RAISE NOTICE '[TIMEOUT SQL] Commission % queue state: current_index=%, next_index=%, queue_length=%, timeout_runner_ids before=%', 
+        timed_out_commission.id, 
+        commission_current_index, 
+        commission_next_index, 
+        array_length(commission_ranked_runner_ids, 1),
+        commission_updated_timeout_ids;
+      
       IF commission_next_index >= array_length(commission_ranked_runner_ids, 1) THEN
         -- Queue exhausted: Cancel commission
         RAISE NOTICE '[TIMEOUT SQL] Queue exhausted for commission % (index % -> %, length %), cancelling', 
           timed_out_commission.id, commission_current_index, commission_next_index, array_length(commission_ranked_runner_ids, 1);
+        
+        -- DEBUG: Log UPDATE attempt
+        RAISE NOTICE '[TIMEOUT SQL] Attempting CANCEL UPDATE for commission %: WHERE id=% AND status=pending AND notified_runner_id=%', 
+          timed_out_commission.id, timed_out_commission.id, commission_previous_runner_id;
         
         UPDATE commission
         SET 
@@ -316,6 +394,10 @@ BEGIN
           AND notified_runner_id = commission_previous_runner_id;
         
         GET DIAGNOSTICS commission_update_count = ROW_COUNT;
+        
+        -- DEBUG: Log UPDATE result
+        RAISE NOTICE '[TIMEOUT SQL] CANCEL UPDATE result for commission %: rows_updated=%', 
+          timed_out_commission.id, commission_update_count;
         
         IF commission_update_count > 0 THEN
           commissions_cancelled := commissions_cancelled + 1;
@@ -347,6 +429,10 @@ BEGIN
         RAISE NOTICE '[TIMEOUT SQL] Reassigning commission % to runner % (index % -> %)', 
           timed_out_commission.id, commission_next_runner_id, commission_current_index, commission_next_index;
         
+        -- DEBUG: Log UPDATE attempt
+        RAISE NOTICE '[TIMEOUT SQL] Attempting REASSIGN UPDATE for commission %: WHERE id=% AND status=pending AND runner_id IS NULL AND notified_runner_id=%', 
+          timed_out_commission.id, timed_out_commission.id, commission_previous_runner_id;
+        
         UPDATE commission
         SET 
           notified_runner_id = commission_next_runner_id,
@@ -361,6 +447,10 @@ BEGIN
           AND notified_runner_id = commission_previous_runner_id;
         
         GET DIAGNOSTICS commission_update_count = ROW_COUNT;
+        
+        -- DEBUG: Log UPDATE result
+        RAISE NOTICE '[TIMEOUT SQL] REASSIGN UPDATE result for commission %: rows_updated=%', 
+          timed_out_commission.id, commission_update_count;
         
         IF commission_update_count > 0 THEN
           commissions_reassigned := commissions_reassigned + 1;

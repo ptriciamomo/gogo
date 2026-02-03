@@ -2,11 +2,35 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { rankRunners, RunnerForRanking, calculateDistanceKm } from "../_shared/runner-ranking.ts";
 
+// CORS headers for browser compatibility
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+// Helper function to create response with CORS headers
+function corsResponse(body: string, status: number = 200, additionalHeaders: Record<string, string> = {}) {
+  return new Response(body, {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      ...additionalHeaders,
+    },
+  });
+}
+
 serve(async (req) => {
   console.log("[ASSIGN-COMMISSION] ========== FUNCTION ENTERED ==========");
   console.log("[ASSIGN-COMMISSION] Timestamp:", new Date().toISOString());
   console.log("[ASSIGN-COMMISSION] Method:", req.method);
   console.log("[ASSIGN-COMMISSION] URL:", req.url);
+  
+  // Handle OPTIONS preflight request
+  if (req.method === "OPTIONS") {
+    return corsResponse("", 200);
+  }
   
   // Initialize Supabase client with service role key
   const supabase = createClient(
@@ -24,10 +48,7 @@ serve(async (req) => {
     const authHeader = req.headers.get("authorization");
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Unauthorized" }), 401);
     }
 
     const token = authHeader.replace("Bearer ", "");
@@ -35,10 +56,7 @@ serve(async (req) => {
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (!user || error) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Unauthorized" }), 401);
     }
   }
 
@@ -49,10 +67,7 @@ serve(async (req) => {
 
     // Basic validation
     if (!commission_id) {
-      return new Response(
-        JSON.stringify({ error: "Missing commission_id" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Missing commission_id" }), 400);
     }
 
     // Fetch the commission (READ-ONLY)
@@ -65,23 +80,14 @@ serve(async (req) => {
     // Handle database error
     if (error) {
       if (error.code === "PGRST116") {
-        return new Response(
-          JSON.stringify({ error: "Commission not found" }),
-          { status: 404, headers: { "Content-Type": "application/json" } }
-        );
+        return corsResponse(JSON.stringify({ error: "Commission not found" }), 404);
       }
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch commission" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Failed to fetch commission" }), 500);
     }
 
     // Check if commission is already assigned
     if (commission.notified_runner_id !== null) {
-      return new Response(
-        JSON.stringify({ status: "already_assigned" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
 
     // Define presence thresholds (must match runner-side logic exactly)
@@ -122,10 +128,7 @@ serve(async (req) => {
     });
 
     if (runnersError) {
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch eligible runners" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "Failed to fetch eligible runners" }), 500);
     }
 
     if (!runners || runners.length === 0) {
@@ -172,16 +175,10 @@ serve(async (req) => {
       
       if (cancelError) {
         console.error(`[ASSIGN-COMMISSION] Failed to cancel commission ${commission.id}:`, cancelError);
-        return new Response(
-          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        );
+        return corsResponse(JSON.stringify({ error: "cancellation_failed", details: cancelError.message }), 500);
       }
       
-      return new Response(
-        JSON.stringify({ status: "no_eligible_runners", cancelled: true }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "no_eligible_runners", cancelled: true }), 200);
     }
 
     // Fetch caller location for distance calculation
@@ -192,20 +189,14 @@ serve(async (req) => {
       .single();
 
     if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-      return new Response(
-        JSON.stringify({ status: "no_runners_within_distance" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "no_runners_within_distance" }), 200);
     }
 
     const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
     const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
 
     if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-      return new Response(
-        JSON.stringify({ status: "no_runners_within_distance" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "no_runners_within_distance" }), 200);
     }
 
     // Apply distance hard filter (≤ 500m) - filter before ranking
@@ -264,16 +255,10 @@ serve(async (req) => {
       
       if (cancelError) {
         console.error(`[ASSIGN-COMMISSION] Failed to cancel commission ${commission.id}:`, cancelError);
-        return new Response(
-          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        );
+        return corsResponse(JSON.stringify({ error: "cancellation_failed", details: cancelError.message }), 500);
       }
       
-      return new Response(
-        JSON.stringify({ status: "no_runners_within_distance", cancelled: true }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ status: "no_runners_within_distance", cancelled: true }), 200);
     }
 
     // Parse commission types for ranking
@@ -362,19 +347,13 @@ serve(async (req) => {
       
       if (cancelError) {
         console.error(`[ASSIGN-COMMISSION] Failed to cancel commission ${commission.id}:`, cancelError);
-        return new Response(
-          JSON.stringify({ error: "cancellation_failed", details: cancelError.message }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        );
+        return corsResponse(JSON.stringify({ error: "cancellation_failed", details: cancelError.message }), 500);
       }
       
-      return new Response(
-        JSON.stringify({
+      return corsResponse(JSON.stringify({
           status: "no_runner_to_assign",
           cancelled: true
-        }),
-        { headers: { "Content-Type": "application/json" } }
-      );
+      }), 200);
     }
 
     // Extract runner IDs in ranked order for queue storage
@@ -411,10 +390,7 @@ serve(async (req) => {
       .select();
 
     if (updateError) {
-      return new Response(
-        JSON.stringify({ error: "assignment_failed" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ error: "assignment_failed" }), 500);
     }
 
     if (!updateData || updateData.length === 0) {
@@ -427,19 +403,13 @@ serve(async (req) => {
 
       if (fetchError) {
         console.error(`[ASSIGN-COMMISSION] Failed to re-fetch commission ${commission.id} after 0 rows updated:`, fetchError);
-        return new Response(
-          JSON.stringify({ error: "assignment_failed", details: "Could not verify assignment state" }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        );
+        return corsResponse(JSON.stringify({ error: "assignment_failed", details: "Could not verify assignment state" }), 500);
       }
 
       // If runner is actually assigned, return already_assigned
       if (currentCommission?.notified_runner_id !== null) {
         console.log(`[ASSIGN-COMMISSION] Commission ${commission.id} already assigned to runner ${currentCommission.notified_runner_id}`);
-        return new Response(
-          JSON.stringify({ status: "already_assigned" }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
+        return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
       }
 
       // If notified_runner_id is still NULL, treat as assignment failure
@@ -453,13 +423,10 @@ serve(async (req) => {
       });
 
       // Return assignment_failed so frontend can handle retry
-      return new Response(
-        JSON.stringify({ 
-          error: "assignment_failed", 
-          details: "UPDATE affected 0 rows and notified_runner_id is NULL. Assignment may have failed due to concurrent modification." 
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return corsResponse(JSON.stringify({ 
+        error: "assignment_failed", 
+        details: "UPDATE affected 0 rows and notified_runner_id is NULL. Assignment may have failed due to concurrent modification." 
+      }), 500);
     }
 
     // Broadcast notification to assigned runner's private channel
@@ -485,23 +452,17 @@ serve(async (req) => {
     
     console.log(`🔔 [EDGE FUNCTION] Broadcast sent to channel: ${channelName}`);
 
-    return new Response(
-      JSON.stringify({
+    return corsResponse(JSON.stringify({
         status: "assigned",
         commission_id: commission.id,
         assigned_runner_id: topRunner.id,
         final_score: topRunner.finalScore,
         assigned_at: assignedAt,
-      }),
-      { headers: { "Content-Type": "application/json" } }
-    );
+    }), 200);
   } catch (error) {
-    return new Response(
-      JSON.stringify({
+    return corsResponse(JSON.stringify({
         error: "Invalid request body",
         details: String(error),
-      }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    }), 500);
   }
 });

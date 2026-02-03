@@ -23,6 +23,8 @@ type Props = {
   onGoBack: () => void;
   /** NEW: parent provides this; it performs the Supabase insert and success handling */
   onConfirm: () => Promise<void> | void;
+  /** NEW: cancellation info to show "No Runners Available" modal after success */
+  pendingNoRunnerModal?: { commissionId: number; title: string } | null;
 };
 
 const formatCompletion = (d: string, t: string) => {
@@ -38,7 +40,7 @@ const formatCompletion = (d: string, t: string) => {
   }
 };
 
-const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm }) => {
+const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm, pendingNoRunnerModal }) => {
   const router = useRouter();
   const [agree, setAgree] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -90,7 +92,7 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm }) =
 
       // Location is updated, proceed with confirmation
       try {
-      await onConfirm();
+        await onConfirm();
         // Show success modal after confirmation succeeds
         setShowSuccessModal(true);
       } catch (error) {
@@ -241,10 +243,25 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm }) =
               <Text style={styles.successModalMessage}>Your commission has been posted.</Text>
               <TouchableOpacity
                 style={styles.successModalButton}
-                onPress={() => {
+                onPress={async () => {
                   setShowSuccessModal(false);
                   onGoBack(); // Close the summary modal
                   router.back(); // Navigate back to home
+                  
+                  // Show "No Runners Available" modal if cancellation was detected
+                  // This happens after navigation, so the home page will receive it
+                  if (pendingNoRunnerModal) {
+                    console.log('[CALLER] Showing No Runners Available modal after Success modal');
+                    // Small delay to ensure navigation completes
+                    setTimeout(async () => {
+                      const { noRunnersAvailableService } = await import('../services/NoRunnersAvailableService');
+                      noRunnersAvailableService.notify({
+                        type: 'commission',
+                        commissionId: pendingNoRunnerModal.commissionId,
+                        commissionTitle: pendingNoRunnerModal.title
+                      });
+                    }, 100);
+                  }
                 }}
                 activeOpacity={0.9}
               >

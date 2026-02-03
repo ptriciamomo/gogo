@@ -96,6 +96,7 @@ async function createCommission(input: {
   if (data?.id) {
     let assignmentSuccess = false;
     let lastError: any = null;
+    let cancelledStatus: string | null = null;
 
     // First attempt
     try {
@@ -111,7 +112,8 @@ async function createCommission(input: {
         if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
           assignmentSuccess = true;
         } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
-          // Commission was cancelled due to no runners - this is a valid outcome
+          // Commission was cancelled due to no runners - store status to show modal
+          cancelledStatus = assignData.status;
           assignmentSuccess = true;
         } else {
           lastError = new Error(`Assignment returned unexpected status: ${assignData.status}`);
@@ -139,6 +141,7 @@ async function createCommission(input: {
           if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
             assignmentSuccess = true;
           } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
+            cancelledStatus = assignData.status;
             assignmentSuccess = true;
           } else {
             lastError = new Error(`Retry assignment returned unexpected status: ${assignData.status}`);
@@ -170,10 +173,16 @@ async function createCommission(input: {
         throw new Error('Commission was created but no runner was assigned. Please try posting again or contact support.');
       }
 
-      // If commission was cancelled (no eligible runners), that's acceptable
-      if (verifyData?.status === 'cancelled') {
-        // This is a valid outcome - no runners available
+      // If commission was cancelled (no eligible runners), return cancellation info
+      // Don't throw error - let success modal show, then trigger "No Runners Available" modal after OK
+      if (verifyData?.status === 'cancelled' || cancelledStatus) {
         console.log('[Commission] Commission cancelled due to no eligible runners');
+        // Return cancellation info attached to data object
+        return {
+          ...data,
+          _cancelled: true,
+          _cancelledStatus: cancelledStatus || 'no_eligible_runners'
+        };
       }
     } else {
       // Assignment failed after retry
@@ -221,6 +230,7 @@ const PostCommission: React.FC = () => {
 
   const [showSummary, setShowSummary] = useState(false);
   const [showCommissionTypes, setShowCommissionTypes] = useState(false);
+  const [pendingNoRunnerModal, setPendingNoRunnerModal] = useState<null | { commissionId: number; title: string }>(null);
 
   const [selectedYear, setSelectedYear] = useState(String(now.getFullYear()));
   const [selectedMonth, setSelectedMonth] = useState(MONTHS[now.getMonth()]);
@@ -510,16 +520,23 @@ const PostCommission: React.FC = () => {
 
   const handleConfirm = async () => {
     try {
-      await createCommission(formData);
-      // Success modal will be shown by CommissionSummary component
+      const result = await createCommission(formData);
+      // Store cancellation state to show modal after Success modal
+      if (result && (result as any)._cancelled === true) {
+        console.log('[CALLER] No eligible runners — will show modal after Success modal');
+        setPendingNoRunnerModal({
+          commissionId: result.id,
+          title: result.title || 'Untitled Commission'
+        });
+      }
     } catch (e: any) {
       Alert.alert('Failed', e?.message ?? 'Could not post commission.');
     }
   };
 
   if (showSummary) {
-    // UI unchanged — just pass onConfirm so summary’s Confirm triggers the insert + success alert
-    return <CommissionSummary formData={formData} onGoBack={() => setShowSummary(false)} {...({ onConfirm: handleConfirm } as any)} />;
+    // UI unchanged — just pass onConfirm so summary's Confirm triggers the insert + success alert
+    return <CommissionSummary formData={formData} onGoBack={() => setShowSummary(false)} pendingNoRunnerModal={pendingNoRunnerModal} {...({ onConfirm: handleConfirm } as any)} />;
   }
 
   return (

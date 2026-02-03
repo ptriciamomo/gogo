@@ -91,12 +91,14 @@ const NoRunnersAvailableModalWeb: React.FC = () => {
             }
 
             // Proceed with deletion - delete only if it belongs to the user
+            // Allow deletion of both 'pending' and 'cancelled' status (cancelled when no runners available)
             console.log(`[NoRunnersAvailableModalWeb] Deleting ${itemType} with ID:`, numericId);
             const { data: deletedData, error: deleteError } = await supabase
               .from(tableName)
               .delete()
               .eq('id', numericId)
               .eq('buddycaller_id', user.id)
+              .in('status', ['pending', 'cancelled'])
               .select();
 
             if (deleteError) {

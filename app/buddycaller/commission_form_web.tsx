@@ -114,41 +114,13 @@ async function createCommission(input: {
 
     if (error) throw error;
 
-    // Call Edge Function to assign top runner and notify
-    if (data?.id) {
-        let assignmentSuccess = false;
-        let lastError: any = null;
+        // Call Edge Function to assign top runner and notify
+        if (data?.id) {
+            let assignmentSuccess = false;
+            let lastError: any = null;
+            let cancelledStatus: string | null = null;
 
-        // First attempt
-        try {
-            const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-and-notify-commission', {
-                body: { commission_id: data.id },
-            });
-
-            if (assignError) {
-                lastError = assignError;
-                console.error('[Commission] First assignment attempt failed:', assignError);
-            } else if (assignData) {
-                // Check if assignment was successful
-                if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
-                    assignmentSuccess = true;
-                } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
-                    // Commission was cancelled due to no runners - this is a valid outcome
-                    assignmentSuccess = true;
-                } else {
-                    lastError = new Error(`Assignment returned unexpected status: ${assignData.status}`);
-                }
-            }
-        } catch (edgeError) {
-            lastError = edgeError;
-            console.error('[Commission] First assignment attempt exception:', edgeError);
-        }
-
-        // Retry once if first attempt failed
-        if (!assignmentSuccess) {
-            console.log('[Commission] Retrying assignment...');
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
-
+            // First attempt
             try {
                 const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-and-notify-commission', {
                     body: { commission_id: data.id },
@@ -156,55 +128,92 @@ async function createCommission(input: {
 
                 if (assignError) {
                     lastError = assignError;
-                    console.error('[Commission] Retry assignment attempt failed:', assignError);
+                    console.error('[Commission] First assignment attempt failed:', assignError);
                 } else if (assignData) {
+                    // Check if assignment was successful
                     if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
                         assignmentSuccess = true;
                     } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
+                        // Commission was cancelled due to no runners - store status to show modal
+                        cancelledStatus = assignData.status;
                         assignmentSuccess = true;
                     } else {
-                        lastError = new Error(`Retry assignment returned unexpected status: ${assignData.status}`);
+                        lastError = new Error(`Assignment returned unexpected status: ${assignData.status}`);
                     }
                 }
             } catch (edgeError) {
                 lastError = edgeError;
-                console.error('[Commission] Retry assignment attempt exception:', edgeError);
+                console.error('[Commission] First assignment attempt exception:', edgeError);
+            }
+
+            // Retry once if first attempt failed
+            if (!assignmentSuccess) {
+                console.log('[Commission] Retrying assignment...');
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+
+                try {
+                    const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-and-notify-commission', {
+                        body: { commission_id: data.id },
+                    });
+
+                    if (assignError) {
+                        lastError = assignError;
+                        console.error('[Commission] Retry assignment attempt failed:', assignError);
+                    } else if (assignData) {
+                        if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
+                            assignmentSuccess = true;
+                        } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
+                            cancelledStatus = assignData.status;
+                            assignmentSuccess = true;
+                        } else {
+                            lastError = new Error(`Retry assignment returned unexpected status: ${assignData.status}`);
+                        }
+                    }
+                } catch (edgeError) {
+                    lastError = edgeError;
+                    console.error('[Commission] Retry assignment attempt exception:', edgeError);
+                }
+            }
+
+            // Verify assignment succeeded by checking database
+            if (assignmentSuccess) {
+                // Re-fetch commission to verify notified_runner_id was set (or commission was cancelled)
+                const { data: verifyData, error: verifyError } = await supabase
+                    .from('commission')
+                    .select('id, status, notified_runner_id')
+                    .eq('id', data.id)
+                    .single();
+
+                if (verifyError) {
+                    console.error('[Commission] Verification fetch failed:', verifyError);
+                    throw new Error('Commission was created but assignment verification failed. Please check if a runner was notified.');
+                }
+
+                // If commission is still pending, notified_runner_id must be set
+                if (verifyData?.status === 'pending' && verifyData.notified_runner_id === null) {
+                    console.error('[Commission] Assignment verification failed: notified_runner_id is still NULL');
+                    throw new Error('Commission was created but no runner was assigned. Please try posting again or contact support.');
+                }
+
+                // If commission was cancelled (no eligible runners), return cancellation info
+                // Don't throw error - let success modal show, then trigger "No Runners Available" modal after OK
+                if (verifyData?.status === 'cancelled' || cancelledStatus) {
+                    console.log('[Commission] Commission cancelled due to no eligible runners');
+                    // Return cancellation info attached to data object
+                    return {
+                        ...data,
+                        _cancelled: true,
+                        _cancelledStatus: cancelledStatus || 'no_eligible_runners'
+                    };
+                }
+            } else {
+                // Assignment failed after retry
+                console.error('[Commission] Assignment failed after retry:', lastError);
+                throw new Error('Commission was created but failed to assign a runner. Please try posting again or contact support.');
             }
         }
 
-        // Verify assignment succeeded by checking database
-        if (assignmentSuccess) {
-            // Re-fetch commission to verify notified_runner_id was set (or commission was cancelled)
-            const { data: verifyData, error: verifyError } = await supabase
-                .from('commission')
-                .select('id, status, notified_runner_id')
-                .eq('id', data.id)
-                .single();
-
-            if (verifyError) {
-                console.error('[Commission] Verification fetch failed:', verifyError);
-                throw new Error('Commission was created but assignment verification failed. Please check if a runner was notified.');
-            }
-
-            // If commission is still pending, notified_runner_id must be set
-            if (verifyData?.status === 'pending' && verifyData.notified_runner_id === null) {
-                console.error('[Commission] Assignment verification failed: notified_runner_id is still NULL');
-                throw new Error('Commission was created but no runner was assigned. Please try posting again or contact support.');
-            }
-
-            // If commission was cancelled (no eligible runners), that's acceptable
-            if (verifyData?.status === 'cancelled') {
-                // This is a valid outcome - no runners available
-                console.log('[Commission] Commission cancelled due to no eligible runners');
-            }
-        } else {
-            // Assignment failed after retry
-            console.error('[Commission] Assignment failed after retry:', lastError);
-            throw new Error('Commission was created but failed to assign a runner. Please try posting again or contact support.');
-        }
-    }
-
-    return data;
+        return data;
 }
 
 /* ───────── types ───────── */
@@ -248,6 +257,7 @@ const PostCommission: React.FC = () => {
     const [showSummary, setShowSummary] = useState(false);
     const [showCommissionTypes, setShowCommissionTypes] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [pendingNoRunnerModal, setPendingNoRunnerModal] = useState<null | { commissionId: number; title: string }>(null);
 
     const [selectedYear, setSelectedYear] = useState(String(now.getFullYear()));
     const [selectedMonth, setSelectedMonth] = useState(MONTHS[now.getMonth()]);
@@ -556,7 +566,15 @@ const PostCommission: React.FC = () => {
             console.log('✅ [Web Caller] Location refreshed successfully, proceeding with commission posting');
             
             // Location is updated, proceed with confirmation
-            await createCommission(formData);
+            const result = await createCommission(formData);
+            // Store cancellation state to show modal after Success modal
+            if (result && (result as any)._cancelled === true) {
+                console.log('[CALLER] No eligible runners — will show modal after Success modal');
+                setPendingNoRunnerModal({
+                    commissionId: result.id,
+                    title: result.title || 'Untitled Commission'
+                });
+            }
             // Keep summary modal visible behind success modal
             setShowSuccessModal(true); // Show custom success modal
         } catch (e: any) {
@@ -806,10 +824,25 @@ const PostCommission: React.FC = () => {
                                 <Text style={w.successModalMessage}>Your commission has been posted.</Text>
                                 <TouchableOpacity
                                     style={w.successModalButton}
-                                    onPress={() => {
+                                    onPress={async () => {
                                         setShowSuccessModal(false);
                                         setShowSummary(false); // Close summary modal when success modal is closed
                                         router.back();
+                                        
+                                        // Show "No Runners Available" modal if cancellation was detected
+                                        // This happens after navigation, so the home page will receive it
+                                        if (pendingNoRunnerModal) {
+                                            console.log('[CALLER] Showing No Runners Available modal after Success modal');
+                                            // Small delay to ensure navigation completes
+                                            setTimeout(async () => {
+                                                const { noRunnersAvailableService } = await import('../../services/NoRunnersAvailableService');
+                                                noRunnersAvailableService.notify({
+                                                    type: 'commission',
+                                                    commissionId: pendingNoRunnerModal.commissionId,
+                                                    commissionTitle: pendingNoRunnerModal.title
+                                                });
+                                            }, 100);
+                                        }
                                     }}
                                 >
                                     <Text style={w.successModalButtonText}>OK</Text>

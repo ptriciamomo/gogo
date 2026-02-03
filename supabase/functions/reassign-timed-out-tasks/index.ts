@@ -147,7 +147,9 @@ serve(async (req) => {
     // ============================================
     // Process Errands
     // ============================================
-    console.log(`[Reassign Timeout] Checking errands with notified_expires_at <= ${now}`);
+    // DISABLED: Errand timeout processing is now handled exclusively by process_timed_out_tasks() SQL cron function
+    // This Edge Function no longer processes errands to prevent conflicts with the SQL-based timeout system
+    console.log(`[Reassign Timeout] Errand processing DISABLED - handled by SQL cron (process_timed_out_tasks)`);
 
     const { data: timedOutErrands, error: errandsQueryError } = await supabase
       .from("errand")
@@ -160,10 +162,10 @@ serve(async (req) => {
       .order("notified_expires_at", { ascending: true })
       .limit(50); // Limit to prevent function timeout
 
-    console.log("[CRON TRACE] Timed-out errands found:", timedOutErrands?.length ?? 0);
+    console.log("[CRON TRACE] Timed-out errands found (NOT PROCESSED):", timedOutErrands?.length ?? 0);
 
     if (timedOutErrands && timedOutErrands.length > 0) {
-      console.log(`[Reassign Timeout] Found ${timedOutErrands.length} timed-out errands`);
+      console.log(`[Reassign Timeout] Found ${timedOutErrands.length} timed-out errands (skipped - handled by SQL cron)`);
     }
 
     if (errandsQueryError) {
@@ -175,8 +177,11 @@ serve(async (req) => {
       });
     } else {
       result.processed.errands.total = timedOutErrands?.length || 0;
-      console.log(`[Reassign Timeout] Found ${result.processed.errands.total} timed-out errands`);
-
+      console.log(`[Reassign Timeout] Found ${result.processed.errands.total} timed-out errands (skipped - handled by SQL cron)`);
+      
+      // SKIP ALL ERRAND PROCESSING - SQL cron is the single source of truth
+      // The loop below is intentionally disabled to prevent conflicts
+      /*
       for (const errand of timedOutErrands || []) {
         try {
           console.log("[CRON TRACE] Processing errand", errand.id, {
@@ -364,6 +369,7 @@ serve(async (req) => {
           console.error(`[Reassign Timeout] ❌ Error processing errand ${errand.id}:`, errorMessage);
         }
       }
+      */
     }
 
     // ============================================

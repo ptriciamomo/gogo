@@ -242,6 +242,8 @@ function ReviewCard({ review }: { review: Review }) {
     ));
   };
 
+  const hasComment = review.comment && review.comment.trim().length > 0;
+
   return (
     <View style={styles.reviewCard}>
       <View style={styles.reviewHeader}>
@@ -256,16 +258,22 @@ function ReviewCard({ review }: { review: Review }) {
               <Text style={styles.reviewerInitialsText}>{review.reviewerInitials}</Text>
             )}
           </View>
-          <View>
-            <Text style={styles.reviewerName}>{review.reviewerName}</Text>
-            <View style={styles.starsContainer}>
-              {renderStars(review.rating)}
+          <View style={styles.reviewerDetails}>
+            <View style={styles.nameAndStarsRow}>
+              <Text style={styles.reviewerName}>{review.reviewerName}</Text>
+              <View style={styles.starsContainer}>
+                {renderStars(review.rating)}
+              </View>
             </View>
           </View>
         </View>
         <Text style={styles.reviewDate}>{review.date}</Text>
       </View>
-      <Text style={styles.reviewComment}>"{review.comment}"</Text>
+      {hasComment ? (
+        <Text style={styles.reviewComment}>"{review.comment}"</Text>
+      ) : (
+        <Text style={styles.emptyComment}>No written feedback provided</Text>
+      )}
     </View>
   );
 }
@@ -662,6 +670,9 @@ export default function BuddyrunnerProfileWeb() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const [postsLoading, setPostsLoading] = useState(false);
+  
+  // State for review visibility toggle (UI-only)
+  const [showAllReviews, setShowAllReviews] = useState(false);
   
   // State for posting
   const [postText, setPostText] = useState('');
@@ -1677,9 +1688,10 @@ export default function BuddyrunnerProfileWeb() {
         />
         
         <View style={styles.mainArea}>
-          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-            {/* Header */}
-            <View style={styles.header}>
+          <View style={styles.headerBackground}>
+            <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+              {/* Header */}
+              <View style={styles.header}>
               <View style={styles.headerLeft}>
                 {isSmallScreen && (
                   <>
@@ -1732,7 +1744,7 @@ export default function BuddyrunnerProfileWeb() {
             />
             {!isViewingOtherUser && (
               <TouchableOpacity style={styles.cameraButton} onPress={handleProfileImagePicker}>
-                <Ionicons name="camera" size={20} color={colors.white} />
+                <Ionicons name="camera" size={20} color={colors.maroon} />
               </TouchableOpacity>
             )}
           </View>
@@ -1807,9 +1819,28 @@ export default function BuddyrunnerProfileWeb() {
           {reviewsLoading ? (
             <Text style={styles.loadingText}>Loading reviews...</Text>
           ) : reviews.length > 0 ? (
-            reviews.map((review) => (
-              <ReviewCard key={review.id} review={review} />
-            ))
+            <>
+              {(showAllReviews ? reviews : reviews.slice(0, 5)).map((review) => (
+                <ReviewCard key={review.id} review={review} />
+              ))}
+              {reviews.length > 5 && (
+                <TouchableOpacity 
+                  style={styles.seeMoreButton} 
+                  onPress={() => setShowAllReviews(!showAllReviews)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.seeMoreText}>
+                    {showAllReviews ? 'Show fewer reviews' : 'See more reviews'}
+                  </Text>
+                  <Ionicons 
+                    name={showAllReviews ? "chevron-up" : "chevron-down"} 
+                    size={16} 
+                    color={colors.text} 
+                    style={{ opacity: 0.6 }} 
+                  />
+                </TouchableOpacity>
+              )}
+            </>
           ) : (
             <Text style={styles.noContentText}>No reviews yet</Text>
           )}
@@ -2120,6 +2151,7 @@ export default function BuddyrunnerProfileWeb() {
           </View>
         </View>
       </Modal>
+      </View>
     </SafeAreaView>
   );
 }
@@ -2127,11 +2159,11 @@ export default function BuddyrunnerProfileWeb() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.light,
   },
   scrollView: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.light,
   },
   loadingContainer: {
     flex: 1,
@@ -2142,13 +2174,19 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 18,
   },
+  headerBackground: {
+    backgroundColor: colors.maroon,
+    flex: 1,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: rp(20),
-    paddingVertical: rp(15),
+    paddingVertical: rp(9),
     backgroundColor: colors.maroon,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
   },
   headerLeft: {
     flexDirection: "row",
@@ -2189,63 +2227,77 @@ const styles = StyleSheet.create({
   },
   profileSection: {
     alignItems: 'center',
-    paddingVertical: rp(20), // Less padding
+    paddingVertical: rp(12), // Reduced by ~40%
+    paddingBottom: rp(20), // Extra bottom padding for curve effect
     backgroundColor: colors.maroon,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    overflow: 'hidden',
   },
   profileImageContainer: {
     position: 'relative',
-    marginBottom: rp(15), // Less margin
+    marginBottom: rp(12),
   },
   profileImage: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    width: 130,
+    height: 130,
+    borderRadius: 65,
     borderWidth: 3,
     borderColor: colors.white,
   },
   cameraButton: {
     position: 'absolute',
-    bottom: -2,
-    right: -2,
-    backgroundColor: colors.maroon,
-    borderRadius: 16,
-    width: 32,
-    height: 32,
+    bottom: 0,
+    right: 0,
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    width: 36,
+    height: 36,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: colors.white,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
   },
   userName: {
     color: colors.white,
-    fontSize: 20, // Smaller font
-    fontWeight: 'bold',
+    fontSize: 24,
+    fontWeight: '900',
     marginBottom: rp(5),
   },
   userRole: {
     color: colors.white,
-    fontSize: 14, // Smaller font
-    opacity: 0.9,
+    fontSize: 12,
+    opacity: 0.7,
+    fontWeight: '400',
   },
   portfolioSection: {
     backgroundColor: colors.white,
-    marginHorizontal: rp(15), // Less margin
-    marginTop: rp(15), // Less margin
-    borderRadius: webResponsive.borderRadius(12), // Smaller radius
-    padding: rp(15), // Less padding
+    marginHorizontal: rp(15),
+    marginTop: rp(20),
+    marginBottom: rp(8),
+    borderRadius: webResponsive.borderRadius(12),
+    padding: rp(20),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   sectionTitle: {
-    fontSize: 16, // Smaller font
-    fontWeight: 'bold',
+    fontSize: 18,
+    fontWeight: '700',
     color: colors.text,
-    marginBottom: rp(12), // Less margin
+    marginBottom: rp(16),
   },
   workCard: {
     flexDirection: 'row',
     backgroundColor: colors.light,
-    borderRadius: webResponsive.borderRadius(8), // Smaller radius
-    padding: rp(12), // Less padding
-    marginBottom: rp(8), // Less margin
+    borderRadius: webResponsive.borderRadius(8),
+    padding: rp(12),
+    marginBottom: rp(12),
     position: 'relative',
   },
   workCardContent: {
@@ -2278,35 +2330,51 @@ const styles = StyleSheet.create({
   },
   reviewsSection: {
     backgroundColor: colors.white,
-    marginHorizontal: rp(15), // Less margin
-    marginTop: rp(15), // Less margin
-    borderRadius: webResponsive.borderRadius(12), // Smaller radius
-    padding: rp(15), // Less padding
+    marginHorizontal: rp(15),
+    marginTop: rp(20),
+    marginBottom: rp(8),
+    borderRadius: webResponsive.borderRadius(12),
+    padding: rp(20),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   reviewCard: {
-    backgroundColor: colors.light,
-    borderRadius: webResponsive.borderRadius(8), // Smaller radius
-    padding: rp(12), // Less padding
-    marginBottom: rp(8), // Less margin
+    backgroundColor: colors.faint,
+    borderRadius: webResponsive.borderRadius(8),
+    padding: rp(10),
+    marginBottom: rp(10),
   },
   reviewHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: rp(8), // Less margin
+    alignItems: 'flex-start',
+    marginBottom: rp(6),
   },
   reviewerInfo: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    flex: 1,
+  },
+  reviewerDetails: {
+    flex: 1,
+    marginLeft: rp(8),
+  },
+  nameAndStarsRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: rp(8),
+    flexWrap: 'wrap',
   },
   reviewerInitials: {
-    width: 32, // Smaller
+    width: 32,
     height: 32,
     borderRadius: 16,
     backgroundColor: colors.maroon,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: rp(8), // Less margin
   },
   reviewerInitialsText: {
     color: colors.white,
@@ -2325,22 +2393,46 @@ const styles = StyleSheet.create({
   },
   starsContainer: {
     flexDirection: 'row',
-    marginTop: rp(2),
+    gap: 2,
   },
   reviewDate: {
-    fontSize: 11, // Smaller font
+    fontSize: 11,
     color: colors.gray,
+    opacity: 0.7,
+    marginLeft: rp(8),
   },
   reviewComment: {
-    fontSize: 13, // Smaller font
+    fontSize: 13,
     color: colors.text,
+    lineHeight: 18,
+  },
+  emptyComment: {
+    fontSize: 13,
+    color: colors.gray,
     fontStyle: 'italic',
+    opacity: 0.6,
+  },
+  seeMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: rp(8),
+    paddingVertical: rp(12),
+    gap: 6,
+  },
+  seeMoreText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '500',
+    opacity: 0.7,
   },
   noContentText: {
     textAlign: 'center',
     color: colors.gray,
-    fontSize: 14, // Smaller font
+    fontSize: 14,
     fontStyle: 'italic',
+    paddingVertical: rp(20),
+    opacity: 0.7,
   },
   actionButtons: {
     marginHorizontal: rp(15), // Less margin
@@ -2366,9 +2458,15 @@ const styles = StyleSheet.create({
   postSection: {
     backgroundColor: colors.white,
     marginHorizontal: rp(15),
-    marginTop: rp(15),
+    marginTop: rp(20),
+    marginBottom: rp(8),
     borderRadius: webResponsive.borderRadius(12),
-    padding: rp(15),
+    padding: rp(20),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   
   postContainer: {
@@ -2749,6 +2847,7 @@ const styles = StyleSheet.create({
   // Main area styles
   mainArea: {
     flex: 1,
+    backgroundColor: colors.light,
   },
 });
 

@@ -22,6 +22,7 @@ import { uploadAndSaveProfilePicture, getProfilePictureUrl } from '../../utils/p
 import { getUserPosts, Post } from '../../utils/postHelpers';
 import { responsive, rw, rh, rf, rp, rb, webResponsive } from '../../utils/responsive';
 import SettingsModal from './settings_modal';
+import ReviewsSection from '../../components/ReviewsSection.web';
 
 /* ================= COLORS ================= */
 const colors = {
@@ -247,46 +248,6 @@ function useAuthProfile() {
 }
 
 /* ================ COMPONENTS ================== */
-function ReviewCard({ review }: { review: Review }) {
-    const renderStars = (rating: number) => {
-        return Array.from({ length: 5 }, (_, index) => (
-            <Ionicons
-                key={index}
-                name={index < rating ? "star" : "star-outline"}
-                size={16}
-                color={colors.yellow}
-            />
-        ));
-    };
-
-    return (
-        <View style={s.reviewCard}>
-            <View style={s.reviewHeader}>
-                <View style={s.reviewerInfo}>
-                    <View style={s.reviewerInitials}>
-                        {review.reviewerProfilePictureUrl ? (
-                            <Image 
-                                source={{ uri: review.reviewerProfilePictureUrl }} 
-                                style={s.reviewerProfileImage}
-                            />
-                        ) : (
-                            <Text style={s.reviewerInitialsText}>{review.reviewerInitials}</Text>
-                        )}
-                    </View>
-                    <View>
-                        <Text style={s.reviewerName}>{review.reviewerName}</Text>
-                        <View style={s.starsContainer}>
-                            {renderStars(review.rating)}
-                        </View>
-                    </View>
-                </View>
-                <Text style={s.reviewDate}>{review.date}</Text>
-            </View>
-            <Text style={s.reviewComment}>"{review.comment}"</Text>
-        </View>
-    );
-}
-
 /* ======================= SIDEBAR (WEB) ======================= */
 function Sidebar({
     open,
@@ -1129,7 +1090,7 @@ export default function BuddycallerProfileWeb() {
                         />
                         {!isViewingOtherUser && (
                             <TouchableOpacity style={s.cameraButton} onPress={handleProfileImagePicker}>
-                                <Ionicons name="camera" size={20} color={colors.white} />
+                                <Ionicons name="camera" size={20} color={colors.maroon} />
                             </TouchableOpacity>
                         )}
                     </View>
@@ -1155,20 +1116,7 @@ export default function BuddycallerProfileWeb() {
 
 
                 {/* Reviews Section - Show when viewing any profile */}
-                {(
-                    <View style={s.reviewsSection}>
-                        <Text style={s.sectionTitle}>Reviews</Text>
-                        {reviewsLoading ? (
-                            <Text style={s.loadingText}>Loading reviews...</Text>
-                        ) : reviews.length > 0 ? (
-                            reviews.map((review) => (
-                                <ReviewCard key={review.id} review={review} />
-                            ))
-                        ) : (
-                            <Text style={s.noReviewsText}>No reviews yet</Text>
-                        )}
-                    </View>
-                )}
+                <ReviewsSection reviews={reviews} loading={reviewsLoading} />
             </ScrollView>
 
             {/* Settings Modal */}
@@ -1278,6 +1226,7 @@ const s = StyleSheet.create({
     },
     scrollView: {
         flex: 1,
+        backgroundColor: colors.light,
     },
     scrollViewContent: {
         paddingBottom: 40,
@@ -1344,43 +1293,51 @@ const s = StyleSheet.create({
     },
     profileSection: {
         alignItems: 'center',
-        paddingVertical: rp(20), // Less padding
+        paddingVertical: rp(12), // Reduced by ~30-40%
+        paddingBottom: rp(20), // Extra bottom padding for curve effect
         backgroundColor: colors.maroon,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        overflow: 'hidden',
     },
     profileImageContainer: {
         position: 'relative',
-        marginBottom: rp(15), // Less margin
+        marginBottom: rp(12),
     },
     profileImage: {
-        width: 110,
-        height: 110,
-        borderRadius: 55,
+        width: 130,
+        height: 130,
+        borderRadius: 65,
         borderWidth: 3,
         borderColor: colors.white,
     },
     cameraButton: {
         position: 'absolute',
-        bottom: -2,
-        right: -2,
-        backgroundColor: colors.maroon,
-        borderRadius: 16,
-        width: 32,
-        height: 32,
+        bottom: 0,
+        right: 0,
+        backgroundColor: colors.white,
+        borderRadius: 18,
+        width: 36,
+        height: 36,
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 2,
-        borderColor: colors.white,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+        elevation: 3,
     },
     userName: {
         color: colors.white,
-        fontSize: 20, // Smaller font
-        fontWeight: 'bold',
+        fontSize: 24,
+        fontWeight: '900',
         marginBottom: rp(5),
     },
     userRole: {
         color: colors.white,
-        fontSize: 14, // Smaller font
-        opacity: 0.9,
+        fontSize: 12,
+        opacity: 0.7,
+        fontWeight: '400',
     },
     reviewsSection: {
         backgroundColor: colors.white,
@@ -1645,7 +1602,7 @@ const s = StyleSheet.create({
     },
     mainArea: {
         flex: 1,
-        backgroundColor: colors.maroon,
+        backgroundColor: colors.light,
     },
 });
 

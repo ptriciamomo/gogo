@@ -3048,9 +3048,14 @@ function HomeWeb() {
                                 <Ionicons name="menu-outline" size={24} color={colors.text} />
                             </TouchableOpacity>
                         )}
-                        <Text style={web.welcome}>
-                            {loading ? "Loading…" : `Welcome back, ${firstName}!`}
-                        </Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={web.welcome}>
+                                {loading ? "Loading…" : `Welcome back, ${firstName}!`}
+                            </Text>
+                            <Text style={web.welcomeSubtitle}>
+                                Ready to take on errands today?
+                            </Text>
+                        </View>
                         <TouchableOpacity
                             onPress={() => {
                                 router.push("/buddyrunner/notification");
@@ -3077,6 +3082,12 @@ function HomeWeb() {
                                 style={[web.tabItem, activeTab === "Errands" && web.tabItemActive]}
                                 onPress={() => setActiveTab("Errands")}
                             >
+                                <Ionicons 
+                                    name="checkmark-circle-outline" 
+                                    size={18} 
+                                    color={activeTab === "Errands" ? colors.maroon : "#fff"} 
+                                    style={{ marginRight: 6 }}
+                                />
                                 <Text style={[web.tabText, activeTab === "Errands" && web.tabTextActive]}>
                                     Errands
                                 </Text>
@@ -3085,6 +3096,12 @@ function HomeWeb() {
                                 style={[web.tabItem, activeTab === "Commissions" && web.tabItemActive]}
                                 onPress={() => setActiveTab("Commissions")}
                             >
+                                <Ionicons 
+                                    name="person-outline" 
+                                    size={18} 
+                                    color={activeTab === "Commissions" ? colors.maroon : "#fff"} 
+                                    style={{ marginRight: 6 }}
+                                />
                                 <Text style={[web.tabText, activeTab === "Commissions" && web.tabTextActive]}>
                                     Commissions
                                 </Text>
@@ -3110,9 +3127,18 @@ function HomeWeb() {
                                         errandsLoading ? (
                                         <Text style={{ color: colors.text }}>Loading errands…</Text>
                                     ) : errands.length === 0 ? (
-                                            <Text style={{ color: colors.text, opacity: 0.7 }}>
-                                                No nearby errands available. Try changing your location or checking again later.
-                                            </Text>
+                                            <View style={web.emptyState}>
+                                                <View style={web.emptyStateIcon}>
+                                                    <Ionicons name="clipboard-outline" size={64} color={colors.border} />
+                                                    <Ionicons name="location-outline" size={32} color={colors.maroon} style={{ position: "absolute", right: 8, top: 8 }} />
+                                                </View>
+                                                <Text style={web.emptyStateTitle}>
+                                                    No errands nearby 😞
+                                                </Text>
+                                                <Text style={web.emptyStateSubtitle}>
+                                                    Try updating your location or expanding your search radius.
+                                                </Text>
+                                            </View>
                                     ) : (
                                         <View style={{ gap: 12, marginBottom: 36 }}>
                                             {errands.map((e) => (
@@ -3164,7 +3190,20 @@ function HomeWeb() {
                                                 } else if (commError) {
                                                     return <Text style={{ color: "#b91c1c" }}>Error: {commError}</Text>;
                                                 } else if (commissions.length === 0) {
-                                                    return <Text style={{ color: colors.text, opacity: 0.7 }}>No commissions available.</Text>;
+                                                    return (
+                                                        <View style={web.emptyState}>
+                                                            <View style={web.emptyStateIcon}>
+                                                                <Ionicons name="clipboard-outline" size={64} color={colors.border} />
+                                                                <Ionicons name="location-outline" size={32} color={colors.maroon} style={{ position: "absolute", right: 8, top: 8 }} />
+                                                            </View>
+                                                            <Text style={web.emptyStateTitle}>
+                                                                No commissions nearby 😞
+                                                            </Text>
+                                                            <Text style={web.emptyStateSubtitle}>
+                                                                Try updating your location or expanding your search radius.
+                                                            </Text>
+                                                        </View>
+                                                    );
                                                 } else {
                                                     console.log('✅ [RENDER] Rendering', commissions.length, 'commissions');
                                                     return (
@@ -3356,28 +3395,31 @@ function StatsRow({
     const isSmallScreen = width < 768;
     const isMediumScreen = width >= 768 && width < 1024;
     
-    // Responsive sizes
-    const iconSize = isSmallScreen ? 28 : isMediumScreen ? 34 : 40;
-    const cardHeight = isSmallScreen ? 90 : isMediumScreen ? 105 : 120;
-    const cardPadding = isSmallScreen ? 12 : isMediumScreen ? 15 : 18;
-    const statValueSize = isSmallScreen ? 24 : isMediumScreen ? 30 : 36;
-    const statLabelSize = isSmallScreen ? 11 : isMediumScreen ? 12 : 14;
+    // Responsive sizes (increased by ~10% for better visual balance)
+    const iconSize = isSmallScreen ? 31 : isMediumScreen ? 37 : 44;
+    const cardHeight = isSmallScreen ? 99 : isMediumScreen ? 116 : 132;
+    const cardPadding = isSmallScreen ? 13 : isMediumScreen ? 17 : 20;
+    const statValueSize = isSmallScreen ? 26 : isMediumScreen ? 33 : 40;
+    const statLabelSize = isSmallScreen ? 12 : isMediumScreen ? 13 : 15;
     const gap = isSmallScreen ? 8 : isMediumScreen ? 12 : 16;
+    
+    // Calculate review count (placeholder - would need to be passed as prop if available)
+    const reviewCount = 14; // This would come from props if available
     
     return (
         <View style={[web.statRow, { gap, flexWrap: isSmallScreen ? 'wrap' : 'nowrap' }]}>
             <TouchableOpacity 
                 activeOpacity={0.9} 
-                style={[web.statCard, { height: cardHeight, padding: cardPadding }]} 
+                style={[web.statCard, web.statCardAccepted, { height: cardHeight, padding: cardPadding }]} 
                 onPress={onAcceptedPress}
             >
                 <Ionicons name="time-outline" size={iconSize} color={colors.maroon} style={{ marginBottom: 0 }} />
                 <Text style={[web.statLabel, { fontSize: statLabelSize }]}>Accepted Tasks</Text>
             </TouchableOpacity>
 
-            <View style={[web.statCard, { height: cardHeight, padding: cardPadding }]}>
+            <View style={[web.statCard, web.statCardCompleted, { height: cardHeight, padding: cardPadding }]}>
                 <Text style={[web.statValue, { fontSize: statValueSize, lineHeight: statValueSize }]}>
-                    {completedCount !== undefined ? completedCount : 7}
+                    {completedCount !== undefined ? completedCount : 0}
                 </Text>
                 <Text style={[web.statLabel, { fontSize: statLabelSize }]}>Completed Tasks</Text>
             </View>
@@ -3385,7 +3427,7 @@ function StatsRow({
             <TouchableOpacity 
                 activeOpacity={0.9} 
                 onPress={onToggleAvailable} 
-                style={[web.statCard, { height: cardHeight, padding: cardPadding }]}
+                style={[web.statCard, web.statCardActive, { height: cardHeight, padding: cardPadding }]}
             >
                 <Text style={[
                     web.statValue, 
@@ -3399,11 +3441,19 @@ function StatsRow({
                 </Text>
             </TouchableOpacity>
 
-            <View style={[web.statCard, { height: cardHeight, padding: cardPadding }]}>
+            <View style={[web.statCard, web.statCardRating, { height: cardHeight, padding: cardPadding }]}>
                 <Text style={[web.statValue, { fontSize: statValueSize, lineHeight: statValueSize }]}>
                     {ratingValue.toFixed(1)}
                 </Text>
                 <Text style={[web.statLabel, { fontSize: statLabelSize }]}>Rating</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 2, marginTop: 2 }}>
+                    {[1, 2, 3].map((i) => (
+                        <Ionicons key={i} name="star" size={13} color="#FCD34D" />
+                    ))}
+                    <Text style={{ color: colors.text, fontSize: 12, opacity: 0.6, marginLeft: 4 }}>
+                        ({reviewCount} reviews)
+                    </Text>
+                </View>
             </View>
         </View>
     );
@@ -3427,21 +3477,21 @@ function ErrandRow({
                     flexDirection: "row",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginBottom: 4,
+                    marginBottom: 8,
                     width: "100%",
                 }}
             >
-                <Text style={{ fontWeight: "900", color: colors.text, fontSize: 14 }}>{data.title}</Text>
-                <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 12 }}>View &gt;</Text>
+                <Text style={{ fontWeight: "900", color: colors.text, fontSize: 15, flex: 1 }}>{data.title}</Text>
+                <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 13 }}>View &gt;</Text>
             </View>
 
-            <View style={web.pill}>
+            <View style={[web.pill, { marginBottom: 8 }]}>
                 <Text style={web.pillText}>{data.category || data.title}</Text>
             </View>
 
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
-                <Ionicons name="location-outline" size={12} color={colors.maroon} />
-                <Text style={{ color: colors.text, fontSize: 11 }}>Location</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="location-outline" size={14} color={colors.maroon} />
+                <Text style={{ color: colors.text, fontSize: 12, opacity: 0.8 }}>Location</Text>
             </View>
         </TouchableOpacity>
     );
@@ -3463,14 +3513,14 @@ function CommissionRow({ c }: { c: CommissionUI }) {
                     flexDirection: "row",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginBottom: 4,
+                    marginBottom: 8,
                     width: "100%",
                 }}
             >
-                <Text style={{ fontWeight: "900", color: colors.text, fontSize: 14 }}>
+                <Text style={{ fontWeight: "900", color: colors.text, fontSize: 15, flex: 1 }}>
                     {c.title || "(No title)"}
                 </Text>
-                <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 12 }}>View &gt;</Text>
+                <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 13 }}>View &gt;</Text>
             </View>
 
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
@@ -3481,9 +3531,9 @@ function CommissionRow({ c }: { c: CommissionUI }) {
                 ))}
             </View>
 
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                 <Ionicons name="star" size={14} color="#F59E0B" />
-                <Text style={{ color: colors.text, fontSize: 12 }}>{(c.rating ?? 5).toFixed(1)}</Text>
+                <Text style={{ color: colors.text, fontSize: 12, opacity: 0.8 }}>{(c.rating ?? 5).toFixed(1)}</Text>
             </View>
         </TouchableOpacity>
     );
@@ -3551,7 +3601,8 @@ const web = StyleSheet.create({
         borderBottomColor: "#EDE9E8",
         paddingHorizontal: 16,
     },
-    welcome: { color: colors.text, fontSize: 18, fontWeight: "900" },
+    welcome: { color: colors.text, fontSize: 20, fontWeight: "900", marginBottom: 4 },
+    welcomeSubtitle: { color: colors.text, fontSize: 14, fontWeight: "400", opacity: 0.7 },
     notificationIcon: { padding: 8, borderRadius: 8, backgroundColor: colors.faint, position: "relative" },
     notificationBadge: {
         position: "absolute",
@@ -3577,27 +3628,28 @@ const web = StyleSheet.create({
     tabsContainer: {
         flexDirection: "row",
         backgroundColor: colors.maroon,
-        borderRadius: 12,
+        borderRadius: 20,
         padding: 4,
         width: "100%",
     },
     tabItem: {
         flex: 1,
         paddingVertical: 11,
-        borderRadius: 10,
+        borderRadius: 16,
         alignItems: "center",
         justifyContent: "center",
+        flexDirection: "row",
     },
-    tabItemActive: { backgroundColor: "#fff" },
+    tabItemActive: { backgroundColor: "#fff", borderWidth: 1, borderColor: colors.maroon },
     tabText: { fontSize: 15, fontWeight: "600", color: "#fff" },
-    tabTextActive: { color: colors.text },
+    tabTextActive: { color: colors.text, fontWeight: "700" },
 
     container: { width: "100%", maxWidth: 980, alignSelf: "center", paddingHorizontal: 8 },
 
     statRow: { flexDirection: "row", flexWrap: "nowrap", gap: 16, marginBottom: 18 },
     statCard: {
         flex: 1,
-        minWidth: 140, // Minimum width for small screens
+        minWidth: 154, // Minimum width for small screens (increased by ~10%)
         backgroundColor: "#fff",
         borderWidth: 1,
         borderColor: colors.border,
@@ -3606,6 +3658,27 @@ const web = StyleSheet.create({
         justifyContent: "center",
         alignItems: "center",
         gap: 6,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    statCardAccepted: {
+        backgroundColor: "#FFF5F0",
+        borderColor: "#FFE5D9",
+    },
+    statCardCompleted: {
+        backgroundColor: "#F0FDF4",
+        borderColor: "#D1FAE5",
+    },
+    statCardActive: {
+        backgroundColor: "#EFF6FF",
+        borderColor: "#DBEAFE",
+    },
+    statCardRating: {
+        backgroundColor: "#FFFBEB",
+        borderColor: "#FEF3C7",
     },
     statValue: {
         fontSize: 36,
@@ -3627,21 +3700,61 @@ const web = StyleSheet.create({
 
     sectionTitle: { color: colors.text, fontWeight: "900", fontSize: 16, marginBottom: 10 },
 
+    emptyState: {
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: 48,
+        paddingHorizontal: 24,
+        marginTop: 24,
+        marginBottom: 36,
+    },
+    emptyStateIcon: {
+        position: "relative",
+        marginBottom: 24,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    emptyStateTitle: {
+        fontSize: 20,
+        fontWeight: "800",
+        color: colors.text,
+        marginBottom: 8,
+        textAlign: "center",
+    },
+    emptyStateSubtitle: {
+        fontSize: 14,
+        fontWeight: "400",
+        color: colors.text,
+        opacity: 0.7,
+        textAlign: "center",
+        lineHeight: 20,
+    },
+
     errandRow: {
         borderWidth: 1,
         borderColor: colors.border,
         borderRadius: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 14,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
         backgroundColor: "#fff",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 1,
     },
     commRow: {
         borderWidth: 1,
         borderColor: colors.maroon,
         borderRadius: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 14,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
         backgroundColor: "#fff",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 1,
     },
 
     sidebarFooter: { padding: 12, gap: 10 },

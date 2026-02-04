@@ -20,6 +20,7 @@ import { sendCommissionAcceptanceMessage } from "../../utils/supabaseHelpers";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NoRunnersAvailableModal from "../../components/NoRunnersAvailableModal";
 import NoRunnersAvailableModalWeb from "../../components/NoRunnersAvailableModalWeb";
+import NoRunnersAvailableCard from "../../components/NoRunnersAvailableCard";
 import { noRunnersAvailableService } from "../../services/NoRunnersAvailableService";
 import { errandAcceptanceService } from "../../services/ErrandAcceptanceService";
 import LocationService from "../../components/LocationService";
@@ -2433,9 +2434,14 @@ function HomeWeb() {
                                     <Ionicons name="menu-outline" size={24} color={colors.text} />
                                 </TouchableOpacity>
                             )}
-                            <Text style={[web.welcome, isSmallScreen && { flexShrink: 1 }]} numberOfLines={1}>
-                                {loading ? "Loading…" : `Welcome back, ${firstName}!`}
-                            </Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={web.welcome}>
+                                    {loading ? "Loading…" : `Hi, ${firstName} 👋`}
+                                </Text>
+                                <Text style={[web.welcome, { fontSize: 16, fontWeight: "400", marginTop: 4 }]}>
+                                    What do you need help with?
+                                </Text>
+                            </View>
                         </View>
                         <TouchableOpacity onPress={() => router.push("/buddycaller/notification")} activeOpacity={0.9}>
                             <Ionicons name="notifications-outline" size={24} color={colors.text} />
@@ -2462,14 +2468,15 @@ function HomeWeb() {
                     </View>
 
                     <ScrollView contentContainerStyle={{ paddingVertical: 24 }}>
-                        <View style={[web.container, { maxWidth: 980 }]}>
+                        <View style={[web.container, { maxWidth: 1400 }]}>
                             {activeTab === "Errands" ? (
                                 <>
-                                    <View style={web.bigCardsRow}>
+                                    <View style={[web.bigCardsRow, width <= 768 && { flexDirection: "column", gap: 16 }]}>
                                         <BigActionCard
                                             title="Post an Errand"
                                             icon="document-text-outline"
                                             filled
+                                            subtitle="Get help from runners near you"
                                             onPress={() => router.push("/buddycaller/errand_form")}
                                         />
                                         <BigActionCard 
@@ -2484,7 +2491,7 @@ function HomeWeb() {
                                     {runnersLoading ? (
                                         <Text style={{ color: colors.text, opacity: 0.7 }}>Loading…</Text>
                                     ) : runners.length === 0 ? (
-                                        <Text style={{ color: colors.text, opacity: 0.7 }}>No runners available.</Text>
+                                        <NoRunnersAvailableCard />
                                     ) : (
                                         <View style={{ gap: 12, marginBottom: 36 }}>
                                             {runners.map((r) => (
@@ -2504,11 +2511,12 @@ function HomeWeb() {
                                 </>
                             ) : (
                                 <>
-                                    <View style={web.bigCardsRow}>
+                                    <View style={[web.bigCardsRow, width <= 768 && { flexDirection: "column", gap: 16 }]}>
                                         <BigActionCard
                                             title="Post Commission"
                                             icon="document-text-outline"
                                             filled
+                                            subtitle="Get help from runners near you"
                                             onPress={() => router.push("/buddycaller/commission_form_web")}
                                         />
                                         <BigActionCard 
@@ -2518,11 +2526,11 @@ function HomeWeb() {
                                         />
                                     </View>
 
-                                    <Text style={web.sectionTitle}>Available Commissioners</Text>
+                                    <Text style={web.sectionTitle}>Available Runners</Text>
                                     {runnersLoading ? (
                                         <Text style={{ color: colors.text, opacity: 0.7 }}>Loading…</Text>
                                     ) : filtered.length === 0 ? (
-                                        <Text style={{ color: colors.text, opacity: 0.7 }}>No commissioners available.</Text>
+                                        <NoRunnersAvailableCard />
                                     ) : (
                                         <View style={{ gap: 12, marginBottom: 36 }}>
                                             {filtered.map((c) => (
@@ -2670,12 +2678,60 @@ function BigActionCard({
     icon,
     filled,
     onPress,
+    subtitle,
 }: {
     title: string;
     icon: any;
     filled?: boolean;
     onPress?: () => void;
+    subtitle?: string;
 }) {
+    const { width } = useWindowDimensions();
+    const isMobileBrowser = width <= 768;
+    
+    if (isMobileBrowser && !filled) {
+        // My Requests card - mobile browser: horizontal layout
+        return (
+            <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={onPress}
+                style={[
+                    web.bigCard,
+                    web.bigCardMobile,
+                    { backgroundColor: "#fff", borderColor: colors.border, borderWidth: 1.2 },
+                ]}
+            >
+                <View style={{ flexDirection: "row", alignItems: "center", flex: 1, gap: 12 }}>
+                    <Ionicons name={icon} size={32} color={colors.maroon} />
+                    <Text style={{ color: colors.text, fontSize: 16, fontWeight: "700", flex: 1 }}>{title}</Text>
+                    <Ionicons name="chevron-forward-outline" size={20} color={colors.text} style={{ opacity: 0.5 }} />
+                </View>
+            </TouchableOpacity>
+        );
+    }
+    
+    if (isMobileBrowser && filled) {
+        // Post an Errand card - mobile browser: vertical layout with subtitle
+        return (
+            <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={onPress}
+                style={[
+                    web.bigCard,
+                    web.bigCardMobileFilled,
+                    { backgroundColor: colors.maroon },
+                ]}
+            >
+                <Ionicons name={icon} size={56} color="#fff" style={{ marginBottom: 20 }} />
+                <Text style={{ color: "#fff", fontSize: 20, fontWeight: "700", marginBottom: 8, textAlign: "center" }}>{title}</Text>
+                {subtitle && (
+                    <Text style={{ color: "#fff", fontSize: 14, fontWeight: "400", opacity: 0.9, textAlign: "center" }}>{subtitle}</Text>
+                )}
+            </TouchableOpacity>
+        );
+    }
+    
+    // Desktop: original layout
     return (
         <TouchableOpacity
             activeOpacity={0.9}
@@ -2712,17 +2768,33 @@ function RunnerRow({ data }: { data: Runner }) {
                 });
             }}
         >
-            <View style={{ flex: 1, gap: 6 }}>
+            {/* Profile Picture - Left */}
+            <View style={web.runnerAvatar}>
+                {data.profile_picture_url ? (
+                    <Image 
+                        source={{ uri: data.profile_picture_url }} 
+                        style={web.runnerAvatarImage}
+                    />
+                ) : (
+                    <Ionicons name="person" size={24} color={colors.border} />
+                )}
+            </View>
+
+            {/* Center Section - Name, Status, Role */}
+            <View style={{ flex: 1, marginLeft: 12, gap: 6 }}>
                 <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{data.name}</Text>
-                <View style={web.pill}>
-                    <Text style={web.pillText}>{data.status}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={web.onlineIndicator} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>Online</Text>
                 </View>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Ionicons name="walk-outline" size={12} color={colors.maroon} />
-                    <Text style={{ color: colors.text, fontSize: 11 }}>BuddyRunner</Text>
+                    <Ionicons name="walk-outline" size={14} color={colors.maroon} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>BuddyRunner</Text>
                 </View>
             </View>
-            <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 12 }}>View Profile &gt;</Text>
+
+            {/* View Profile - Right */}
+            <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 13 }}>View Profile &gt;</Text>
         </TouchableOpacity>
     );
 }
@@ -2778,17 +2850,33 @@ function CommissionerRow({ c }: { c: Commissioner }) {
                 });
             }}
         >
-            <View style={{ flex: 1, gap: 6 }}>
-                <Text style={{ color: colors.text, fontWeight: "800", fontSize: 14 }}>{c.name}</Text>
-                <View style={web.pill}>
-                    <Text style={web.pillText}>{c.status}</Text>
+            {/* Profile Picture - Left */}
+            <View style={web.runnerAvatar}>
+                {c.profile_picture_url ? (
+                    <Image 
+                        source={{ uri: c.profile_picture_url }} 
+                        style={web.runnerAvatarImage}
+                    />
+                ) : (
+                    <Ionicons name="person" size={24} color={colors.border} />
+                )}
+            </View>
+
+            {/* Center Section - Name, Status, Role */}
+            <View style={{ flex: 1, marginLeft: 12, gap: 6 }}>
+                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{c.name}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={web.onlineIndicator} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>Online</Text>
                 </View>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Ionicons name="walk-outline" size={12} color={colors.maroon} />
-                    <Text style={{ color: colors.text, fontSize: 11 }}>BuddyRunner</Text>
+                    <Ionicons name="walk-outline" size={14} color={colors.maroon} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>BuddyRunner</Text>
                 </View>
             </View>
-            <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 12 }}>View Profile &gt;</Text>
+
+            {/* View Profile - Right */}
+            <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 13 }}>View Profile &gt;</Text>
         </TouchableOpacity>
     );
 }
@@ -2848,9 +2936,24 @@ const web = StyleSheet.create({
     tabText: { fontSize: 15, fontWeight: "600", color: colors.pillText },
     tabTextActive: { color: colors.pillTextActive },
 
-    container: { width: "100%", maxWidth: 980, alignSelf: "center", paddingHorizontal: 8 },
+    container: { width: "100%", maxWidth: 1400, alignSelf: "center", paddingHorizontal: 8 },
     bigCardsRow: { flexDirection: "row", gap: 22, flexWrap: "wrap", marginBottom: 22 },
-    bigCard: { flex: 1, minWidth: 360, height: 170, borderRadius: 12, padding: 22, justifyContent: "center", alignItems: "center" },
+    bigCard: { 
+        flex: 1, 
+        minWidth: 360, 
+        height: 200, 
+        borderRadius: 12, 
+        padding: 22, 
+        justifyContent: "center", 
+        alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+    bigCardMobile: { minWidth: "auto", width: "100%", height: 80, flexDirection: "row", padding: 16, justifyContent: "flex-start" },
+    bigCardMobileFilled: { minWidth: "auto", width: "100%", height: "auto", minHeight: 200, padding: 32, marginBottom: 16 },
 
     sectionTitle: { color: colors.text, fontWeight: "900", fontSize: 16, marginBottom: 10 },
 
@@ -2864,12 +2967,37 @@ const web = StyleSheet.create({
         borderWidth: 1,
         borderColor: colors.border,
         borderRadius: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 14,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
         backgroundColor: "#fff",
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 1,
+    },
+    runnerAvatar: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: colors.faint,
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+    },
+    runnerAvatarImage: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+    },
+    onlineIndicator: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: "#22c55e",
     },
     errandRow: {
         borderWidth: 1,
@@ -2886,12 +3014,17 @@ const web = StyleSheet.create({
         borderWidth: 1,
         borderColor: colors.border,
         borderRadius: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 14,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
         backgroundColor: "#fff",
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 1,
     },
 
     sidebarFooter: { padding: 12, gap: 10 },
@@ -3489,7 +3622,7 @@ function HomeMobile() {
                             />
                         </View>
 
-                        <Text style={{ color: colors.text, fontWeight: "900", marginBottom: 10 }}>Available Commissioners</Text>
+                        <Text style={{ color: colors.text, fontWeight: "900", marginBottom: 10 }}>Available Runners</Text>
 
                         {runnersLoading ? (
                             <Text style={{ color: colors.text, opacity: 0.7 }}>Loading…</Text>

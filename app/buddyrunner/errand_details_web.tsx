@@ -600,13 +600,13 @@ export default function ErrandDetailsWeb() {
                     <TouchableOpacity
                         disabled={!hasCaller}
                         onPress={() =>
-                            hasCaller &&
-                            router.push({ pathname: "/buddyrunner/profile", params: { id: caller?.id } })
+                            errand?.id &&
+                            router.push({ pathname: "/buddyrunner/view_map_web", params: { id: errand.id } })
                         }
                         style={[s.viewProfileButton, !hasCaller && { opacity: 0.7 }]}
                         activeOpacity={0.9}
                     >
-                        <Text style={s.viewProfileText}>View Profile</Text>
+                        <Text style={s.viewProfileText}>View Map</Text>
                     </TouchableOpacity>
                 </View>
 

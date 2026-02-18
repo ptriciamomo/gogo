@@ -286,7 +286,7 @@ export default function ChatScreenRunnerWeb() {
       {/* Messages area: scrollable, with bottom padding for input bar */}
       <div
         style={{
-          height: `calc(100dvh - ${INPUT_BAR_HEIGHT}px)`,
+          height: '100%',
           overflowY: 'auto',
           paddingBottom: INPUT_BAR_HEIGHT,
         }}

@@ -271,8 +271,15 @@ export default function ChatScreenRunnerWeb() {
     };
   }, []);
 
+  // Use 100dvh for height on web to avoid mobile browser UI covering the input bar
   return (
-    <div ref={containerRef} style={{ height: '100%', width: '100%' }}>
+    <div
+      ref={containerRef}
+      style={{
+        height: '100dvh', // Fix for mobile web browsers
+        width: '100%'
+      }}
+    >
       <ChatScreenRunner />
     </div>
   );

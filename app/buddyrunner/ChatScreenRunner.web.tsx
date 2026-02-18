@@ -271,16 +271,42 @@ export default function ChatScreenRunnerWeb() {
     };
   }, []);
 
-  // Use 100dvh for height on web to avoid mobile browser UI covering the input bar
+  // Fix input bar to bottom of viewport and make messages area scrollable above it
+  const INPUT_BAR_HEIGHT = 56; // px, adjust if your input bar height differs
   return (
     <div
       ref={containerRef}
       style={{
-        height: '100dvh', // Fix for mobile web browsers
-        width: '100%'
+        position: 'relative',
+        height: '100dvh',
+        width: '100%',
+        overflow: 'hidden'
       }}
     >
-      <ChatScreenRunner />
+      {/* Messages area: scrollable, with bottom padding for input bar */}
+      <div
+        style={{
+          height: `calc(100dvh - ${INPUT_BAR_HEIGHT}px)`,
+          overflowY: 'auto',
+          paddingBottom: INPUT_BAR_HEIGHT,
+        }}
+      >
+        <ChatScreenRunner />
+      </div>
+      {/* Input bar: fixed to bottom */}
+      <div
+        style={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 1001,
+          height: INPUT_BAR_HEIGHT,
+          background: 'transparent', // Let your input bar component control its own color
+        }}
+      >
+        {/* Render only the input bar component here if possible, or let ChatScreenRunner render it at the bottom */}
+      </div>
     </div>
   );
 }

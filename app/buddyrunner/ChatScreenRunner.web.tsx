@@ -273,6 +273,7 @@ export default function ChatScreenRunnerWeb() {
 
   // Fix input bar to bottom of viewport and make messages area scrollable above it
   const INPUT_BAR_HEIGHT = 56; // px, adjust if your input bar height differs
+  const HEADER_HEIGHT = 64; // px, adjust if your header height differs
   return (
     <div
       ref={containerRef}
@@ -280,14 +281,29 @@ export default function ChatScreenRunnerWeb() {
         position: 'relative',
         height: '100dvh',
         width: '100%',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
-      {/* Messages area: scrollable, with bottom padding for input bar */}
+      {/* Fixed/sticky header at the top */}
       <div
         style={{
-          height: '100%',
+          position: 'sticky',
+          top: 0,
+          zIndex: 1002,
+          height: HEADER_HEIGHT,
+          background: 'white', // Let your header component control its own color if needed
+        }}
+      >
+        {/* Render only the header component here if possible, or let ChatScreenRunner render it at the top */}
+      </div>
+      {/* Messages area: scrollable, with padding for header and input bar */}
+      <div
+        style={{
+          flex: 1,
           overflowY: 'auto',
+          paddingTop: HEADER_HEIGHT,
           paddingBottom: INPUT_BAR_HEIGHT,
         }}
       >

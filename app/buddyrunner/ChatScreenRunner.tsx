@@ -1132,17 +1132,13 @@ const styles = StyleSheet.create({
     paddingTop: rp(4),
     paddingBottom: rp(8),
     paddingHorizontal: rp(16),
-    ...(Platform.OS === 'web'
-      ? {
-          position: 'relative',
-          top: 0,
-          zIndex: 1000,
-          borderBottomWidth: 1,
-          borderBottomColor: '#EEEEEE',
-        }
-      : {
-          position: 'relative',
-        }),
+    ...(Platform.OS === 'web' && {
+      position: 'sticky' as any,
+      top: 0,
+      zIndex: 1000,
+      borderBottomWidth: 1,
+      borderBottomColor: '#EEEEEE',
+    }),
   },
 
   // Header content container

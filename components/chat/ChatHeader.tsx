@@ -48,42 +48,85 @@ export default function ChatHeader({
     });
   });
 
+  // Helper to detect mobile web
+  const isMobileWeb = Platform.OS === 'web' && window && window.innerWidth <= 600;
+
   return (
     <View style={styles.header as ViewStyle}>
-      <View style={styles.headerContent as ViewStyle}>
-        {Platform.OS !== 'web' ? (
-          <TouchableOpacity onPress={handleBack} style={styles.backButton as ViewStyle}>
-            <Ionicons name="chevron-back" size={24} color="#8B2323" />
-          </TouchableOpacity>
+      <View
+        style={
+          isMobileWeb
+            ? [styles.headerContent, { justifyContent: 'flex-start' }]
+            : styles.headerContent
+        }
+      >
+        {isMobileWeb ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+            <TouchableOpacity onPress={handleBack} style={styles.backButton as ViewStyle}>
+              <Ionicons name="chevron-back" size={24} color="#8B2323" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.contactInfo, { marginLeft: 4 }]}
+              onPress={onNavigateToProfile}
+              activeOpacity={0.7}
+            >
+              <View style={styles.contactProfilePicture as ViewStyle}>
+                {contactProfile?.profile_picture_url ? (
+                  <Image
+                    source={{ uri: contactProfile.profile_picture_url }}
+                    style={styles.profileImage as ImageStyle}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Text style={styles.profileInitials as TextStyle}>
+                    {getUserInitialsFromProfile(contactProfile)}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.contactNameContainer as ViewStyle}>
+                <Text style={styles.contactName as TextStyle}>
+                  {contactProfile ? `${contactProfile.first_name || ''} ${contactProfile.last_name || ''}`.trim() : contact.name}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#B04A4A" />
+            </TouchableOpacity>
+          </View>
         ) : (
-          <View style={{ width: 24 }} />
-        )}
-
-        <TouchableOpacity
-          style={styles.contactInfo as ViewStyle}
-          onPress={onNavigateToProfile}
-          activeOpacity={0.7}
-        >
-          <View style={styles.contactProfilePicture as ViewStyle}>
-            {contactProfile?.profile_picture_url ? (
-              <Image
-                source={{ uri: contactProfile.profile_picture_url }}
-                style={styles.profileImage as ImageStyle}
-                resizeMode="cover"
-              />
+          <>
+            {Platform.OS !== 'web' ? (
+              <TouchableOpacity onPress={handleBack} style={styles.backButton as ViewStyle}>
+                <Ionicons name="chevron-back" size={24} color="#8B2323" />
+              </TouchableOpacity>
             ) : (
-              <Text style={styles.profileInitials as TextStyle}>
-                {getUserInitialsFromProfile(contactProfile)}
-              </Text>
+              <View style={{ width: 24 }} />
             )}
-          </View>
-          <View style={styles.contactNameContainer as ViewStyle}>
-            <Text style={styles.contactName as TextStyle}>
-              {contactProfile ? `${contactProfile.first_name || ''} ${contactProfile.last_name || ''}`.trim() : contact.name}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#B04A4A" />
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.contactInfo as ViewStyle}
+              onPress={onNavigateToProfile}
+              activeOpacity={0.7}
+            >
+              <View style={styles.contactProfilePicture as ViewStyle}>
+                {contactProfile?.profile_picture_url ? (
+                  <Image
+                    source={{ uri: contactProfile.profile_picture_url }}
+                    style={styles.profileImage as ImageStyle}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Text style={styles.profileInitials as TextStyle}>
+                    {getUserInitialsFromProfile(contactProfile)}
+                  </Text>
+                )}
+              </View>
+              <View style={styles.contactNameContainer as ViewStyle}>
+                <Text style={styles.contactName as TextStyle}>
+                  {contactProfile ? `${contactProfile.first_name || ''} ${contactProfile.last_name || ''}`.trim() : contact.name}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#B04A4A" />
+            </TouchableOpacity>
+          </>
+        )}
 
         {/* Date Filter Clear Button - Show when date filter is active */}
         {isDateFiltered && (

@@ -151,34 +151,10 @@ export default function BuddyRunnerMessagesHubWeb() {
   // Mobile view: Show only list or only chat
   if (isMobile) {
     if (hasConversation) {
-      // Show only chat with back button
+      // Show only chat, no top mobile header
       return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100%', boxSizing: 'border-box' }}>
-          {/* Back button header for mobile */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            padding: '12px 16px', 
-            backgroundColor: '#FFFFFF',
-            borderBottom: '1px solid #E5E5E5',
-            boxSizing: 'border-box'
-          }}>
-            <div 
-              onClick={handleBackToList}
-              style={{ 
-                padding: 8, 
-                marginRight: 12,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <Ionicons name="arrow-back" size={24} color="#333" />
-            </div>
-            <span style={{ fontSize: 18, fontWeight: '600', color: '#333' }}>Messages</span>
-          </div>
-          {/* Chat view */}
+          {/* Chat view (no top header) */}
           <div style={{ 
             display: 'flex', 
             flex: 1, 

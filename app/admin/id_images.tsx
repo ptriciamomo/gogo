@@ -40,6 +40,7 @@ type UserWithIdImage = {
     id_image_path: string | null;
     id_image_approved: boolean | null;
     created_at: string;
+    updated_at: string | null;
 };
 
 /* ===================== AUTH PROFILE HOOK ===================== */
@@ -139,7 +140,7 @@ export default function StudentIdImages() {
                 // First try to fetch with id_image_approved column
                 const { data: dataWithApproval, error: errorWithApproval } = await supabase
                     .from('users')
-                    .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, id_image_approved, created_at')
+                    .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, id_image_approved, created_at, updated_at')
                     .neq('role', 'admin')
                     .order('created_at', { ascending: false })
                     .limit(PAGE_SIZE);
@@ -153,7 +154,7 @@ export default function StudentIdImages() {
                     hasApprovalColumn = false;
                     const { data: dataWithoutApproval, error: errorWithoutApproval } = await supabase
                         .from('users')
-                        .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, created_at')
+                        .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, created_at, updated_at')
                         .neq('role', 'admin')
                         .order('created_at', { ascending: false })
                         .limit(PAGE_SIZE);
@@ -174,6 +175,7 @@ export default function StudentIdImages() {
                         ...user,
                         id_image_path: user.id_image_path ? convertBase64ToUrl(user.id_image_path) : null,
                         id_image_approved: hasApprovalColumn ? (user.id_image_approved ?? null) : null,
+                        updated_at: user.updated_at ?? null,
                     })) as UserWithIdImage[];
 
                 setUsers(usersWithImages);
@@ -220,9 +222,12 @@ export default function StudentIdImages() {
             
             const { data, error } = await supabase
                 .from('users')
-                .update({ id_image_approved: true })
+                .update({ 
+                    id_image_approved: true,
+                    updated_at: new Date().toISOString()
+                })
                 .eq('id', userId)
-                .select('id, id_image_approved');
+                .select('id, id_image_approved, updated_at');
 
             console.log('Update result:', { data, error });
 
@@ -262,9 +267,10 @@ export default function StudentIdImages() {
             }
 
             // Update local state immediately for instant UI feedback
+            const currentTimestamp = new Date().toISOString();
             setUsers(prevUsers =>
                 prevUsers.map(user =>
-                    user.id === userId ? { ...user, id_image_approved: true } : user
+                    user.id === userId ? { ...user, id_image_approved: true, updated_at: currentTimestamp } : user
                 )
             );
 
@@ -313,9 +319,12 @@ export default function StudentIdImages() {
             
             const { data, error } = await supabase
                 .from('users')
-                .update({ id_image_approved: false })
+                .update({ 
+                    id_image_approved: false,
+                    updated_at: new Date().toISOString()
+                })
                 .eq('id', userId)
-                .select('id, id_image_approved');
+                .select('id, id_image_approved, updated_at');
 
             console.log('Update result:', { data, error });
 
@@ -355,9 +364,10 @@ export default function StudentIdImages() {
             }
 
             // Update local state immediately for instant UI feedback
+            const currentTimestamp = new Date().toISOString();
             setUsers(prevUsers =>
                 prevUsers.map(user =>
-                    user.id === userId ? { ...user, id_image_approved: false } : user
+                    user.id === userId ? { ...user, id_image_approved: false, updated_at: currentTimestamp } : user
                 )
             );
 
@@ -366,7 +376,7 @@ export default function StudentIdImages() {
                 try {
                     const { data: refreshData, error: refreshError } = await supabase
                         .from('users')
-                        .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, id_image_approved, created_at')
+                        .select('id, first_name, last_name, middle_name, email, student_id_number, role, id_image_path, id_image_approved, created_at, updated_at')
                         .neq('role', 'admin')
                         .order('created_at', { ascending: false })
                         .limit(PAGE_SIZE);
@@ -381,6 +391,7 @@ export default function StudentIdImages() {
                                 ...user,
                                 id_image_path: user.id_image_path ? convertBase64ToUrl(user.id_image_path) : null,
                                 id_image_approved: user.id_image_approved ?? null,
+                                updated_at: user.updated_at ?? null,
                             }));
 
                         setUsers(usersWithImages);
@@ -399,28 +410,43 @@ export default function StudentIdImages() {
         }
     };
 
-    const filteredUsers = users.filter((user) => {
-        // Apply search filter
-        if (searchQuery) {
-            const query = searchQuery.toLowerCase();
-            const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
-            const email = (user.email || '').toLowerCase();
-            const studentId = (user.student_id_number || '').toLowerCase();
-            const matchesSearch = fullName.includes(query) || email.includes(query) || studentId.includes(query);
-            if (!matchesSearch) return false;
-        }
+    const filteredUsers = users
+        .filter((user) => {
+            // Apply search filter
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
+                const email = (user.email || '').toLowerCase();
+                const studentId = (user.student_id_number || '').toLowerCase();
+                const matchesSearch = fullName.includes(query) || email.includes(query) || studentId.includes(query);
+                if (!matchesSearch) return false;
+            }
 
-        // Apply filter type
-        if (filterType === 'all') {
-            return user.id_image_approved === null;
-        } else if (filterType === 'approved') {
-            return user.id_image_approved === true;
-        } else if (filterType === 'disapproved') {
-            return user.id_image_approved === false;
-        }
+            // Apply filter type
+            if (filterType === 'all') {
+                return user.id_image_approved === null;
+            } else if (filterType === 'approved') {
+                return user.id_image_approved === true;
+            } else if (filterType === 'disapproved') {
+                return user.id_image_approved === false;
+            }
 
-        return true;
-    });
+            return true;
+        })
+        .sort((a, b) => {
+            // Sort based on filter type
+            if (filterType === 'all') {
+                // Pending: sort by created_at DESC (newest registered first)
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            } else if (filterType === 'approved' || filterType === 'disapproved') {
+                // Approved/Disapproved: sort by updated_at DESC (most recently updated first)
+                // Fallback to created_at if updated_at is null
+                const aTime = a.updated_at ? new Date(a.updated_at).getTime() : new Date(a.created_at).getTime();
+                const bTime = b.updated_at ? new Date(b.updated_at).getTime() : new Date(b.created_at).getTime();
+                return bTime - aTime;
+            }
+            return 0;
+        });
 
     if (authLoading) {
         return (
@@ -607,36 +633,38 @@ export default function StudentIdImages() {
                                                             )}
                                                         </View>
                                                     </TouchableOpacity>
-                                                    <View style={[styles.actionButtons, isSmall && styles.actionButtonsSmall]}>
-                                                        <TouchableOpacity
-                                                            style={[styles.actionButton, styles.approveButton, user.id_image_approved === true && styles.actionButtonActive]}
-                                                            onPress={() => {
-                                                                console.log('Approve button clicked for user:', user.id, 'Current status:', user.id_image_approved);
-                                                                handleApprove(user.id);
-                                                            }}
-                                                            activeOpacity={0.7}
-                                                            disabled={false}
-                                                        >
-                                                            <Ionicons name="checkmark" size={isSmall ? 14 : 16} color={user.id_image_approved === true ? "#fff" : colors.maroon} />
-                                                            <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === true && styles.actionButtonTextActive]}>
-                                                                Approve
-                                                            </Text>
-                                                        </TouchableOpacity>
-                                                        <TouchableOpacity
-                                                            style={[styles.actionButton, styles.disapproveButton, user.id_image_approved === false && styles.actionButtonActive]}
-                                                            onPress={() => {
-                                                                console.log('Disapprove button clicked for user:', user.id, 'Current status:', user.id_image_approved);
-                                                                handleDisapprove(user.id);
-                                                            }}
-                                                            activeOpacity={0.7}
-                                                            disabled={false}
-                                                        >
-                                                            <Ionicons name="close" size={isSmall ? 14 : 16} color={user.id_image_approved === false ? "#fff" : colors.maroon} />
-                                                            <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === false && styles.actionButtonTextActive]}>
-                                                                Disapprove
-                                                            </Text>
-                                                        </TouchableOpacity>
-                                                    </View>
+                                                    {user.id_image_approved === null && (
+                                                        <View style={[styles.actionButtons, isSmall && styles.actionButtonsSmall]}>
+                                                            <TouchableOpacity
+                                                                style={[styles.actionButton, styles.approveButton, user.id_image_approved === true && styles.actionButtonActive]}
+                                                                onPress={() => {
+                                                                    console.log('Approve button clicked for user:', user.id, 'Current status:', user.id_image_approved);
+                                                                    handleApprove(user.id);
+                                                                }}
+                                                                activeOpacity={0.7}
+                                                                disabled={false}
+                                                            >
+                                                                <Ionicons name="checkmark" size={isSmall ? 14 : 16} color={user.id_image_approved === true ? "#fff" : colors.maroon} />
+                                                                <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === true && styles.actionButtonTextActive]}>
+                                                                    Approve
+                                                                </Text>
+                                                            </TouchableOpacity>
+                                                            <TouchableOpacity
+                                                                style={[styles.actionButton, styles.disapproveButton, user.id_image_approved === false && styles.actionButtonActive]}
+                                                                onPress={() => {
+                                                                    console.log('Disapprove button clicked for user:', user.id, 'Current status:', user.id_image_approved);
+                                                                    handleDisapprove(user.id);
+                                                                }}
+                                                                activeOpacity={0.7}
+                                                                disabled={false}
+                                                            >
+                                                                <Ionicons name="close" size={isSmall ? 14 : 16} color={user.id_image_approved === false ? "#fff" : colors.maroon} />
+                                                                <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === false && styles.actionButtonTextActive]}>
+                                                                    Disapprove
+                                                                </Text>
+                                                            </TouchableOpacity>
+                                                        </View>
+                                                    )}
                                                 </View>
                                             );
                                         })}

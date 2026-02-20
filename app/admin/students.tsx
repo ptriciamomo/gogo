@@ -17,6 +17,7 @@ import {
     useWindowDimensions,
 } from "react-native";
 import { supabase } from "../../lib/supabase";
+import { convertBase64ToUrl, uploadImageToStorage } from "../../utils/supabaseHelpers";
 
 /* ================= COLORS ================= */
 const colors = {
@@ -40,6 +41,11 @@ type StudentRow = {
     student_id_number?: string | null;
     profile_picture_url?: string | null;
     created_at: string;
+    is_blocked?: boolean | null;
+    is_settlement_blocked?: boolean | null;
+    is_inactive_locked?: boolean | null;
+    id_image_approved?: boolean | null;
+    id_image_path?: string | null;
 };
 
 type Transaction = {
@@ -148,6 +154,14 @@ export default function AdminStudents() {
     const [searchQuery, setSearchQuery] = useState("");
     const [roleFilter, setRoleFilter] = useState<"all" | "buddyrunner" | "buddycaller">("all");
     const [selectedStudent, setSelectedStudent] = useState<StudentRow | null>(null);
+    const [modalStudent, setModalStudent] = useState<StudentRow | null>(null);
+    const [showStudentModal, setShowStudentModal] = useState(false);
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [editFormData, setEditFormData] = useState<Partial<StudentRow>>({});
+    const [isSaving, setIsSaving] = useState(false);
+    const [selectedIdImage, setSelectedIdImage] = useState<File | null>(null);
+    const [idImagePreview, setIdImagePreview] = useState<string | null>(null);
+    const [showReactivateConfirm, setShowReactivateConfirm] = useState(false);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loadingTransactions, setLoadingTransactions] = useState(false);
     const [settlementTransactions, setSettlementTransactions] = useState<SettlementTransaction[]>([]);
@@ -185,7 +199,7 @@ export default function AdminStudents() {
                 setLoadingStudents(true);
                 const { data, error } = await supabase
                     .from('users')
-                    .select('id, first_name, last_name, middle_name, email, phone, role, course, student_id_number, profile_picture_url, created_at')
+                    .select('id, first_name, last_name, middle_name, email, phone, role, course, student_id_number, profile_picture_url, created_at, is_blocked, is_settlement_blocked, is_inactive_locked, id_image_approved, id_image_path')
                     .neq('role', 'admin')
                     .order('created_at', { ascending: false })
                     .limit(PAGE_SIZE);
@@ -204,7 +218,7 @@ export default function AdminStudents() {
 
     // Memoize filtered students to avoid re-computation on every render
     const filteredStudents = useMemo(() => {
-        return students.filter((student) => {
+        const filtered = students.filter((student) => {
             // Role filter
             if (roleFilter !== "all") {
                 const studentRole = (student.role || "").toLowerCase();
@@ -228,9 +242,32 @@ export default function AdminStudents() {
             
             return true;
         });
-    }, [students, roleFilter, searchQuery]);
 
-    // Fetch transactions when exactly one student matches
+        // Clear selection if selected student is no longer in filtered results
+        if (selectedStudent && !filtered.find(s => s.id === selectedStudent.id)) {
+            setSelectedStudent(null);
+        }
+
+        // Sort alphabetically by name (A-Z): first_name primary, last_name fallback
+        const sorted = [...filtered].sort((a, b) => {
+            const aFirstName = (a.first_name || '').toLowerCase().trim();
+            const bFirstName = (b.first_name || '').toLowerCase().trim();
+            const aLastName = (a.last_name || '').toLowerCase().trim();
+            const bLastName = (b.last_name || '').toLowerCase().trim();
+            
+            // Compare by first name first
+            if (aFirstName !== bFirstName) {
+                return aFirstName.localeCompare(bFirstName);
+            }
+            
+            // If first names are equal, compare by last name
+            return aLastName.localeCompare(bLastName);
+        });
+
+        return sorted;
+    }, [students, roleFilter, searchQuery, selectedStudent]);
+
+    // Fetch transactions when a student is selected
     React.useEffect(() => {
         // Defer heavy logic until after initial mount (only run when user interacts)
         if (isInitialMount.current) {
@@ -239,16 +276,14 @@ export default function AdminStudents() {
         }
         
         const fetchStudentTransactions = async () => {
-            // Use memoized filtered students to avoid duplicate computation
-            if (filteredStudents.length !== 1) {
-                setSelectedStudent(null);
+            // If no student is selected, clear transactions
+            if (!selectedStudent) {
                 setTransactions([]);
                 setSettlementTransactions([]);
                 return;
             }
 
-            const student = filteredStudents[0];
-            setSelectedStudent(student);
+            const student = selectedStudent;
             setLoadingTransactions(true);
             setLoadingSettlements(true);
 
@@ -566,7 +601,7 @@ export default function AdminStudents() {
         };
 
         fetchStudentTransactions();
-    }, [filteredStudents]);
+    }, [selectedStudent]);
 
     const handleLogout = async () => {
         setConfirmLogout(false);
@@ -623,20 +658,34 @@ export default function AdminStudents() {
 
                     <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
                         <View style={styles.content}>
-                            <View style={styles.searchContainer}>
-                                <Ionicons name="search-outline" size={20} color={colors.text} style={{ opacity: 0.6 }} />
-                                <TextInput
-                                    style={styles.searchInput}
-                                    placeholder="Search by name, email, course, or student ID..."
-                                    placeholderTextColor="#999"
-                                    value={searchQuery}
-                                    onChangeText={setSearchQuery}
-                                />
-                                {searchQuery.length > 0 && (
-                                    <TouchableOpacity onPress={() => setSearchQuery("")}>
-                                        <Ionicons name="close-circle" size={20} color={colors.text} />
-                                    </TouchableOpacity>
-                                )}
+                            <View style={styles.searchRow}>
+                                <TouchableOpacity
+                                    onPress={() => {
+                                        // Reset page state
+                                        setSearchQuery("");
+                                        setRoleFilter("all");
+                                        setSelectedStudent(null);
+                                    }}
+                                    style={styles.backButton}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="arrow-back" size={24} color={colors.maroon} />
+                                </TouchableOpacity>
+                                <View style={styles.searchContainer}>
+                                    <Ionicons name="search-outline" size={20} color={colors.text} style={{ opacity: 0.6 }} />
+                                    <TextInput
+                                        style={styles.searchInput}
+                                        placeholder="Search by name, email, course, or student ID..."
+                                        placeholderTextColor="#999"
+                                        value={searchQuery}
+                                        onChangeText={setSearchQuery}
+                                    />
+                                    {searchQuery.length > 0 && (
+                                        <TouchableOpacity onPress={() => setSearchQuery("")}>
+                                            <Ionicons name="close-circle" size={20} color={colors.text} />
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
                             </View>
 
                             <View style={styles.filterContainer}>
@@ -695,7 +744,7 @@ export default function AdminStudents() {
                                         {searchQuery ? 'No students found matching your search.' : 'No students found.'}
                                     </Text>
                                 </View>
-                            ) : filteredStudents.length === 1 && selectedStudent ? (
+                            ) : selectedStudent ? (
                                 <>
                                     {/* Student Details Section */}
                                     <View style={styles.studentDetailsCard}>
@@ -711,18 +760,41 @@ export default function AdminStudents() {
                                                 </View>
                                             )}
                                             <View style={styles.studentDetailsHeaderText}>
-                                                <Text style={styles.studentName}>
-                                                    {(() => {
-                                                        const middleName = selectedStudent.middle_name ? selectedStudent.middle_name.trim().toLowerCase() : "";
-                                                        const shouldExcludeMiddleName = middleName === "n/a" || middleName === "na" || middleName === "none";
-                                                        const nameParts = [
-                                                            titleCase(selectedStudent.first_name),
-                                                            !shouldExcludeMiddleName ? titleCase(selectedStudent.middle_name) : null,
-                                                            titleCase(selectedStudent.last_name)
-                                                        ].filter(Boolean);
-                                                        return nameParts.join(" ") || "N/A";
-                                                    })()}
-                                                </Text>
+                                                <View style={styles.studentNameRow}>
+                                                    <Text style={styles.studentName}>
+                                                        {(() => {
+                                                            const middleName = selectedStudent.middle_name ? selectedStudent.middle_name.trim().toLowerCase() : "";
+                                                            const shouldExcludeMiddleName = middleName === "n/a" || middleName === "na" || middleName === "none";
+                                                            const nameParts = [
+                                                                titleCase(selectedStudent.first_name),
+                                                                !shouldExcludeMiddleName ? titleCase(selectedStudent.middle_name) : null,
+                                                                titleCase(selectedStudent.last_name)
+                                                            ].filter(Boolean);
+                                                            return nameParts.join(" ") || "N/A";
+                                                        })()}
+                                                    </Text>
+                                                    <View style={[
+                                                        styles.statusBadge,
+                                                        getStudentStatus(selectedStudent) === "ID Pending" && styles.statusBadgeIdPending,
+                                                        getStudentStatus(selectedStudent) === "ID Disapproved" && styles.statusBadgeIdDisapproved,
+                                                        getStudentStatus(selectedStudent) === "Blocked" && styles.statusBadgeBlocked,
+                                                        getStudentStatus(selectedStudent) === "Settlement Blocked" && styles.statusBadgeSettlement,
+                                                        getStudentStatus(selectedStudent) === "Inactive (Locked)" && styles.statusBadgeInactive,
+                                                        getStudentStatus(selectedStudent) === "Active" && styles.statusBadgeActive,
+                                                    ]}>
+                                                        <Text style={[
+                                                            styles.statusBadgeText,
+                                                            getStudentStatus(selectedStudent) === "ID Pending" && styles.statusBadgeTextIdPending,
+                                                            getStudentStatus(selectedStudent) === "ID Disapproved" && styles.statusBadgeTextIdDisapproved,
+                                                            getStudentStatus(selectedStudent) === "Blocked" && styles.statusBadgeTextBlocked,
+                                                            getStudentStatus(selectedStudent) === "Settlement Blocked" && styles.statusBadgeTextSettlement,
+                                                            getStudentStatus(selectedStudent) === "Inactive (Locked)" && styles.statusBadgeTextInactive,
+                                                            getStudentStatus(selectedStudent) === "Active" && styles.statusBadgeTextActive,
+                                                        ]}>
+                                                            {getStudentStatus(selectedStudent)}
+                                                        </Text>
+                                                    </View>
+                                                </View>
                                                 <Text style={styles.studentRole}>{titleCase(selectedStudent.role || "N/A")}</Text>
                                             </View>
                                         </View>
@@ -832,12 +904,26 @@ export default function AdminStudents() {
                                                 <Text style={[styles.tableHeaderText, styles.tableCellProgram]}>Program</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellEmail]}>Email</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellPhone]}>Phone</Text>
+                                                <Text style={[styles.tableHeaderText, styles.tableCellStatus]}>Status</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellJoined]}>Created At</Text>
                                             </View>
                                             <FlatList
                                                 data={filteredStudents}
                                                 renderItem={({ item: student, index }) => (
-                                                    <StudentTableRow student={student} index={index} />
+                                                    <StudentTableRow 
+                                                        student={student} 
+                                                        index={index}
+                                                        onPress={() => setSelectedStudent(student)}
+                                                        isSelected={selectedStudent?.id === student.id}
+                                                        onIconPress={() => {
+                                                            setModalStudent(student);
+                                                            setShowStudentModal(true);
+                                                            setIsEditMode(false);
+                                                            setEditFormData({});
+                                                            setSelectedIdImage(null);
+                                                            setIdImagePreview(null);
+                                                        }}
+                                                    />
                                                 )}
                                                 keyExtractor={(student) => student.id}
                                                 initialNumToRender={15}
@@ -876,11 +962,497 @@ export default function AdminStudents() {
                     </View>
                 </View>
             )}
+
+            {showStudentModal && modalStudent && (
+                <View style={styles.modalOverlay}>
+                    <TouchableOpacity 
+                        style={StyleSheet.absoluteFill}
+                        activeOpacity={1}
+                        onPress={() => setShowStudentModal(false)}
+                    >
+                        <View />
+                    </TouchableOpacity>
+                    <View style={styles.studentModalCard}>
+                            {/* Modal Header */}
+                            <View style={styles.studentModalHeader}>
+                                <Text style={styles.studentModalTitle}>Student Details</Text>
+                                <View style={styles.studentModalHeaderActions}>
+                                    {!isEditMode ? (
+                                        <TouchableOpacity
+                                            style={styles.studentModalEditButton}
+                                            onPress={() => {
+                                                setIsEditMode(true);
+                                                setEditFormData({
+                                                    first_name: modalStudent.first_name || "",
+                                                    middle_name: modalStudent.middle_name || "",
+                                                    last_name: modalStudent.last_name || "",
+                                                    student_id_number: modalStudent.student_id_number || "",
+                                                    email: modalStudent.email || "",
+                                                    phone: modalStudent.phone || "",
+                                                    course: modalStudent.course || "",
+                                                });
+                                            }}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="create-outline" size={18} color={colors.maroon} />
+                                            <Text style={styles.studentModalEditButtonText}>Edit</Text>
+                                        </TouchableOpacity>
+                                    ) : null}
+                                    <TouchableOpacity
+                                        style={styles.studentModalCloseButton}
+                                        onPress={() => {
+                                            setShowStudentModal(false);
+                                            setIsEditMode(false);
+                                            setEditFormData({});
+                                            setSelectedIdImage(null);
+                                            setIdImagePreview(null);
+                                        }}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons name="close" size={24} color={colors.text} />
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <ScrollView style={styles.studentModalContent} showsVerticalScrollIndicator={true}>
+                                {/* Profile Section */}
+                                <View style={styles.studentModalSection}>
+                                    <Text style={styles.studentModalSectionTitle}>Profile</Text>
+                                    <View style={styles.studentModalProfileRow}>
+                                        {modalStudent.profile_picture_url ? (
+                                            <Image 
+                                                source={{ uri: modalStudent.profile_picture_url }} 
+                                                style={styles.studentModalAvatar}
+                                            />
+                                        ) : (
+                                            <View style={styles.studentModalAvatarPlaceholder}>
+                                                <Ionicons name="person" size={40} color={colors.maroon} />
+                                            </View>
+                                        )}
+                                        <View style={styles.studentModalProfileInfo}>
+                                            {isEditMode ? (
+                                                <View style={styles.studentModalNameInputs}>
+                                                    <TextInput
+                                                        style={styles.studentModalNameInput}
+                                                        value={editFormData.first_name || ""}
+                                                        onChangeText={(text) => setEditFormData(prev => ({ ...prev, first_name: text }))}
+                                                        placeholder="First Name"
+                                                        placeholderTextColor={colors.border}
+                                                    />
+                                                    <TextInput
+                                                        style={styles.studentModalNameInput}
+                                                        value={editFormData.middle_name || ""}
+                                                        onChangeText={(text) => setEditFormData(prev => ({ ...prev, middle_name: text }))}
+                                                        placeholder="Middle Name (optional)"
+                                                        placeholderTextColor={colors.border}
+                                                    />
+                                                    <TextInput
+                                                        style={styles.studentModalNameInput}
+                                                        value={editFormData.last_name || ""}
+                                                        onChangeText={(text) => setEditFormData(prev => ({ ...prev, last_name: text }))}
+                                                        placeholder="Last Name"
+                                                        placeholderTextColor={colors.border}
+                                                    />
+                                                </View>
+                                            ) : (
+                                                <Text style={styles.studentModalName}>
+                                                    {(() => {
+                                                        const middleName = modalStudent.middle_name ? modalStudent.middle_name.trim().toLowerCase() : "";
+                                                        const shouldExcludeMiddleName = middleName === "n/a" || middleName === "na" || middleName === "none";
+                                                        const nameParts = [
+                                                            titleCase(modalStudent.first_name),
+                                                            !shouldExcludeMiddleName ? titleCase(modalStudent.middle_name) : null,
+                                                            titleCase(modalStudent.last_name)
+                                                        ].filter(Boolean);
+                                                        return nameParts.join(" ") || "N/A";
+                                                    })()}
+                                                </Text>
+                                            )}
+                                            <Text style={styles.studentModalRole}>{titleCase(modalStudent.role || "N/A")}</Text>
+                                            <View style={styles.studentModalStatusBadge}>
+                                                {(() => {
+                                                    const currentStatus = getStudentStatus(modalStudent);
+                                                    const isClickable = currentStatus !== "Active" && currentStatus !== "Settlement Blocked";
+                                                    
+                                                    const badgeContent = (
+                                                        <View style={[
+                                                            styles.statusBadgeModal,
+                                                            getStudentStatus(modalStudent) === "ID Pending" && styles.statusBadgeIdPending,
+                                                            getStudentStatus(modalStudent) === "ID Disapproved" && styles.statusBadgeIdDisapproved,
+                                                            getStudentStatus(modalStudent) === "Blocked" && styles.statusBadgeBlocked,
+                                                            getStudentStatus(modalStudent) === "Settlement Blocked" && styles.statusBadgeSettlement,
+                                                            getStudentStatus(modalStudent) === "Inactive (Locked)" && styles.statusBadgeInactive,
+                                                            getStudentStatus(modalStudent) === "Active" && styles.statusBadgeActive,
+                                                            isClickable && styles.statusBadgeClickable,
+                                                        ]}>
+                                                            <Text style={[
+                                                                styles.statusBadgeTextModal,
+                                                                getStudentStatus(modalStudent) === "ID Pending" && styles.statusBadgeTextIdPending,
+                                                                getStudentStatus(modalStudent) === "ID Disapproved" && styles.statusBadgeTextIdDisapproved,
+                                                                getStudentStatus(modalStudent) === "Blocked" && styles.statusBadgeTextBlocked,
+                                                                getStudentStatus(modalStudent) === "Settlement Blocked" && styles.statusBadgeTextSettlement,
+                                                                getStudentStatus(modalStudent) === "Inactive (Locked)" && styles.statusBadgeTextInactive,
+                                                                getStudentStatus(modalStudent) === "Active" && styles.statusBadgeTextActive,
+                                                            ]}>
+                                                                {getStudentStatus(modalStudent)}
+                                                            </Text>
+                                                        </View>
+                                                    );
+                                                    
+                                                    if (isClickable) {
+                                                        return (
+                                                            <TouchableOpacity
+                                                                onPress={() => setShowReactivateConfirm(true)}
+                                                                activeOpacity={0.7}
+                                                                style={styles.statusBadgeTouchable}
+                                                            >
+                                                                {badgeContent}
+                                                            </TouchableOpacity>
+                                                        );
+                                                    }
+                                                    
+                                                    return badgeContent;
+                                                })()}
+                                            </View>
+                                        </View>
+                                    </View>
+                                </View>
+
+                                {/* Student Information Section */}
+                                <View style={styles.studentModalSection}>
+                                    <Text style={styles.studentModalSectionTitle}>Information</Text>
+                                    <View style={styles.studentModalInfoGrid}>
+                                        <View style={styles.studentModalInfoItem}>
+                                            <Text style={styles.studentModalInfoLabel}>Student ID</Text>
+                                            {isEditMode ? (
+                                                <TextInput
+                                                    style={styles.studentModalInput}
+                                                    value={editFormData.student_id_number || ""}
+                                                    onChangeText={(text) => setEditFormData(prev => ({ ...prev, student_id_number: text }))}
+                                                    placeholder="Student ID"
+                                                    placeholderTextColor={colors.border}
+                                                />
+                                            ) : (
+                                                <Text style={styles.studentModalInfoValue}>{modalStudent.student_id_number || "N/A"}</Text>
+                                            )}
+                                        </View>
+                                        <View style={styles.studentModalInfoItem}>
+                                            <Text style={styles.studentModalInfoLabel}>Email</Text>
+                                            {isEditMode ? (
+                                                <TextInput
+                                                    style={styles.studentModalInput}
+                                                    value={editFormData.email || ""}
+                                                    onChangeText={(text) => setEditFormData(prev => ({ ...prev, email: text }))}
+                                                    placeholder="Email"
+                                                    placeholderTextColor={colors.border}
+                                                    keyboardType="email-address"
+                                                    autoCapitalize="none"
+                                                />
+                                            ) : (
+                                                <Text style={styles.studentModalInfoValue}>{modalStudent.email || "N/A"}</Text>
+                                            )}
+                                        </View>
+                                        <View style={styles.studentModalInfoItem}>
+                                            <Text style={styles.studentModalInfoLabel}>Phone</Text>
+                                            {isEditMode ? (
+                                                <TextInput
+                                                    style={styles.studentModalInput}
+                                                    value={editFormData.phone || ""}
+                                                    onChangeText={(text) => setEditFormData(prev => ({ ...prev, phone: text }))}
+                                                    placeholder="Phone"
+                                                    placeholderTextColor={colors.border}
+                                                    keyboardType="phone-pad"
+                                                />
+                                            ) : (
+                                                <Text style={styles.studentModalInfoValue}>{modalStudent.phone || "N/A"}</Text>
+                                            )}
+                                        </View>
+                                        <View style={styles.studentModalInfoItem}>
+                                            <Text style={styles.studentModalInfoLabel}>Program</Text>
+                                            {isEditMode ? (
+                                                <TextInput
+                                                    style={styles.studentModalInput}
+                                                    value={editFormData.course || ""}
+                                                    onChangeText={(text) => setEditFormData(prev => ({ ...prev, course: text }))}
+                                                    placeholder="Program"
+                                                    placeholderTextColor={colors.border}
+                                                />
+                                            ) : (
+                                                <Text style={styles.studentModalInfoValue}>{modalStudent.course || "N/A"}</Text>
+                                            )}
+                                        </View>
+                                        <View style={styles.studentModalInfoItem}>
+                                            <Text style={styles.studentModalInfoLabel}>Joined</Text>
+                                            <Text style={styles.studentModalInfoValue}>{new Date(modalStudent.created_at).toLocaleDateString()}</Text>
+                                        </View>
+                                    </View>
+                                </View>
+
+                                {/* ID Image Section */}
+                                <View style={styles.studentModalSection}>
+                                    <Text style={styles.studentModalSectionTitle}>Student ID Image</Text>
+                                    {(idImagePreview || modalStudent.id_image_path) ? (
+                                        <View style={styles.studentModalImageContainer}>
+                                            <Image
+                                                source={{ uri: idImagePreview || convertBase64ToUrl(modalStudent.id_image_path || "") }}
+                                                style={styles.studentModalIdImage}
+                                                resizeMode="contain"
+                                            />
+                                        </View>
+                                    ) : (
+                                        <View style={styles.studentModalNoImage}>
+                                            <Ionicons name="image-outline" size={48} color={colors.border} />
+                                            <Text style={styles.studentModalNoImageText}>No ID image uploaded</Text>
+                                        </View>
+                                    )}
+                                    
+                                    {/* Upload Section - Only show in Edit Mode AND for ID Pending or ID Disapproved */}
+                                    {isEditMode && (getStudentStatus(modalStudent) === "ID Pending" || getStudentStatus(modalStudent) === "ID Disapproved") && (
+                                        <View style={styles.studentModalUploadSection}>
+                                            <View style={styles.studentModalUploadDivider} />
+                                            {Platform.OS === 'web' ? (
+                                                <>
+                                                    <input
+                                                        type="file"
+                                                        accept="image/jpeg,image/jpg,image/png"
+                                                        style={{ display: 'none' }}
+                                                        id="id-image-upload"
+                                                        onChange={(e) => {
+                                                            const file = e.target.files?.[0];
+                                                            if (file) {
+                                                                setSelectedIdImage(file);
+                                                                const reader = new FileReader();
+                                                                reader.onloadend = () => {
+                                                                    setIdImagePreview(reader.result as string);
+                                                                };
+                                                                reader.readAsDataURL(file);
+                                                            }
+                                                        }}
+                                                    />
+                                                    <TouchableOpacity
+                                                        style={styles.studentModalUploadBox}
+                                                        onPress={() => {
+                                                            const input = document.getElementById('id-image-upload') as HTMLInputElement;
+                                                            input?.click();
+                                                        }}
+                                                        activeOpacity={0.7}
+                                                    >
+                                                        <Ionicons name="cloud-upload-outline" size={32} color={colors.maroon} />
+                                                        <Text style={styles.studentModalUploadText}>Upload New Student ID</Text>
+                                                        <Text style={styles.studentModalUploadHelper}>Accepted formats: JPG, PNG</Text>
+                                                    </TouchableOpacity>
+                                                </>
+                                            ) : null}
+                                        </View>
+                                    )}
+                                </View>
+
+                                {/* Edit Mode Actions */}
+                                {isEditMode && (
+                                    <View style={styles.studentModalActions}>
+                                        <TouchableOpacity
+                                            style={[styles.studentModalActionButton, styles.studentModalCancelButton]}
+                                            onPress={() => {
+                                                setIsEditMode(false);
+                                                setEditFormData({});
+                                                setSelectedIdImage(null);
+                                                setIdImagePreview(null);
+                                            }}
+                                            disabled={isSaving}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Text style={styles.studentModalCancelButtonText}>Cancel</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.studentModalActionButton, styles.studentModalSaveButton]}
+                                            onPress={async () => {
+                                                if (!modalStudent) return;
+                                                
+                                                setIsSaving(true);
+                                                try {
+                                                    // Validate Student ID
+                                                    if (editFormData.student_id_number !== undefined && !editFormData.student_id_number.trim()) {
+                                                        Alert.alert('Validation Error', 'Student ID cannot be empty.');
+                                                        setIsSaving(false);
+                                                        return;
+                                                    }
+
+                                                    const updateData: Partial<StudentRow> = {};
+                                                    if (editFormData.first_name !== undefined) updateData.first_name = editFormData.first_name || null;
+                                                    if (editFormData.middle_name !== undefined) updateData.middle_name = editFormData.middle_name || null;
+                                                    if (editFormData.last_name !== undefined) updateData.last_name = editFormData.last_name || null;
+                                                    if (editFormData.student_id_number !== undefined) updateData.student_id_number = editFormData.student_id_number.trim() || null;
+                                                    if (editFormData.email !== undefined) updateData.email = editFormData.email || null;
+                                                    if (editFormData.phone !== undefined) updateData.phone = editFormData.phone || null;
+                                                    if (editFormData.course !== undefined) updateData.course = editFormData.course || null;
+
+                                                    // Handle ID image upload if a new image was selected
+                                                    if (selectedIdImage) {
+                                                        try {
+                                                            const fileExt = selectedIdImage.name.split('.').pop() || 'jpg';
+                                                            const fileName = `${modalStudent.id}/id_image_${Date.now()}.${fileExt}`;
+                                                            
+                                                            // Create blob URL from File object
+                                                            const blobUrl = URL.createObjectURL(selectedIdImage);
+                                                            const uploadResult = await uploadImageToStorage(blobUrl, fileName, 'student-ids');
+                                                            
+                                                            if (uploadResult.success && uploadResult.path) {
+                                                                // Store the public URL as the image path
+                                                                updateData.id_image_path = uploadResult.path;
+                                                                // Reset approval status when new image is uploaded
+                                                                updateData.id_image_approved = null;
+                                                            }
+                                                            URL.revokeObjectURL(blobUrl);
+                                                        } catch (uploadError: any) {
+                                                            console.error('Error uploading ID image:', uploadError);
+                                                            Alert.alert('Upload Error', `Failed to upload image: ${uploadError.message || 'Unknown error'}`);
+                                                            setIsSaving(false);
+                                                            return;
+                                                        }
+                                                    }
+
+                                                    const { error } = await supabase
+                                                        .from('users')
+                                                        .update(updateData)
+                                                        .eq('id', modalStudent.id);
+
+                                                    if (error) throw error;
+
+                                                    // Update local state
+                                                    const updatedStudent = { ...modalStudent, ...updateData };
+                                                    setModalStudent(updatedStudent);
+                                                    
+                                                    // Update in students list
+                                                    setStudents(prev => prev.map(s => s.id === modalStudent.id ? updatedStudent : s));
+                                                    
+                                                    // Update selectedStudent if it's the same student
+                                                    if (selectedStudent?.id === modalStudent.id) {
+                                                        setSelectedStudent(updatedStudent);
+                                                    }
+
+                                                    setIsEditMode(false);
+                                                    setEditFormData({});
+                                                    setSelectedIdImage(null);
+                                                    setIdImagePreview(null);
+                                                    Alert.alert('Success', 'Student information updated successfully.');
+                                                } catch (error: any) {
+                                                    console.error('Error updating student:', error);
+                                                    Alert.alert('Error', `Failed to update student: ${error.message || 'Unknown error'}`);
+                                                } finally {
+                                                    setIsSaving(false);
+                                                }
+                                            }}
+                                            disabled={isSaving}
+                                            activeOpacity={0.7}
+                                        >
+                                            {isSaving ? (
+                                                <ActivityIndicator size="small" color="#fff" />
+                                            ) : (
+                                                <Text style={styles.studentModalSaveButtonText}>Save</Text>
+                                            )}
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                            </ScrollView>
+                    </View>
+                </View>
+            )}
+
+            {/* Reactivate Confirmation Modal */}
+            {showReactivateConfirm && modalStudent && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalCard}>
+                        <Text style={styles.modalTitle}>Reactivate Student?</Text>
+                        <Text style={styles.modalMessage}>
+                            Are you sure you want to set this student to Active?
+                        </Text>
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonCancel]}
+                                onPress={() => setShowReactivateConfirm(false)}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.modalButtonConfirm]}
+                                onPress={async () => {
+                                    if (!modalStudent) return;
+                                    
+                                    setIsSaving(true);
+                                    setShowReactivateConfirm(false);
+                                    
+                                    try {
+                                        const currentStatus = getStudentStatus(modalStudent);
+                                        const updateData: Partial<StudentRow> = {};
+                                        
+                                        // Update based on current status
+                                        if (currentStatus === "ID Pending" || currentStatus === "ID Disapproved") {
+                                            updateData.id_image_approved = true;
+                                        } else if (currentStatus === "Blocked") {
+                                            updateData.is_blocked = false;
+                                        } else if (currentStatus === "Inactive (Locked)") {
+                                            updateData.is_inactive_locked = false;
+                                        }
+                                        
+                                        const { error } = await supabase
+                                            .from('users')
+                                            .update(updateData)
+                                            .eq('id', modalStudent.id);
+                                        
+                                        if (error) throw error;
+                                        
+                                        // Update local state
+                                        const updatedStudent = { ...modalStudent, ...updateData };
+                                        setModalStudent(updatedStudent);
+                                        
+                                        // Update in students list
+                                        setStudents(prev => prev.map(s => s.id === modalStudent.id ? updatedStudent : s));
+                                        
+                                        // Update selectedStudent if it's the same student
+                                        if (selectedStudent?.id === modalStudent.id) {
+                                            setSelectedStudent(updatedStudent);
+                                        }
+                                        
+                                        Alert.alert('Success', 'Student has been reactivated successfully.');
+                                    } catch (error: any) {
+                                        console.error('Error reactivating student:', error);
+                                        Alert.alert('Error', `Failed to reactivate student: ${error.message || 'Unknown error'}`);
+                                    } finally {
+                                        setIsSaving(false);
+                                    }
+                                }}
+                            >
+                                <Text style={styles.modalButtonConfirmText}>Confirm</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
 
-function StudentTableRow({ student, index }: { student: StudentRow; index: number }) {
+function getStudentStatus(student: StudentRow): string {
+    // Priority order: id_image_approved (null/false) > is_blocked > is_settlement_blocked > is_inactive_locked > Active
+    if (student.id_image_approved === null) {
+        return "ID Pending";
+    } else if (student.id_image_approved === false) {
+        return "ID Disapproved";
+    } else if (student.is_blocked === true) {
+        return "Blocked";
+    } else if (student.is_settlement_blocked === true) {
+        return "Settlement Blocked";
+    } else if (student.is_inactive_locked === true) {
+        return "Inactive (Locked)";
+    } else {
+        return "Active";
+    }
+}
+
+function StudentTableRow({ student, index, onPress, isSelected, onIconPress }: { student: StudentRow; index: number; onPress: () => void; isSelected: boolean; onIconPress: () => void }) {
+    const [isHovered, setIsHovered] = useState(false);
+    const [isIconHovered, setIsIconHovered] = useState(false);
+    
     // Filter out middle names that are "N/A", "n/a", "na", "NA", "None", or "none"
     const middleName = student.middle_name ? student.middle_name.trim().toLowerCase() : "";
     const shouldExcludeMiddleName = middleName === "n/a" || middleName === "na" || middleName === "none";
@@ -899,19 +1471,52 @@ function StudentTableRow({ student, index }: { student: StudentRow; index: numbe
     const phone = student.phone || "N/A";
     const studentId = student.student_id_number || "N/A";
     const joinedDate = new Date(student.created_at).toLocaleDateString();
+    const status = getStudentStatus(student);
 
     const rowStyle = index % 2 === 0 ? styles.tableRow : styles.tableRowAlternate;
+    const combinedRowStyle = [
+        rowStyle,
+        isSelected && styles.tableRowSelected,
+        isHovered && !isSelected && styles.tableRowHovered,
+        Platform.OS === 'web' && styles.tableRowHover,
+    ];
 
     return (
-        <View style={rowStyle}>
+        <TouchableOpacity 
+            style={combinedRowStyle}
+            onPress={onPress}
+            activeOpacity={0.7}
+            onMouseEnter={() => Platform.OS === 'web' && setIsHovered(true)}
+            onMouseLeave={() => Platform.OS === 'web' && setIsHovered(false)}
+        >
             <Text style={[styles.tableCellText, styles.tableCellId]} numberOfLines={1} ellipsizeMode="tail">{studentId}</Text>
             <Text style={[styles.tableCellText, styles.tableCellName]} numberOfLines={1} ellipsizeMode="tail">{fullName}</Text>
             <Text style={[styles.tableCellText, styles.tableCellRole]} numberOfLines={1} ellipsizeMode="tail">{role}</Text>
             <Text style={[styles.tableCellText, styles.tableCellProgram]} numberOfLines={1} ellipsizeMode="tail">{course}</Text>
             <Text style={[styles.tableCellText, styles.tableCellEmail]} numberOfLines={1} ellipsizeMode="tail">{email}</Text>
             <Text style={[styles.tableCellText, styles.tableCellPhone]} numberOfLines={1} ellipsizeMode="tail">{phone}</Text>
-            <Text style={[styles.tableCellText, styles.tableCellJoined]} numberOfLines={1} ellipsizeMode="tail">{joinedDate}</Text>
-        </View>
+            <Text style={[styles.tableCellText, styles.tableCellStatus]} numberOfLines={1} ellipsizeMode="tail">{status}</Text>
+            <View style={styles.tableCellJoined}>
+                <Text style={[styles.tableCellText]} numberOfLines={1} ellipsizeMode="tail">{joinedDate}</Text>
+                <View style={styles.createdAtIconWrapper}>
+                    <TouchableOpacity 
+                        style={[
+                            styles.createdAtIconContainer,
+                            isIconHovered && styles.createdAtIconContainerHovered
+                        ]} 
+                        activeOpacity={0.7}
+                        onPress={(e) => {
+                            e.stopPropagation();
+                            onIconPress();
+                        }}
+                        onMouseEnter={() => Platform.OS === 'web' && setIsIconHovered(true)}
+                        onMouseLeave={() => Platform.OS === 'web' && setIsIconHovered(false)}
+                    >
+                        <Ionicons name="open-outline" size={16} color={colors.text} />
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </TouchableOpacity>
     );
 }
 
@@ -1306,7 +1911,21 @@ const styles = StyleSheet.create({
         paddingVertical: 24,
         backgroundColor: "#fff",
     },
+    searchRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 16,
+        marginBottom: 24,
+    },
+    backButton: {
+        padding: 8,
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'opacity 0.2s ease',
+        } : {}),
+    },
     searchContainer: {
+        flex: 1,
         flexDirection: "row",
         alignItems: "center",
         borderWidth: 1,
@@ -1314,7 +1933,6 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         paddingHorizontal: 16,
         paddingVertical: 12,
-        marginBottom: 24,
         backgroundColor: "#fff",
         gap: 12,
     },
@@ -1397,6 +2015,20 @@ const styles = StyleSheet.create({
         minHeight: 56,
         backgroundColor: "#F5F5F5",
     },
+    tableRowHover: {
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'background-color 0.2s ease',
+        } : {}),
+    },
+    tableRowHovered: {
+        backgroundColor: "#FAF6F5",
+    },
+    tableRowSelected: {
+        backgroundColor: "#F2E9E9",
+        borderLeftWidth: 3,
+        borderLeftColor: colors.maroon,
+    },
     tableCellText: {
         color: colors.text,
         fontSize: 13,
@@ -1427,9 +2059,44 @@ const styles = StyleSheet.create({
         width: 140,
         paddingRight: 24,
     },
+    tableCellStatus: {
+        width: 150,
+        paddingRight: 24,
+        fontWeight: "600",
+    },
     tableCellJoined: {
         width: 200,
         paddingRight: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    createdAtIconWrapper: {
+        marginLeft: 16,
+        flexShrink: 0,
+    },
+    createdAtIconContainer: {
+        padding: 6,
+        borderRadius: 4,
+        backgroundColor: "#F0F0F0",
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+        } : {
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.1,
+            shadowRadius: 2,
+            elevation: 2,
+        }),
+    },
+    createdAtIconContainerHovered: {
+        backgroundColor: "#E5E5E5",
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 2px 6px rgba(0, 0, 0, 0.15)',
+            transform: 'translateY(-1px)',
+        } : {}),
     },
     emptyState: {
         alignItems: "center",
@@ -1502,6 +2169,265 @@ const styles = StyleSheet.create({
         color: "#fff",
         fontWeight: "700",
     },
+    studentModalCard: {
+        width: 600,
+        maxWidth: "90%",
+        maxHeight: "90%",
+        backgroundColor: "#fff",
+        borderRadius: 16,
+        overflow: "hidden",
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.2)',
+        } : {
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.2,
+            shadowRadius: 40,
+            elevation: 10,
+        }),
+    },
+    studentModalHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: 24,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    studentModalTitle: {
+        color: colors.text,
+        fontSize: 24,
+        fontWeight: "900",
+    },
+    studentModalHeaderActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    studentModalEditButton: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: colors.maroon,
+        backgroundColor: "#fff",
+    },
+    studentModalEditButtonText: {
+        color: colors.maroon,
+        fontSize: 14,
+        fontWeight: "600",
+    },
+    studentModalCloseButton: {
+        padding: 4,
+    },
+    studentModalContent: {
+        ...(Platform.OS === 'web' ? {
+            maxHeight: 'calc(90vh - 120px)',
+        } : {
+            maxHeight: 600,
+        }),
+    },
+    studentModalSection: {
+        padding: 24,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.faint,
+    },
+    studentModalSectionTitle: {
+        color: colors.text,
+        fontSize: 18,
+        fontWeight: "800",
+        marginBottom: 16,
+    },
+    studentModalProfileRow: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 16,
+    },
+    studentModalAvatar: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        borderWidth: 2,
+        borderColor: colors.border,
+    },
+    studentModalAvatarPlaceholder: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: colors.faint,
+        borderWidth: 2,
+        borderColor: colors.border,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    studentModalProfileInfo: {
+        flex: 1,
+        gap: 8,
+    },
+    studentModalName: {
+        color: colors.text,
+        fontSize: 22,
+        fontWeight: "800",
+    },
+    studentModalNameInputs: {
+        gap: 8,
+        marginBottom: 4,
+    },
+    studentModalNameInput: {
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        fontSize: 14,
+        color: colors.text,
+        backgroundColor: "#fff",
+        ...(Platform.OS === 'web' ? {
+            outline: 'none',
+        } : {}),
+    },
+    studentModalRole: {
+        color: colors.maroon,
+        fontSize: 16,
+        fontWeight: "600",
+    },
+    studentModalStatusBadge: {
+        marginTop: 4,
+        alignSelf: "flex-start",
+    },
+    studentModalInfoGrid: {
+        gap: 16,
+    },
+    studentModalInfoItem: {
+        gap: 4,
+    },
+    studentModalInfoLabel: {
+        color: colors.text,
+        fontSize: 12,
+        fontWeight: "600",
+        opacity: 0.7,
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+    },
+    studentModalInfoValue: {
+        color: colors.text,
+        fontSize: 16,
+        fontWeight: "500",
+    },
+    studentModalInput: {
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 16,
+        color: colors.text,
+        backgroundColor: "#fff",
+        ...(Platform.OS === 'web' ? {
+            outline: 'none',
+        } : {}),
+    },
+    studentModalActions: {
+        flexDirection: "row",
+        gap: 12,
+        padding: 24,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        justifyContent: "flex-end",
+    },
+    studentModalActionButton: {
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 8,
+        minWidth: 100,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    studentModalCancelButton: {
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: "#fff",
+    },
+    studentModalSaveButton: {
+        backgroundColor: colors.maroon,
+    },
+    studentModalCancelButtonText: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
+    },
+    studentModalSaveButtonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "600",
+    },
+    studentModalImageContainer: {
+        width: "100%",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.faint,
+        borderRadius: 12,
+        padding: 16,
+        minHeight: 300,
+    },
+    studentModalIdImage: {
+        width: "100%",
+        maxWidth: 500,
+        height: 400,
+        borderRadius: 8,
+    },
+    studentModalNoImage: {
+        width: "100%",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.faint,
+        borderRadius: 12,
+        padding: 48,
+        minHeight: 200,
+        gap: 12,
+    },
+    studentModalNoImageText: {
+        color: colors.text,
+        fontSize: 14,
+        opacity: 0.6,
+    },
+    studentModalUploadSection: {
+        marginTop: 16,
+        gap: 16,
+    },
+    studentModalUploadDivider: {
+        height: 1,
+        backgroundColor: colors.border,
+        marginVertical: 8,
+    },
+    studentModalUploadBox: {
+        borderWidth: 2,
+        borderStyle: 'dashed',
+        borderColor: colors.border,
+        borderRadius: 12,
+        backgroundColor: colors.faint,
+        padding: 32,
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 12,
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+        } : {}),
+    },
+    studentModalUploadText: {
+        color: colors.text,
+        fontSize: 16,
+        fontWeight: "600",
+    },
+    studentModalUploadHelper: {
+        color: colors.text,
+        fontSize: 12,
+        opacity: 0.6,
+    },
     studentDetailsCard: {
         backgroundColor: "#fff",
         borderRadius: 12,
@@ -1536,16 +2462,100 @@ const styles = StyleSheet.create({
     studentDetailsHeaderText: {
         flex: 1,
     },
+    studentNameRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        marginBottom: 4,
+    },
     studentName: {
         color: colors.text,
         fontSize: 24,
         fontWeight: "800",
-        marginBottom: 4,
     },
     studentRole: {
         color: colors.maroon,
         fontSize: 16,
         fontWeight: "600",
+    },
+    statusBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 12,
+        borderWidth: 1,
+    },
+    statusBadgeModal: {
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+        alignSelf: "flex-start",
+        ...(Platform.OS === 'web' ? {
+            display: 'inline-flex',
+        } : {}),
+    },
+    statusBadgeClickable: {
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+        } : {}),
+    },
+    statusBadgeTouchable: {
+        alignSelf: "flex-start",
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+        } : {}),
+    },
+    statusBadgeIdPending: {
+        backgroundColor: "#FEF3C7",
+        borderColor: "#F59E0B",
+    },
+    statusBadgeIdDisapproved: {
+        backgroundColor: "#FEE2E2",
+        borderColor: "#DC2626",
+    },
+    statusBadgeBlocked: {
+        backgroundColor: "#FEE2E2",
+        borderColor: "#EF4444",
+    },
+    statusBadgeSettlement: {
+        backgroundColor: "#FED7AA",
+        borderColor: "#F97316",
+    },
+    statusBadgeInactive: {
+        backgroundColor: "#F7F1F0",
+        borderColor: colors.maroon,
+    },
+    statusBadgeActive: {
+        backgroundColor: "#D1FAE5",
+        borderColor: "#22C55E",
+    },
+    statusBadgeText: {
+        fontSize: 12,
+        fontWeight: "700",
+    },
+    statusBadgeTextModal: {
+        fontSize: 12,
+        fontWeight: "600",
+    },
+    statusBadgeTextIdPending: {
+        color: "#D97706",
+    },
+    statusBadgeTextIdDisapproved: {
+        color: "#DC2626",
+    },
+    statusBadgeTextBlocked: {
+        color: "#DC2626",
+    },
+    statusBadgeTextSettlement: {
+        color: "#EA580C",
+    },
+    statusBadgeTextInactive: {
+        color: colors.maroon,
+    },
+    statusBadgeTextActive: {
+        color: "#16A34A",
     },
     studentDetailsGrid: {
         flexDirection: "row",

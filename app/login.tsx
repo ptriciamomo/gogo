@@ -80,6 +80,7 @@ export default function LoginScreen() {
     // NEW: banner text
     const [errorText, setErrorText] = useState('');
     const [showBlockedModal, setShowBlockedModal] = useState(false);
+    const [showInactiveLockedModal, setShowInactiveLockedModal] = useState(false);
     const [showPendingIdModal, setShowPendingIdModal] = useState(false);
     const [showDisapprovedIdModal, setShowDisapprovedIdModal] = useState(false);
 
@@ -115,7 +116,7 @@ export default function LoginScreen() {
                     // User is authenticated, get their role and redirect
                     const { data: profile, error: profileError } = await supabase
                         .from('users')
-                        .select('role, is_blocked')
+                        .select('role, is_blocked, is_settlement_blocked, is_inactive_locked')
                         .eq('id', user.id)
                         .maybeSingle();
 
@@ -124,9 +125,9 @@ export default function LoginScreen() {
                         return;
                     }
 
-                    // If user is blocked, let them stay on login (they'll see blocked message if they try to login)
-                    if (profile?.is_blocked) {
-                        console.log('[Login] User is blocked, staying on login page');
+                    // If user is blocked or inactive locked, let them stay on login (they'll see blocked message if they try to login)
+                    if (profile?.is_blocked || profile?.is_settlement_blocked || profile?.is_inactive_locked) {
+                        console.log('[Login] User is blocked or inactive locked, staying on login page');
                         return;
                     }
 
@@ -172,7 +173,7 @@ export default function LoginScreen() {
             // 2) Read role, blocked status, ID approval status, and registration date from your app profile table
             const { data: profile, error: pErr } = await supabase
                 .from('users')
-                .select('role, is_blocked, is_settlement_blocked, id_image_approved, id_image_path, created_at')
+                .select('role, is_blocked, is_settlement_blocked, is_inactive_locked, id_image_approved, id_image_path, created_at')
                 .eq('id', uid)
                 .single();
 
@@ -191,6 +192,24 @@ export default function LoginScreen() {
                 setTimeout(() => {
                     supabase.auth.signOut().then(() => {
                         setShowBlockedModal(false);
+                    });
+                }, 5000);
+                return;
+            }
+
+            // Check if user is locked due to inactivity
+            if (profile?.is_inactive_locked) {
+                setLoading(false);
+                
+                // Dismiss keyboard before showing modal
+                Keyboard.dismiss();
+                
+                // Show modal for both web and mobile
+                setShowInactiveLockedModal(true);
+                // Auto logout after a delay
+                setTimeout(() => {
+                    supabase.auth.signOut().then(() => {
+                        setShowInactiveLockedModal(false);
                     });
                 }, 5000);
                 return;
@@ -484,6 +503,29 @@ export default function LoginScreen() {
                     </View>
                 )}
 
+                {/* Inactive Locked User Modal */}
+                {showInactiveLockedModal && (
+                    <View style={modalStyles.backdrop}>
+                        <View style={modalStyles.card}>
+                        <View style={modalStyles.iconWrap}>
+                            <Ionicons name="ban" size={Platform.OS === 'web' ? 44 : 48} color={MAROON} />
+                        </View>
+                        <Text style={modalStyles.title}>Account Locked</Text>
+                        <Text style={modalStyles.msg}>Your account has been locked due to 1 year of inactivity. Please contact the administrator.</Text>
+                            <TouchableOpacity
+                                onPress={() => {
+                                    setShowInactiveLockedModal(false);
+                                    supabase.auth.signOut();
+                                }}
+                                style={modalStyles.okBtn}
+                                activeOpacity={0.9}
+                            >
+                                <Text style={modalStyles.okText}>OK</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
+
                 {/* ID Status Modals - Web & Mobile (unified UI) */}
                 <IdStatusModal
                     visible={showPendingIdModal}
@@ -584,6 +626,29 @@ export default function LoginScreen() {
                         <TouchableOpacity
                             onPress={() => {
                                 setShowBlockedModal(false);
+                                supabase.auth.signOut();
+                            }}
+                            style={modalStyles.okBtn}
+                            activeOpacity={0.9}
+                        >
+                            <Text style={modalStyles.okText}>OK</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
+
+            {/* Inactive Locked User Modal - Mobile */}
+            {showInactiveLockedModal && (
+                <View style={modalStyles.backdrop}>
+                    <View style={modalStyles.card}>
+                        <View style={modalStyles.iconWrap}>
+                            <Ionicons name="ban" size={Platform.OS === 'web' ? 44 : 48} color={MAROON} />
+                        </View>
+                        <Text style={modalStyles.title}>Account Locked</Text>
+                        <Text style={modalStyles.msg}>Your account has been locked due to 1 year of inactivity. Please contact the administrator.</Text>
+                        <TouchableOpacity
+                            onPress={() => {
+                                setShowInactiveLockedModal(false);
                                 supabase.auth.signOut();
                             }}
                             style={modalStyles.okBtn}

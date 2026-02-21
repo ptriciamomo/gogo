@@ -597,6 +597,23 @@ function NotificationMobile() {
                     }
                 }
             )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'errand'
+                },
+                async (payload) => {
+                    const errand = payload.new as any;
+                    const oldErrand = payload.old as any;
+
+                    // If errand status changed from pending to something else, remove it from notifications
+                    if (oldErrand.status === 'pending' && errand.status !== 'pending') {
+                        setNotifications(prev => prev.filter(notif => notif.errand_id !== String(errand.id)));
+                    }
+                }
+            )
             .subscribe((status) => {
                 console.log('Mobile notification subscription status:', status);
             });
@@ -1439,6 +1456,23 @@ function NotificationWebInstant() {
                     }
                 }
             )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'errand'
+                },
+                async (payload) => {
+                    const errand = payload.new as any;
+                    const oldErrand = payload.old as any;
+
+                    // If errand status changed from pending to something else, remove it from notifications
+                    if (oldErrand.status === 'pending' && errand.status !== 'pending') {
+                        setNotifications(prev => prev.filter(notif => notif.errand_id !== String(errand.id)));
+                    }
+                }
+            )
             .subscribe((status) => {
                 console.log('Web notification subscription status:', status);
             });
@@ -1678,15 +1712,15 @@ function NotificationWebInstant() {
                                         <TouchableOpacity
                                 key={notification.id}
                                 style={web.notificationCard}
-                                onPress={() => {
-                                    if (notification.commission_id) {
-                                        router.push(`/buddyrunner/view_commission_web?id=${notification.commission_id}&withSidebar=1`);
-                                    } else if (notification.errand_id) {
-                                        router.push(`/buddyrunner/view_errand_web?id=${notification.errand_id}&withSidebar=1`);
-                                    } else {
-                                        router.push('/buddyrunner/messages');
-                                    }
-                                }}
+                                        onPress={() => {
+                                            if (notification.commission_id) {
+                                                router.push(`/buddyrunner/view_commission_web?id=${notification.commission_id}`);
+                                            } else if (notification.errand_id) {
+                                                router.push(`/buddyrunner/view_errand_web?id=${notification.errand_id}&withSidebar=1`);
+                                            } else {
+                                                router.push('/buddyrunner/messages');
+                                            }
+                                        }}
                             >
                                 <View style={web.notificationContent}>
                                     {!(notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_')) && (
@@ -1723,7 +1757,7 @@ function NotificationWebInstant() {
                                         style={web.viewButton}
                                         onPress={() => {
                                             if (notification.commission_id) {
-                                                router.push(`/buddyrunner/view_commission_web?id=${notification.commission_id}&withSidebar=1`);
+                                                router.push(`/buddyrunner/view_commission_web?id=${notification.commission_id}`);
                                             } else if (notification.errand_id) {
                                                 router.push(`/buddyrunner/view_errand_web?id=${notification.errand_id}&withSidebar=1`);
                                             } else {

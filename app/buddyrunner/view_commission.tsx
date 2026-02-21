@@ -601,13 +601,85 @@ export default function ViewCommissionMobile() {
                             <Text style={s.name}>{requesterName}</Text>
                             {!!caller?.student_id_number && <Text style={s.subLine}>Student ID: {caller.student_id_number}</Text>}
                             {!!caller?.course && <Text style={s.subLine}>{caller.course}</Text>}
-                            <TouchableOpacity style={s.locationBtn} activeOpacity={0.9}>
+                            <TouchableOpacity 
+                                style={s.locationBtn} 
+                                activeOpacity={0.9}
+                                onPress={() => {
+                                    if (caller?.id) {
+                                        router.push({
+                                            pathname: "/buddyrunner/profile",
+                                            params: {
+                                                userId: caller.id,
+                                                isViewingOtherUser: 'true',
+                                                returnTo: 'ViewCommission'
+                                            }
+                                        });
+                                    }
+                                }}
+                            >
                                 <Text style={s.locationText}>View Profile</Text>
                             </TouchableOpacity>
                         </View>
-                        <View style={s.chatBubble}>
+                        <TouchableOpacity 
+                            style={s.chatBubble}
+                            activeOpacity={0.9}
+                            onPress={async () => {
+                                if (!commission || !caller?.id) return;
+                                
+                                try {
+                                    const { data: { user } } = await supabase.auth.getUser();
+                                    if (!user) return;
+                                    
+                                    const callerId = String(commission.buddycaller_id ?? "");
+                                    if (!callerId) return;
+                                    
+                                    let conversationId: string | null = null;
+                                    
+                                    // Look for existing conversation
+                                    const { data: existing } = await supabase
+                                        .from("conversations")
+                                        .select("id")
+                                        .or(`and(user1_id.eq.${user.id},user2_id.eq.${callerId}),and(user1_id.eq.${callerId},user2_id.eq.${user.id})`)
+                                        .limit(1);
+                                    
+                                    if (existing && existing.length) {
+                                        conversationId = String(existing[0].id);
+                                    } else {
+                                        // Create new conversation
+                                        const { data: created, error: convErr } = await supabase
+                                            .from("conversations")
+                                            .insert({
+                                                user1_id: user.id,
+                                                user2_id: callerId,
+                                                created_at: new Date().toISOString(),
+                                            })
+                                            .select("id")
+                                            .single();
+                                        if (convErr) throw convErr;
+                                        conversationId = String(created.id);
+                                    }
+                                    
+                                    // Navigate to ChatScreenRunner for mobile
+                                    router.replace({
+                                        pathname: "/buddyrunner/ChatScreenRunner",
+                                        params: {
+                                            commissionId: String(commission.id),
+                                            conversationId,
+                                            otherUserId: callerId,
+                                            contactName: requesterName,
+                                            callerFirstName: caller?.first_name || "",
+                                            callerLastName: caller?.last_name || "",
+                                            callerCourse: caller?.course || "",
+                                            callerStatus: "In Progress",
+                                        },
+                                    });
+                                } catch (error) {
+                                    console.error('ViewCommission: Error navigating to chat:', error);
+                                }
+                            }}
+                        >
                             <Ionicons name="chatbubble-ellipses" size={16} color={C.white} />
-                        </View>
+                        </TouchableOpacity>
                     </View>
                 </View>
 
@@ -619,24 +691,11 @@ export default function ViewCommissionMobile() {
                     <View style={s.hr} />
                     <ChipRow label="Commission Title:" value={String(commission.title ?? "").trim() || "—"} />
                     <ChipRow label="Commission Description:" value={String(commission.description ?? "").trim() || "—"} />
-                    <View style={{ marginBottom: 10 }}>
-                        <View style={s.chip}><Text style={s.chipText}>Commission Type:</Text></View>
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                            {parseCommissionTypes(commission.commission_type).length > 0 ? (
-                                parseCommissionTypes(commission.commission_type).map((type, index) => (
-                                    <View key={index} style={{ backgroundColor: C.chipBg, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
-                                        <Text style={{ color: C.chipText, fontSize: 12, fontWeight: "700" }}>{type}</Text>
-                                    </View>
-                                ))
-                            ) : (
-                                <Text style={s.value}>General</Text>
-                            )}
-                        </View>
-                    </View>
+                    <ChipRow label="Commission Type:" value={parseCommissionTypes(commission.commission_type).length > 0 ? parseCommissionTypes(commission.commission_type).join(", ") : "General"} />
                     <ChipRow label="Completion Date:" value={formatDueAt(commission.due_at)} />
                     {commission.scheduled_meetup ? (
                         <View style={{ marginBottom: 10 }}>
-                            <View style={s.chip}><Text style={s.chipText}>Scheduled Meet-up</Text></View>
+                            <Text style={s.label}>Scheduled Meet-up</Text>
                             <Text style={s.value}>{String(commission.meetup_location ?? "").trim() || "—"}</Text>
                         </View>
                     ) : null}
@@ -690,7 +749,7 @@ export default function ViewCommissionMobile() {
 function ChipRow({ label, value, emphasizeRight }: { label: string; value: string; emphasizeRight?: boolean }) {
     return (
         <View style={{ marginBottom: 10 }}>
-            <View style={s.chip}><Text style={s.chipText}>{label}</Text></View>
+            <Text style={s.label}>{label}</Text>
             <Text style={[s.value, emphasizeRight && { fontWeight: "600" }]}>{value}</Text>
         </View>
     );
@@ -715,10 +774,8 @@ const s = StyleSheet.create({
     logo: { width: 60, height: 60, resizeMode: "contain", marginTop: 6, marginBottom: 10 },
     hr: { height: 1, backgroundColor: C.border, marginBottom: 10 },
 
-    chip: { alignSelf: "flex-start", backgroundColor: C.chipBg, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-    chipText: { color: C.chipText, fontSize: 12, fontWeight: "600" },
-
-    value: { color: C.text, fontSize: 14, marginTop: 6 },
+    label: { color: C.maroon, fontSize: 13, fontWeight: "700", marginBottom: 4 },
+    value: { color: C.text, fontSize: 14, marginTop: 2 },
 
     footerBar: {
         position: "absolute", left: 0, right: 0, bottom: 0,

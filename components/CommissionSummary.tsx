@@ -44,6 +44,7 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm, pen
   const router = useRouter();
   const [agree, setAgree] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+  const [isPosting, setIsPosting] = useState(false);
   
   // Location prompt modal state
   const [locationPromptVisible, setLocationPromptVisible] = useState(false);
@@ -57,12 +58,16 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm, pen
       Alert.alert('Error', 'Please agree to the Terms and Conditions.');
       return;
     }
+    if (isPosting) return; // Prevent multiple clicks
+
+    setIsPosting(true);
 
     // Check and update location before confirming
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         Alert.alert('Error', 'User not authenticated.');
+        setIsPosting(false);
         return;
       }
 
@@ -75,6 +80,7 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm, pen
       if (!locationStatus.hasPermission) {
         console.log('⚠️ [Mobile Caller] Location permission not granted, showing prompt modal');
         setLocationPromptVisible(true);
+        setIsPosting(false);
         return; // Don't proceed with confirmation
       }
 
@@ -85,6 +91,7 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm, pen
       if (!locationResult.success) {
         console.error('❌ [Mobile Caller] Failed to refresh location:', locationResult.error);
         Alert.alert('Location Error', locationResult.error || 'Failed to get current location. Please try again.');
+        setIsPosting(false);
         return;
       }
 
@@ -95,13 +102,16 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm, pen
         await onConfirm();
         // Show success modal after confirmation succeeds
         setShowSuccessModal(true);
+        setIsPosting(false);
       } catch (error) {
         console.error('[Mobile Caller] Error creating commission:', error);
         Alert.alert('Failed', (error as any)?.message ?? 'Could not post commission.');
+        setIsPosting(false);
       }
     } catch (error) {
       console.error('[Mobile Caller] Error checking location:', error);
       Alert.alert('Error', 'Failed to verify location. Please try again.');
+      setIsPosting(false);
     }
   };
 
@@ -203,11 +213,13 @@ const CommissionSummary: React.FC<Props> = ({ formData, onGoBack, onConfirm, pen
 
       <View style={styles.actionButtonsContainer}>
         <TouchableOpacity
-          style={[styles.confirmRequestButton, !agree && styles.confirmRequestButtonDisabled]}
+          style={[styles.confirmRequestButton, (!agree || isPosting) && styles.confirmRequestButtonDisabled]}
           onPress={confirm}
-          disabled={!agree}
+          disabled={!agree || isPosting}
         >
-          <Text style={[styles.confirmRequestText, !agree && styles.confirmRequestTextDisabled]}>Confirm Request</Text>
+          <Text style={[styles.confirmRequestText, (!agree || isPosting) && styles.confirmRequestTextDisabled]}>
+            {isPosting ? "Posting..." : "Confirm Request"}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.goBackButton} onPress={onGoBack}>
           <Text style={styles.goBackText}>Go back and edit</Text>

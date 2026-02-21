@@ -4,12 +4,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     View,
     useWindowDimensions,
 } from 'react-native';
@@ -258,6 +260,8 @@ const PostCommission: React.FC = () => {
     const [showCommissionTypes, setShowCommissionTypes] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [pendingNoRunnerModal, setPendingNoRunnerModal] = useState<null | { commissionId: number; title: string }>(null);
+    const [showValidationModal, setShowValidationModal] = useState(false);
+    const [validationMessage, setValidationMessage] = useState("Please fill in all required fields before posting your commission.");
 
     const [selectedYear, setSelectedYear] = useState(String(now.getFullYear()));
     const [selectedMonth, setSelectedMonth] = useState(MONTHS[now.getMonth()]);
@@ -306,6 +310,7 @@ const PostCommission: React.FC = () => {
     // Location prompt modal state
     const [locationPromptVisible, setLocationPromptVisible] = useState(false);
     const [locationPromptLoading, setLocationPromptLoading] = useState(false);
+    const [isPosting, setIsPosting] = useState(false);
 
     const [categories, setCategories] = useState<Category[]>([]);
     const [categoriesLoading, setCategoriesLoading] = useState(true);
@@ -519,25 +524,49 @@ const PostCommission: React.FC = () => {
     };
 
     const validate = () => {
-        if (!formData.title.trim()) { notify('Error', 'Please enter a commission title.'); return false; }
-        if (!formData.description.trim()) { notify('Error', 'Please enter a commission description.'); return false; }
-        if (formData.selectedTypes.length === 0) { notify('Error', 'Please select at least one commission type.'); return false; }
-        if (!formData.completionDate.trim()) { notify('Error', 'Please select a completion date.'); return false; }
-        if (!formData.completionTime.trim()) { notify('Error', 'Please select a completion time.'); return false; }
-        if (formData.isMeetup && !formData.meetupLocation.trim()) { notify('Error', 'Please enter a meetup location.'); return false; }
+        if (!formData.title.trim()) { 
+            setValidationMessage("Please fill in all required fields before posting your commission.");
+            setShowValidationModal(true);
+            return false; 
+        }
+        if (!formData.description.trim()) { 
+            setValidationMessage("Please fill in all required fields before posting your commission.");
+            setShowValidationModal(true);
+            return false; 
+        }
+        if (formData.selectedTypes.length === 0) { 
+            setValidationMessage("Please fill in all required fields before posting your commission.");
+            setShowValidationModal(true);
+            return false; 
+        }
+        if (!formData.completionDate.trim()) { 
+            setValidationMessage("Please fill in all required fields before posting your commission.");
+            setShowValidationModal(true);
+            return false; 
+        }
+        if (!formData.completionTime.trim()) { 
+            setValidationMessage("Please fill in all required fields before posting your commission.");
+            setShowValidationModal(true);
+            return false; 
+        }
+        // Note: Meet-up location is optional, only required if isMeetup is true
+        // But per requirements, we don't validate meetup field
         return true;
     };
 
     const submit = () => { if (!validate()) return; setShowSummary(true); };
 
     const confirmCommission = async () => {
-        if (!agree) { notify('Error', 'Please agree to Terms and Conditions.'); return; }
+        if (isPosting) return; // Prevent multiple clicks
+        
+        setIsPosting(true);
         
         // Check and update location before confirming
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) {
                 notify('Error', 'User not authenticated.');
+                setIsPosting(false);
                 return;
             }
 
@@ -550,6 +579,7 @@ const PostCommission: React.FC = () => {
             if (!locationStatus.hasPermission) {
                 console.log('⚠️ [Web Caller] Location permission not granted, showing prompt modal');
                 setLocationPromptVisible(true);
+                setIsPosting(false);
                 return; // Don't proceed with confirmation
             }
 
@@ -560,6 +590,7 @@ const PostCommission: React.FC = () => {
             if (!locationResult.success) {
                 console.error('❌ [Web Caller] Failed to refresh location:', locationResult.error);
                 notify('Location Error', locationResult.error || 'Failed to get current location. Please try again.');
+                setIsPosting(false);
                 return;
             }
 
@@ -577,8 +608,10 @@ const PostCommission: React.FC = () => {
             }
             // Keep summary modal visible behind success modal
             setShowSuccessModal(true); // Show custom success modal
+            setIsPosting(false);
         } catch (e: any) {
             notify('Failed', e?.message ?? 'Could not post commission.');
+            setIsPosting(false);
         }
     };
 
@@ -674,8 +707,12 @@ const PostCommission: React.FC = () => {
                                 <TouchableOpacity style={w.goBackButton} onPress={() => setShowSummary(false)}>
                                     <Text style={w.goBackText}>Go Back</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity style={w.primaryBtn} onPress={confirmCommission}>
-                                    <Text style={w.primaryBtnText}>Confirm</Text>
+                                <TouchableOpacity 
+                                    style={[w.primaryBtn, !agree && w.primaryBtnDisabled]} 
+                                    onPress={confirmCommission} 
+                                    disabled={!agree || isPosting}
+                                >
+                                    <Text style={w.primaryBtnText}>{isPosting ? "Posting..." : "Confirm"}</Text>
                                 </TouchableOpacity>
                             </View>
                         </ScrollView>
@@ -1346,6 +1383,42 @@ const PostCommission: React.FC = () => {
                     </KeyboardAvoidingView>
                 </View>
             </View>
+
+            {/* Validation Modal */}
+            <Modal
+                visible={showValidationModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowValidationModal(false)}
+            >
+                <TouchableWithoutFeedback onPress={() => setShowValidationModal(false)}>
+                    <View style={styles.validationModalOverlay}>
+                        <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                            <View style={styles.validationModalContent}>
+                                <View style={styles.validationModalHeader}>
+                                    <Text style={styles.validationModalTitle}>Incomplete Commission Details</Text>
+                                    <TouchableOpacity onPress={() => setShowValidationModal(false)}>
+                                        <Text style={styles.validationModalCloseX}>X</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={styles.validationModalBody}>
+                                    <Text style={styles.validationModalMessage}>
+                                        {validationMessage}
+                                    </Text>
+                                </View>
+                                <View style={styles.validationModalFooter}>
+                                    <TouchableOpacity
+                                        style={styles.validationModalButton}
+                                        onPress={() => setShowValidationModal(false)}
+                                    >
+                                        <Text style={styles.validationModalButtonText}>OK</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
         </View>
     );
 };
@@ -1443,6 +1516,74 @@ const styles = StyleSheet.create({
     timeSaveButtonText: { color: '#8B2323', fontSize: 16, fontWeight: '600' },
 
     meetupContainer: { borderWidth: 1, borderColor: '#8B2323', borderRadius: 4, backgroundColor: 'white', padding: 12, gap: 12 },
+
+    // Validation Modal Styles (matching Incomplete Errand Details modal)
+    validationModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    validationModalContent: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        width: '100%',
+        maxWidth: 400,
+        ...(Platform.OS === 'web' ? { boxShadow: '0px 4px 12px rgba(0, 0, 0, 0.15)' } : {}),
+        overflow: 'hidden',
+    },
+    validationModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E5E5E5',
+    },
+    validationModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#333333',
+    },
+    validationModalCloseX: {
+        fontSize: 20,
+        color: '#8B2323',
+        fontWeight: '600',
+    },
+    validationModalBody: {
+        paddingHorizontal: 20,
+        paddingVertical: 20,
+    },
+    validationModalMessage: {
+        fontSize: 14,
+        color: '#666666',
+        lineHeight: 20,
+    },
+    validationModalFooter: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        paddingHorizontal: 20,
+        paddingBottom: 20,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#E5E5E5',
+    },
+    validationModalButton: {
+        backgroundColor: '#8B2323',
+        paddingVertical: 10,
+        paddingHorizontal: 24,
+        borderRadius: 8,
+        minWidth: 80,
+        alignItems: 'center',
+    },
+    validationModalButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '600',
+    },
 });
 
 const w = StyleSheet.create({
@@ -1498,6 +1639,10 @@ const w = StyleSheet.create({
     primaryBtn: {
         backgroundColor: '#8B2323', borderRadius: 6, paddingVertical: 12, alignItems: 'center',
         paddingHorizontal: 18, justifyContent: 'center', flex: 1,
+    },
+    primaryBtnDisabled: {
+        backgroundColor: '#CCCCCC',
+        opacity: 0.6,
     },
     primaryBtnText: { color: 'white', fontWeight: '600' },
 

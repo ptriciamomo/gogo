@@ -136,6 +136,7 @@ type ProfileRow = {
 // Hook to calculate tab-specific rating (Errands or Commissions)
 function useTabSpecificRating(tabType: "Errands" | "Commissions") {
     const [rating, setRating] = React.useState<number>(0.0);
+    const [reviewCount, setReviewCount] = React.useState<number>(0);
     const [loading, setLoading] = React.useState<boolean>(true);
 
     React.useEffect(() => {
@@ -168,11 +169,15 @@ function useTabSpecificRating(tabType: "Errands" | "Commissions") {
                 if (error) {
                     if (__DEV__) console.error(`Error fetching ${tabType} ratings:`, error);
                     setRating(0.0);
+                    setReviewCount(0);
                     setLoading(false);
                     return;
                 }
 
                 if (ratingsData && ratingsData.length > 0) {
+                    // Set review count
+                    setReviewCount(ratingsData.length);
+                    
                     // Calculate weighted average where weight = rating value
                     // Formula: sum(rating²) / sum(rating)
                     const weightedSum = ratingsData.reduce((sum, r) => sum + (r.rating * r.rating), 0);
@@ -186,10 +191,12 @@ function useTabSpecificRating(tabType: "Errands" | "Commissions") {
                     }
                 } else {
                     setRating(0.0);
+                    setReviewCount(0);
                 }
             } catch (error) {
                 if (__DEV__) console.error(`Error calculating ${tabType} rating:`, error);
                 setRating(0.0);
+                setReviewCount(0);
             } finally {
                 setLoading(false);
             }
@@ -198,7 +205,7 @@ function useTabSpecificRating(tabType: "Errands" | "Commissions") {
         calculateRating();
     }, [tabType]);
 
-    return { rating, loading };
+    return { rating, reviewCount, loading };
 }
 
 function useAuthProfile() {
@@ -2366,8 +2373,8 @@ function HomeWeb() {
     const { loading, firstName, fullName, roleLabel, averageRating, profilePictureUrl } = useAuthProfile();
 
     // Get tab-specific ratings
-    const { rating: errandsRating } = useTabSpecificRating("Errands");
-    const { rating: commissionsRating } = useTabSpecificRating("Commissions");
+    const { rating: errandsRating, reviewCount: errandsReviewCount } = useTabSpecificRating("Errands");
+    const { rating: commissionsRating, reviewCount: commissionsReviewCount } = useTabSpecificRating("Commissions");
 
     const { loading: errandsLoading, rows: errands, refetch: refetchErrands } = useAvailableErrands({ availableMode });
     const {
@@ -3120,6 +3127,7 @@ function HomeWeb() {
                                         onAcceptedPress={goToAcceptedTasks}
                                         ratingValue={errandsRating}
                                         completedCount={todayCompletedErrandsCount}
+                                        reviewCount={errandsReviewCount}
                                     />
                                     <Text style={web.sectionTitle}>Available List of Errands</Text>
 
@@ -3170,6 +3178,7 @@ function HomeWeb() {
                                         onAcceptedPress={goToAcceptedTasks}
                                         ratingValue={commissionsRating}
                                         completedCount={todayCompletedCount}
+                                        reviewCount={commissionsReviewCount}
                                     />
                                     {availableMode && !availabilityLoading ? (
                                         <>
@@ -3383,6 +3392,7 @@ function StatsRow({
     onAcceptedPress,
     ratingValue,
     completedCount,
+    reviewCount,
 }: {
     availableMode: boolean;
     availabilityLoading: boolean;
@@ -3390,6 +3400,7 @@ function StatsRow({
     onAcceptedPress: () => void;
     ratingValue: number;
     completedCount?: number;
+    reviewCount: number;
 }) {
     const { width } = useWindowDimensions();
     const isSmallScreen = width < 768;
@@ -3402,9 +3413,6 @@ function StatsRow({
     const statValueSize = isSmallScreen ? 26 : isMediumScreen ? 33 : 40;
     const statLabelSize = isSmallScreen ? 12 : isMediumScreen ? 13 : 15;
     const gap = isSmallScreen ? 8 : isMediumScreen ? 12 : 16;
-    
-    // Calculate review count (placeholder - would need to be passed as prop if available)
-    const reviewCount = 14; // This would come from props if available
     
     return (
         <View style={[web.statRow, { gap, flexWrap: isSmallScreen ? 'wrap' : 'nowrap' }]}>
@@ -4120,8 +4128,8 @@ function HomeMobile() {
     const { loading, firstName, averageRating } = useAuthProfile();
 
     // Get tab-specific ratings
-    const { rating: errandsRating } = useTabSpecificRating("Errands");
-    const { rating: commissionsRating } = useTabSpecificRating("Commissions");
+    const { rating: errandsRating, reviewCount: errandsReviewCount } = useTabSpecificRating("Errands");
+    const { rating: commissionsRating, reviewCount: commissionsReviewCount } = useTabSpecificRating("Commissions");
 
     const { loading: errandsLoading, rows: errands, refetch: refetchErrands } = useAvailableErrands({ availableMode });
     const {
@@ -4951,6 +4959,9 @@ function HomeMobile() {
                 <Text style={{ color: colors.text, fontSize: 16, fontWeight: "700", marginTop: 8 }}>
                     {loading ? "Loading…" : `Welcome back, ${firstName}!`}
                 </Text>
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: "400", opacity: 0.7, marginTop: 4 }}>
+                    Ready to take on errands today?
+                </Text>
             </View>
 
             {/* Tabs */}
@@ -4961,6 +4972,12 @@ function HomeMobile() {
                         style={[m.tab, activeTab === "Errands" && m.tabActive]}
                         activeOpacity={0.9}
                     >
+                        <Ionicons 
+                            name="checkmark-circle-outline" 
+                            size={18} 
+                            color={activeTab === "Errands" ? colors.maroon : "#fff"} 
+                            style={{ marginRight: 6 }}
+                        />
                         <Text style={[m.tabText, activeTab === "Errands" && m.tabTextActive]}>Errands</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -4968,6 +4985,12 @@ function HomeMobile() {
                         style={[m.tab, activeTab === "Commissions" && m.tabActive]}
                         activeOpacity={0.9}
                     >
+                        <Ionicons 
+                            name="person-outline" 
+                            size={18} 
+                            color={activeTab === "Commissions" ? colors.maroon : "#fff"} 
+                            style={{ marginRight: 6 }}
+                        />
                         <Text style={[m.tabText, activeTab === "Commissions" && m.tabTextActive]}>
                             Commission
                         </Text>
@@ -4985,6 +5008,7 @@ function HomeMobile() {
                             availabilityLoading={availabilityLoading}
                             onToggleAvailable={() => toggleAvailability(!availableMode)}
                             onAcceptedPress={onAcceptedPressMobile}
+                            reviewCount={commissionsReviewCount}
                         />
                         {availableMode && !availabilityLoading ? (
                             <>
@@ -5005,7 +5029,20 @@ function HomeMobile() {
                                     } else if (commError) {
                                         return <Text style={{ color: "#b91c1c" }}>Error: {commError}</Text>;
                                     } else if (commissions.length === 0) {
-                                        return <Text style={{ color: colors.text, opacity: 0.7 }}>No commissions available.</Text>;
+                                        return (
+                                            <View style={m.emptyState}>
+                                                <View style={m.emptyStateIcon}>
+                                                    <Ionicons name="clipboard-outline" size={64} color={colors.border} />
+                                                    <Ionicons name="location-outline" size={32} color={colors.maroon} style={{ position: "absolute", right: 8, top: 8 }} />
+                                                </View>
+                                                <Text style={m.emptyStateTitle}>
+                                                    No commissions nearby 😞
+                                                </Text>
+                                                <Text style={m.emptyStateSubtitle}>
+                                                    Try updating your location or expanding your search radius.
+                                                </Text>
+                                            </View>
+                                        );
                                     } else {
                                         console.log('✅ [RENDER MOBILE] Rendering', commissions.length, 'commissions');
                                         return (
@@ -5033,6 +5070,7 @@ function HomeMobile() {
                             availabilityLoading={availabilityLoading}
                             onToggleAvailable={() => toggleAvailability(!availableMode)}
                             onAcceptedPress={onAcceptedPressMobile}
+                            reviewCount={errandsReviewCount}
                         />
                         <Text style={m.sectionHeader}>Available List of Errands</Text>
 
@@ -5040,9 +5078,18 @@ function HomeMobile() {
                             errandsLoading ? (
                             <Text style={{ color: colors.text }}>Loading errands…</Text>
                         ) : errands.length === 0 ? (
-                                <Text style={{ color: colors.text, opacity: 0.7 }}>
-                                    No nearby errands available. Try changing your location or checking again later.
+                            <View style={m.emptyState}>
+                                <View style={m.emptyStateIcon}>
+                                    <Ionicons name="clipboard-outline" size={64} color={colors.border} />
+                                    <Ionicons name="location-outline" size={32} color={colors.maroon} style={{ position: "absolute", right: 8, top: 8 }} />
+                                </View>
+                                <Text style={m.emptyStateTitle}>
+                                    No errands nearby 😞
                                 </Text>
+                                <Text style={m.emptyStateSubtitle}>
+                                    Try updating your location or expanding your search radius.
+                                </Text>
+                            </View>
                         ) : (
                             <View style={{ gap: 10 }}>
                                 {errands.map((e) => (
@@ -5081,6 +5128,7 @@ function MobileStatsCard({
     completed,
     onToggleAvailable,
     onAcceptedPress,
+    reviewCount,
 }: {
     availableOn: boolean;
     availabilityLoading: boolean;
@@ -5088,32 +5136,60 @@ function MobileStatsCard({
     completed: number;
     onToggleAvailable: () => void;
     onAcceptedPress: () => void;
+    reviewCount: number;
 }) {
+    
     return (
         <View style={m.statsCard}>
             <View style={m.statsRow}>
-                <TouchableOpacity style={m.statItem} activeOpacity={0.9} onPress={onAcceptedPress}>
-                    <Ionicons name="time-outline" size={32} color={colors.maroon} />
+                <TouchableOpacity 
+                    activeOpacity={0.9} 
+                    style={[m.statCard, m.statCardAccepted]} 
+                    onPress={onAcceptedPress}
+                >
+                    <Ionicons name="time-outline" size={32} color={colors.maroon} style={{ marginBottom: 0 }} />
                     <Text style={m.statLabel}>Accepted Tasks</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={m.statItem} activeOpacity={0.9} onPress={onToggleAvailable}>
-                    <Text style={[m.statBig, { color: availabilityLoading ? "#9CA3AF" : (availableOn ? "#22C55E" : "#9CA3AF") }]}>
-                        {availabilityLoading ? "..." : (availableOn ? "ON" : "OFF")}
+                <View style={[m.statCard, m.statCardCompleted]}>
+                    <Text style={[m.statValue, { lineHeight: 32 }]}>
+                        {completed !== undefined ? completed : 0}
                     </Text>
-                    <Text style={m.statLabel}>{availableOn ? "Active" : "Inactive"}</Text>
-                </TouchableOpacity>
+                    <Text style={m.statLabel}>Completed Tasks</Text>
+                </View>
             </View>
 
             <View style={[m.statsRow, { marginTop: 10 }]}>
-                <View style={m.statItem}>
-                    <Text style={m.statBig}>{ratingValue.toFixed(1)}</Text>
-                    <Text style={m.statLabel}>Rates</Text>
-                </View>
+                <TouchableOpacity 
+                    activeOpacity={0.9} 
+                    onPress={onToggleAvailable} 
+                    style={[m.statCard, m.statCardActive]}
+                >
+                    <Text style={[
+                        m.statValue, 
+                        { lineHeight: 32 },
+                        availabilityLoading ? m.statValueOff : (availableOn ? m.statValueAccent : m.statValueOff)
+                    ]}>
+                        {availabilityLoading ? "..." : (availableOn ? "ON" : "OFF")}
+                    </Text>
+                    <Text style={m.statLabel}>
+                        {availableOn ? "Active" : "Inactive"}
+                    </Text>
+                </TouchableOpacity>
 
-                <View style={m.statItem}>
-                    <Text style={[m.statBig, { color: colors.maroon }]}>{completed}</Text>
-                    <Text style={m.statLabel}>Completed Tasks</Text>
+                <View style={[m.statCard, m.statCardRating]}>
+                    <Text style={[m.statValue, { lineHeight: 32 }]}>
+                        {ratingValue.toFixed(1)}
+                    </Text>
+                    <Text style={m.statLabel}>Rating</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 2, marginTop: 2 }}>
+                        {[1, 2, 3].map((i) => (
+                            <Ionicons key={i} name="star" size={13} color="#FCD34D" />
+                        ))}
+                        <Text style={{ color: colors.text, fontSize: 12, opacity: 0.6, marginLeft: 4 }}>
+                            ({reviewCount} reviews)
+                        </Text>
+                    </View>
                 </View>
             </View>
         </View>
@@ -5277,6 +5353,7 @@ const m = StyleSheet.create({
         flex: 1,
         height: 42,
         borderRadius: 10,
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
     },
@@ -5284,32 +5361,88 @@ const m = StyleSheet.create({
     tabText: { fontSize: 15, fontWeight: "700", color: "#fff" },
     tabTextActive: { color: colors.text },
 
-    sectionHeader: { color: colors.text, fontWeight: "900", marginVertical: 12 },
+    sectionHeader: { color: colors.text, fontWeight: "900", fontSize: 17, marginVertical: 12 },
+
+    emptyState: {
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: 48,
+        marginTop: 24,
+        marginBottom: 36,
+    },
+    emptyStateIcon: {
+        position: "relative",
+        marginBottom: 24,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    emptyStateTitle: {
+        fontSize: 18,
+        fontWeight: "800",
+        color: colors.text,
+        marginBottom: 8,
+        textAlign: "center",
+    },
+    emptyStateSubtitle: {
+        fontSize: 14,
+        fontWeight: "400",
+        color: colors.text,
+        opacity: 0.7,
+        textAlign: "center",
+    },
 
     statsCard: {
+        marginBottom: 14,
+    },
+    statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 0 },
+    statCard: {
+        flex: 1,
+        minWidth: 140,
+        backgroundColor: "#fff",
         borderWidth: 1,
         borderColor: colors.border,
         borderRadius: 12,
-        padding: 14,
-        backgroundColor: "#fff",
-        marginBottom: 14,
+        padding: 16,
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 6,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 2,
     },
-    statsRow: { flexDirection: "row", gap: 18 },
-    statItem: { flex: 1, alignItems: "center" },
-    statBig: {
-        fontSize: 28,
+    statCardAccepted: {
+        backgroundColor: "#FFF5F0",
+        borderColor: "#FFE5D9",
+    },
+    statCardCompleted: {
+        backgroundColor: "#F0FDF4",
+        borderColor: "#D1FAE5",
+    },
+    statCardActive: {
+        backgroundColor: "#EFF6FF",
+        borderColor: "#DBEAFE",
+    },
+    statCardRating: {
+        backgroundColor: "#FFFBEB",
+        borderColor: "#FEF3C7",
+    },
+    statValue: {
+        fontSize: 32,
         fontWeight: "900",
         color: colors.text,
-        lineHeight: 30,
-        marginTop: 2,
+        lineHeight: 32,
         textAlign: "center",
     },
+    statValueAccent: { color: "#39d353" },
+    statValueOff: { color: "#9CA3AF" },
     statLabel: {
-        marginTop: 6,
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: "700",
         color: colors.text,
         opacity: 0.85,
+        marginTop: 2,
         textAlign: "center",
     },
 

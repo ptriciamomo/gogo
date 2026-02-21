@@ -540,6 +540,88 @@ export default function ViewMapWeb() {
 		: "Unknown User";
 	const callerCourse = caller?.course ? titleCase(caller.course) : "";
 
+	/* ---------- MESSAGE ICON CLICK HANDLER ---------- */
+	const handleMessageIconClick = async () => {
+		if (!caller?.id) {
+			Alert.alert("No Caller", "There is no caller assigned to this errand yet.");
+			return;
+		}
+
+		try {
+			// Get current authenticated user
+			const { data: { user } } = await supabase.auth.getUser();
+			if (!user) {
+				Alert.alert("Error", "You must be logged in to send a message.");
+				return;
+			}
+
+			const callerId = caller.id;
+			console.log("Creating/getting conversation between:", user.id, "and", callerId);
+
+			// Get or create conversation between current user and the caller
+			let conversationId: string | null = null;
+
+			// Look for existing conversation between these users
+			const { data: existing } = await supabase
+				.from("conversations")
+				.select("id")
+				.or(`and(user1_id.eq.${user.id},user2_id.eq.${callerId}),and(user1_id.eq.${callerId},user2_id.eq.${user.id})`)
+				.limit(1);
+
+			if (existing && existing.length) {
+				conversationId = String(existing[0].id);
+				console.log("Found existing conversation:", conversationId);
+			} else {
+				// Create new conversation
+				const { data: created, error: convErr } = await supabase
+					.from("conversations")
+					.insert({
+						user1_id: user.id,
+						user2_id: callerId,
+						created_at: new Date().toISOString(),
+						last_message_at: new Date().toISOString(),
+					})
+					.select("id")
+					.single();
+
+				if (convErr) {
+					console.error("Error creating conversation:", convErr);
+					throw convErr;
+				}
+				conversationId = String(created.id);
+				console.log("Created new conversation:", conversationId);
+			}
+
+			// Get caller's name for navigation
+			const callerFirstName = caller?.first_name || "";
+			const callerLastName = caller?.last_name || "";
+			const callerFullName = `${callerFirstName} ${callerLastName}`.trim() || "Caller";
+			const callerInitials = `${callerFirstName?.[0] || ""}${callerLastName?.[0] || ""}`.toUpperCase() || "C";
+
+			console.log("Navigating to messages hub with:", {
+				conversationId,
+				otherUserId: callerId,
+				contactName: callerFullName,
+				contactInitials: callerInitials,
+			});
+
+			// Navigate to messages hub (web version)
+			router.push({
+				pathname: "/buddyrunner/messages_hub",
+				params: {
+					conversationId,
+					otherUserId: callerId,
+					contactName: callerFullName,
+					contactInitials: callerInitials,
+					isOnline: "false",
+				},
+			} as any);
+		} catch (error) {
+			console.error("Error in handleMessageIconClick:", error);
+			Alert.alert("Error", "Failed to open chat. Please try again.");
+		}
+	};
+
 	/* ---------- CONFIRM PICKUP (Delivery Items only) ---------- */
 	const confirmPickup = useCallback(async () => {
 		if (!errand || errand.category !== "Deliver Items") return;
@@ -1036,7 +1118,12 @@ export default function ViewMapWeb() {
 									<View style={[web.statusBadge, { backgroundColor: "#3B82F6" }, isSmallScreen && web.statusBadgeSmall]}>
 										<Text style={[web.statusText, isSmallScreen && web.statusTextSmall]}>In Progress</Text>
 									</View>
-									<TouchableOpacity style={[web.chatButton, isSmallScreen && web.chatButtonSmall]}>
+									<TouchableOpacity 
+										style={[web.chatButton, isSmallScreen && web.chatButtonSmall]}
+										onPress={handleMessageIconClick}
+										disabled={!caller?.id}
+										activeOpacity={0.9}
+									>
 										<Ionicons name="chatbubble-outline" size={isSmallScreen ? 16 : 18} color="#fff" />
 									</TouchableOpacity>
 								</View>

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { Image, Modal, Platform, SafeAreaView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Image, Modal, Platform, SafeAreaView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { supabase } from "../../lib/supabase";
 
 // Web-only component for Leaflet map
@@ -467,6 +467,88 @@ export default function ViewMapWeb() {
 		: "No BuddyRunner yet";
 	const runnerCourse = runner?.course ? titleCase(runner.course) : "";
 
+	/* ---------- MESSAGE ICON CLICK HANDLER ---------- */
+	const handleMessageIconClick = async () => {
+		if (!runner?.id) {
+			Alert.alert("No Runner", "There is no runner assigned to this errand yet.");
+			return;
+		}
+
+		try {
+			// Get current authenticated user
+			const { data: { user } } = await supabase.auth.getUser();
+			if (!user) {
+				Alert.alert("Error", "You must be logged in to send a message.");
+				return;
+			}
+
+			const runnerId = runner.id;
+			console.log("Creating/getting conversation between:", user.id, "and", runnerId);
+
+			// Get or create conversation between current user and the runner
+			let conversationId: string | null = null;
+
+			// Look for existing conversation between these users
+			const { data: existing } = await supabase
+				.from("conversations")
+				.select("id")
+				.or(`and(user1_id.eq.${user.id},user2_id.eq.${runnerId}),and(user1_id.eq.${runnerId},user2_id.eq.${user.id})`)
+				.limit(1);
+
+			if (existing && existing.length) {
+				conversationId = String(existing[0].id);
+				console.log("Found existing conversation:", conversationId);
+			} else {
+				// Create new conversation
+				const { data: created, error: convErr } = await supabase
+					.from("conversations")
+					.insert({
+						user1_id: user.id,
+						user2_id: runnerId,
+						created_at: new Date().toISOString(),
+						last_message_at: new Date().toISOString(),
+					})
+					.select("id")
+					.single();
+
+				if (convErr) {
+					console.error("Error creating conversation:", convErr);
+					throw convErr;
+				}
+				conversationId = String(created.id);
+				console.log("Created new conversation:", conversationId);
+			}
+
+			// Get runner's name for navigation
+			const runnerFirstName = runner?.first_name || "";
+			const runnerLastName = runner?.last_name || "";
+			const runnerFullName = `${runnerFirstName} ${runnerLastName}`.trim() || "Runner";
+			const runnerInitials = `${runnerFirstName?.[0] || ""}${runnerLastName?.[0] || ""}`.toUpperCase() || "R";
+
+			console.log("Navigating to messages hub with:", {
+				conversationId,
+				otherUserId: runnerId,
+				contactName: runnerFullName,
+				contactInitials: runnerInitials,
+			});
+
+			// Navigate to messages hub (web version)
+			router.push({
+				pathname: "/buddycaller/messages_hub",
+				params: {
+					conversationId,
+					otherUserId: runnerId,
+					contactName: runnerFullName,
+					contactInitials: runnerInitials,
+					isOnline: "false",
+				},
+			} as any);
+		} catch (error) {
+			console.error("Error in handleMessageIconClick:", error);
+			Alert.alert("Error", "Failed to open chat. Please try again.");
+		}
+	};
+
 	// Helper functions to convert status and get color
 	const toUiStatus = (s: string | null | undefined): string => {
 		if (s === "in_progress") return "In Progress";
@@ -577,7 +659,12 @@ export default function ViewMapWeb() {
 									<View style={[web.statusBadge, { backgroundColor: statusColor }]}>
 										<Text style={web.statusText}>{displayStatus}</Text>
 									</View>
-									<TouchableOpacity style={web.chatButton}>
+									<TouchableOpacity 
+										style={web.chatButton}
+										onPress={handleMessageIconClick}
+										disabled={!runner?.id}
+										activeOpacity={0.9}
+									>
 										<Ionicons name="chatbubble-outline" size={18} color="#fff" />
 									</TouchableOpacity>
 								</View>

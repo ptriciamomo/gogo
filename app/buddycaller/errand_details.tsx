@@ -330,6 +330,87 @@ export default function ErrandDetails() {
         }
     };
 
+    const handleMessageIconClick = async () => {
+        if (!hasRunner || !runner?.id) {
+            Alert.alert("No Runner", "There is no runner assigned to this errand yet.");
+            return;
+        }
+
+        try {
+            // Get current authenticated user
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) {
+                Alert.alert("Error", "You must be logged in to send a message.");
+                return;
+            }
+
+            const runnerId = runner.id;
+            console.log("Creating/getting conversation between:", user.id, "and", runnerId);
+
+            // Get or create conversation between current user and the runner
+            let conversationId: string | null = null;
+
+            // Look for existing conversation between these users
+            const { data: existing } = await supabase
+                .from("conversations")
+                .select("id")
+                .or(`and(user1_id.eq.${user.id},user2_id.eq.${runnerId}),and(user1_id.eq.${runnerId},user2_id.eq.${user.id})`)
+                .limit(1);
+
+            if (existing && existing.length) {
+                conversationId = String(existing[0].id);
+                console.log("Found existing conversation:", conversationId);
+            } else {
+                // Create new conversation
+                const { data: created, error: convErr } = await supabase
+                    .from("conversations")
+                    .insert({
+                        user1_id: user.id,
+                        user2_id: runnerId,
+                        created_at: new Date().toISOString(),
+                        last_message_at: new Date().toISOString(),
+                    })
+                    .select("id")
+                    .single();
+
+                if (convErr) {
+                    console.error("Error creating conversation:", convErr);
+                    throw convErr;
+                }
+                conversationId = String(created.id);
+                console.log("Created new conversation:", conversationId);
+            }
+
+            // Get runner's name for navigation
+            const runnerFirstName = runner?.first_name || "";
+            const runnerLastName = runner?.last_name || "";
+            const runnerName = `${runnerFirstName} ${runnerLastName}`.trim() || "Runner";
+            const runnerInitials = `${runnerFirstName?.[0] || ""}${runnerLastName?.[0] || ""}`.toUpperCase() || "R";
+
+            console.log("Navigating to ChatScreenCaller with:", {
+                conversationId,
+                otherUserId: runnerId,
+                contactName: runnerName,
+                contactInitials: runnerInitials,
+            });
+
+            // Navigate directly to ChatScreenCaller (mobile only)
+            router.push({
+                pathname: "/buddycaller/ChatScreenCaller",
+                params: {
+                    conversationId,
+                    otherUserId: runnerId,
+                    contactName: runnerName,
+                    contactInitials: runnerInitials,
+                    isOnline: "false",
+                },
+            } as any);
+        } catch (error) {
+            console.error("Error in handleMessageIconClick:", error);
+            Alert.alert("Error", "Failed to open chat. Please try again.");
+        }
+    };
+
     const content = () => {
         if (loading) {
             return (
@@ -379,6 +460,7 @@ export default function ErrandDetails() {
                             style={s.chatButton}
                             disabled={!hasRunner}
                             activeOpacity={0.9}
+                            onPress={handleMessageIconClick}
                         >
                             <Ionicons name="chatbubbles" size={20} color={colors.maroon} />
                         </TouchableOpacity>

@@ -1141,6 +1141,8 @@ export default function ErrandForm() {
     const [step, setStep] = useState<"FORM" | "SUMMARY">("FORM");
     const [showTerms, setShowTerms] = useState(false);
     const [agree, setAgree] = useState(false);
+    const [showValidationModal, setShowValidationModal] = useState(false);
+    const [validationMessage, setValidationMessage] = useState("Please fill in all required fields before posting your errand.");
 
     const [title, setTitle] = useState("");
     const [desc, setDesc] = useState("");
@@ -1492,13 +1494,43 @@ export default function ErrandForm() {
     };
 
     const handleSubmit = () => {
-        if (!title.trim()) { Alert.alert("Missing Information", "Please enter an errand title."); return; }
-        if (!desc.trim()) { Alert.alert("Missing Information", "Please enter an errand description."); return; }
-        if (!category) { Alert.alert("Missing Information", "Please select a category."); return; }
-        // Prevent proceeding if any item is missing quantity (mobile parity)
-        const itemsWithoutQuantity = items.filter((item) => !item.qty || item.qty.trim() === "");
+        // Validate required fields
+        if (!title.trim()) {
+            setValidationMessage("Please fill in all required fields before posting your errand.");
+            setShowValidationModal(true);
+            return;
+        }
+        if (!desc.trim()) {
+            setValidationMessage("Please fill in all required fields before posting your errand.");
+            setShowValidationModal(true);
+            return;
+        }
+        if (!category) {
+            setValidationMessage("Please fill in all required fields before posting your errand.");
+            setShowValidationModal(true);
+            return;
+        }
+        // Check if at least one item is added (has a name)
+        const itemsWithName = items.filter((item) => item.name && item.name.trim() !== "");
+        if (itemsWithName.length === 0) {
+            setValidationMessage("Please fill in all required fields before posting your errand.");
+            setShowValidationModal(true);
+            return;
+        }
+        // Prevent proceeding if any item is missing quantity
+        const itemsWithoutQuantity = itemsWithName.filter((item) => !item.qty || item.qty.trim() === "");
         if (itemsWithoutQuantity.length > 0) {
-            Alert.alert("Missing Information", "Please fill in the quantity for all items before proceeding.");
+            setValidationMessage("Please fill in all required fields before posting your errand.");
+            setShowValidationModal(true);
+            return;
+        }
+        // Validate that quantity is numeric for all items with names
+        const invalidQuantityItem = itemsWithName.find(
+            (item) => !/^\d+(\.\d+)?$/.test(item.qty?.trim() || "")
+        );
+        if (invalidQuantityItem) {
+            setValidationMessage("Quantity must be a valid number.");
+            setShowValidationModal(true);
             return;
         }
         setStep("SUMMARY");
@@ -2084,10 +2116,10 @@ export default function ErrandForm() {
                                 <Text style={s.goBackText}>Go Back</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={s.primaryBtn}
+                                style={[s.primaryBtn, !agree && s.primaryBtnDisabled]}
                                 onPress={openLocationConfirmModal}
                                 activeOpacity={0.8}
-                                disabled={posting || savingLocationAndPosting}
+                                disabled={posting || savingLocationAndPosting || !agree}
                             >
                                 <Text style={s.primaryBtnText}>
                                     {posting || savingLocationAndPosting ? "Posting..." : "Confirm"}
@@ -2380,9 +2412,13 @@ export default function ErrandForm() {
 
                                 <TextInput
                                     value={it.qty}
-                                    onChangeText={(t) => updateItem(it.id, { qty: t })}
-                                    placeholder="ex. 1 pack"
+                                    onChangeText={(t) => {
+                                        const numericText = t.replace(/[^0-9.]/g, "");
+                                        updateItem(it.id, { qty: numericText });
+                                    }}
+                                    placeholder="ex. 1"
                                     placeholderTextColor="#999"
+                                    keyboardType="numeric"
                                     style={[s.input, { width: Platform.OS === 'web' ? 120 : 120, marginLeft: 8 }]}
                                 />
 
@@ -2641,6 +2677,42 @@ export default function ErrandForm() {
                     </View>
                 </Modal>
             )}
+
+            {/* Validation Modal */}
+            <Modal
+                visible={showValidationModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowValidationModal(false)}
+            >
+                <TouchableWithoutFeedback onPress={() => setShowValidationModal(false)}>
+                    <View style={s.validationModalOverlay}>
+                        <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+                            <View style={s.validationModalContent}>
+                                <View style={s.validationModalHeader}>
+                                    <Text style={s.validationModalTitle}>Incomplete Errand Details</Text>
+                                    <TouchableOpacity onPress={() => setShowValidationModal(false)}>
+                                        <Text style={s.validationModalCloseX}>X</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <View style={s.validationModalBody}>
+                                    <Text style={s.validationModalMessage}>
+                                        {validationMessage}
+                                    </Text>
+                                </View>
+                                <View style={s.validationModalFooter}>
+                                    <TouchableOpacity
+                                        style={s.validationModalButton}
+                                        onPress={() => setShowValidationModal(false)}
+                                    >
+                                        <Text style={s.validationModalButtonText}>OK</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
         </Wrapper>
     );
 }
@@ -2921,6 +2993,9 @@ const s = StyleSheet.create({
         justifyContent: "center",
         flex: 1,
     },
+    primaryBtnDisabled: {
+        backgroundColor: "#cccccc",
+    },
     primaryBtnText: {
         color: "white",
         fontWeight: "600",
@@ -3134,6 +3209,72 @@ const s = StyleSheet.create({
     foodSectionText: { fontSize: 14, fontWeight: "700", color: "#333" },
     foodSectionContent: { paddingVertical: 6 },
     foodItemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, paddingHorizontal: 12 },
+    validationModalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 20,
+    },
+    validationModalContent: {
+        backgroundColor: "#FFFFFF",
+        borderRadius: 12,
+        width: "100%",
+        maxWidth: 400,
+        ...(Platform.OS === "web" ? { boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.15)" } : {}),
+        overflow: "hidden",
+    },
+    validationModalHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: "#E5E5E5",
+    },
+    validationModalTitle: {
+        fontSize: 18,
+        fontWeight: "700",
+        color: "#333333",
+    },
+    validationModalCloseX: {
+        fontSize: 20,
+        color: "#8B2323",
+        fontWeight: "600",
+    },
+    validationModalBody: {
+        paddingHorizontal: 20,
+        paddingVertical: 20,
+    },
+    validationModalMessage: {
+        fontSize: 14,
+        color: "#666666",
+        lineHeight: 20,
+    },
+    validationModalFooter: {
+        flexDirection: "row",
+        justifyContent: "flex-end",
+        paddingHorizontal: 20,
+        paddingBottom: 20,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: "#E5E5E5",
+    },
+    validationModalButton: {
+        backgroundColor: "#8B2323",
+        paddingVertical: 10,
+        paddingHorizontal: 24,
+        borderRadius: 8,
+        minWidth: 80,
+        alignItems: "center",
+    },
+    validationModalButtonText: {
+        color: "#FFFFFF",
+        fontSize: 14,
+        fontWeight: "600",
+    },
     foodCheckbox: {
         width: 18,
         height: 18,

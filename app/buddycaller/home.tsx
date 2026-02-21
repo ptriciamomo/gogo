@@ -2454,12 +2454,24 @@ function HomeWeb() {
                                 style={[web.tabItem, activeTab === "Errands" && web.tabItemActive]}
                                 onPress={() => setActiveTab("Errands")}
                             >
+                                <Ionicons 
+                                    name="checkmark-circle-outline" 
+                                    size={18} 
+                                    color={activeTab === "Errands" ? colors.maroon : "#fff"} 
+                                    style={{ marginRight: 6 }}
+                                />
                                 <Text style={[web.tabText, activeTab === "Errands" && web.tabTextActive]}>Errands</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={[web.tabItem, activeTab === "Commissions" && web.tabItemActive]}
                                 onPress={() => setActiveTab("Commissions")}
                             >
+                                <Ionicons 
+                                    name="person-outline" 
+                                    size={18} 
+                                    color={activeTab === "Commissions" ? colors.maroon : "#fff"} 
+                                    style={{ marginRight: 6 }}
+                                />
                                 <Text style={[web.tabText, activeTab === "Commissions" && web.tabTextActive]}>
                                     Commissions
                                 </Text>
@@ -2931,7 +2943,7 @@ const web = StyleSheet.create({
 
     tabsWrapper: { paddingHorizontal: 16, paddingVertical: 12, alignItems: "center" },
     tabsContainer: { flexDirection: "row", backgroundColor: colors.maroon, borderRadius: 12, padding: 4, width: "100%" },
-    tabItem: { flex: 1, paddingVertical: 11, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+    tabItem: { flex: 1, paddingVertical: 11, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center" },
     tabItemActive: { backgroundColor: "#fff" },
     tabText: { fontSize: 15, fontWeight: "600", color: colors.pillText },
     tabTextActive: { color: colors.pillTextActive },
@@ -3561,22 +3573,39 @@ function HomeMobile() {
                 </View>
             </View>
 
-            <Text style={{ paddingHorizontal: 16, color: colors.text, fontWeight: "800", fontSize: 16, marginBottom: 6 }}>
-                {loading ? "Loading…" : `Welcome back, ${firstName || "User"}!`}
-            </Text>
+            <View style={{ paddingHorizontal: 16, marginBottom: 6 }}>
+                <Text style={{ color: colors.text, fontWeight: "800", fontSize: 16 }}>
+                    {loading ? "Loading…" : `Hi, ${firstName || "User"} 👋`}
+                </Text>
+                <Text style={{ color: colors.text, fontSize: 16, fontWeight: "400", marginTop: 4, marginBottom: 8 }}>
+                    What do you need help with?
+                </Text>
+            </View>
 
             <View style={m.tabsWrap}>
                 <View style={m.tabsTrack}>
                     <TouchableOpacity onPress={() => setActiveTab("Errands")} style={[m.tab, activeTab === "Errands" && m.tabActive]} activeOpacity={0.9}>
+                        <Ionicons 
+                            name="checkmark-circle-outline" 
+                            size={18} 
+                            color={activeTab === "Errands" ? colors.maroon : "#fff"} 
+                            style={{ marginRight: 6 }}
+                        />
                         <Text style={[m.tabText, activeTab === "Errands" && m.tabTextActive]}>Errands</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => setActiveTab("Commissions")} style={[m.tab, activeTab === "Commissions" && m.tabActive]} activeOpacity={0.9}>
+                        <Ionicons 
+                            name="person-outline" 
+                            size={18} 
+                            color={activeTab === "Commissions" ? colors.maroon : "#fff"} 
+                            style={{ marginRight: 6 }}
+                        />
                         <Text style={[m.tabText, activeTab === "Commissions" && m.tabTextActive]}>Commissions</Text>
                     </TouchableOpacity>
                 </View>
             </View>
 
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: scrollBottomPad }}>
+            <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 8, paddingBottom: scrollBottomPad }}>
                 {activeTab === "Errands" ? (
                     <>
                         <View style={m.twoUp}>
@@ -3588,12 +3617,20 @@ function HomeMobile() {
                             />
                         </View>
 
-                        <Text style={{ color: colors.text, fontWeight: "900", marginBottom: 10 }}>Available Runners</Text>
+                        <Text style={{ color: colors.text, fontWeight: "900", fontSize: 17, marginBottom: 10 }}>Available Runners</Text>
 
                         {runnersLoading ? (
                             <Text style={{ color: colors.text, opacity: 0.7 }}>Loading…</Text>
                         ) : runners.length === 0 ? (
-                            <Text style={{ color: colors.text, opacity: 0.7 }}>No runners available.</Text>
+                            <View style={m.noRunnersCard}>
+                                <View style={m.noRunnersIconContainer}>
+                                    <Ionicons name="footsteps-outline" size={48} color={colors.maroon} />
+                                </View>
+                                <Text style={m.noRunnersTitle}>No runners available right now</Text>
+                                <Text style={m.noRunnersDescription}>
+                                    Check back in a few minutes or post an errand to notify runners.
+                                </Text>
+                            </View>
                         ) : (
                             <View style={{ gap: 10 }}>
                                 {runners.map((r) => (
@@ -3622,12 +3659,20 @@ function HomeMobile() {
                             />
                         </View>
 
-                        <Text style={{ color: colors.text, fontWeight: "900", marginBottom: 10 }}>Available Runners</Text>
+                        <Text style={{ color: colors.text, fontWeight: "900", fontSize: 17, marginBottom: 10 }}>Available Runners</Text>
 
                         {runnersLoading ? (
                             <Text style={{ color: colors.text, opacity: 0.7 }}>Loading…</Text>
                         ) : filtered.length === 0 ? (
-                            <Text style={{ color: colors.text, opacity: 0.7 }}>No commissioners available.</Text>
+                            <View style={m.noRunnersCard}>
+                                <View style={m.noRunnersIconContainer}>
+                                    <Ionicons name="footsteps-outline" size={48} color={colors.maroon} />
+                                </View>
+                                <Text style={m.noRunnersTitle}>No runners available right now</Text>
+                                <Text style={m.noRunnersDescription}>
+                                    Check back in a few minutes or post an errand to notify runners.
+                                </Text>
+                            </View>
                         ) : (
                             <View style={{ gap: 10 }}>
                                 {filtered.map((c) => (
@@ -3698,13 +3743,7 @@ function RunnerCardMobile({ data }: { data: Runner }) {
 
     return (
         <TouchableOpacity
-            style={{
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: 12,
-                padding: 10,
-                backgroundColor: "#fff",
-            }}
+            style={m.runnerCard}
             onPress={() => {
                 // Use the same route for both web and mobile, let the component handle the differences
                 router.push({
@@ -3717,17 +3756,33 @@ function RunnerCardMobile({ data }: { data: Runner }) {
                 });
             }}
         >
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <Text style={{ fontWeight: "900", color: colors.text, fontSize: 14 }}>{data.name}</Text>
-                <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 12 }}>View Profile &gt;</Text>
+            {/* Profile Picture - Left */}
+            <View style={m.runnerAvatar}>
+                {data.profile_picture_url ? (
+                    <Image 
+                        source={{ uri: data.profile_picture_url }} 
+                        style={m.runnerAvatarImage}
+                    />
+                ) : (
+                    <Ionicons name="person" size={24} color={colors.border} />
+                )}
             </View>
-            <View style={{ backgroundColor: colors.maroon, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, alignSelf: "flex-start" }}>
-                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11 }}>{data.status}</Text>
+
+            {/* Center Section - Name, Status, Role */}
+            <View style={{ flex: 1, marginLeft: 12, gap: 6 }}>
+                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{data.name}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={m.onlineIndicator} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>Online</Text>
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="walk-outline" size={14} color={colors.maroon} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>BuddyRunner</Text>
+                </View>
             </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
-                <Ionicons name="walk-outline" size={12} color={colors.maroon} />
-                <Text style={{ color: colors.text, fontSize: 11 }}>BuddyRunner</Text>
-            </View>
+
+            {/* View Profile - Right */}
+            <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 13 }}>View Profile &gt;</Text>
         </TouchableOpacity>
     );
 }
@@ -3776,7 +3831,7 @@ function CommissionerCardMobile({ c }: { c: Commissioner }) {
 
     return (
         <TouchableOpacity 
-            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 10, backgroundColor: "#fff" }}
+            style={m.runnerCard}
             onPress={() => {
                 // Use the same route for both web and mobile, let the component handle the differences
                 router.push({
@@ -3789,26 +3844,42 @@ function CommissionerCardMobile({ c }: { c: Commissioner }) {
                 });
             }}
         >
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <Text style={{ fontWeight: "900", color: colors.text, fontSize: 14 }}>{c.name}</Text>
-                <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 12 }}>View Profile &gt;</Text>
+            {/* Profile Picture - Left */}
+            <View style={m.runnerAvatar}>
+                {c.profile_picture_url ? (
+                    <Image 
+                        source={{ uri: c.profile_picture_url }} 
+                        style={m.runnerAvatarImage}
+                    />
+                ) : (
+                    <Ionicons name="person" size={24} color={colors.border} />
+                )}
             </View>
-            <View style={{ backgroundColor: colors.maroon, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, alignSelf: "flex-start" }}>
-                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11 }}>{c.status}</Text>
+
+            {/* Center Section - Name, Status, Role */}
+            <View style={{ flex: 1, marginLeft: 12, gap: 6 }}>
+                <Text style={{ fontWeight: "800", color: colors.text, fontSize: 14 }}>{c.name}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={m.onlineIndicator} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>Online</Text>
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="walk-outline" size={14} color={colors.maroon} />
+                    <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>BuddyRunner</Text>
+                </View>
             </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
-                <Ionicons name="walk-outline" size={12} color={colors.maroon} />
-                <Text style={{ color: colors.text, fontSize: 11 }}>BuddyRunner</Text>
-            </View>
+
+            {/* View Profile - Right */}
+            <Text style={{ color: colors.maroon, fontWeight: "700", fontSize: 13 }}>View Profile &gt;</Text>
         </TouchableOpacity>
     );
 }
 
 /* --------- MOBILE styles --------- */
 const m = StyleSheet.create({
-    tabsWrap: { paddingHorizontal: 16, paddingBottom: 8 },
+    tabsWrap: { paddingHorizontal: 16, paddingBottom: 4 },
     tabsTrack: { flexDirection: "row", alignItems: "center", backgroundColor: colors.maroon, borderRadius: 14, padding: 6 },
-    tab: { flex: 1, height: 42, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+    tab: { flex: 1, height: 42, borderRadius: 10, flexDirection: "row", alignItems: "center", justifyContent: "center" },
     tabActive: { backgroundColor: "#fff", borderWidth: 2, borderColor: colors.maroon, elevation: 2 },
     tabText: { fontSize: 15, fontWeight: "700", color: "#fff" },
     tabTextActive: { color: colors.text },
@@ -3820,6 +3891,77 @@ const m = StyleSheet.create({
     filterChipActive: { backgroundColor: colors.maroon },
     filterText: { fontSize: 13, fontWeight: "700", color: colors.maroon },
     filterTextActive: { color: "#fff" },
+
+    noRunnersCard: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        padding: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: colors.border,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
+        elevation: 3,
+        marginBottom: 36,
+    },
+    noRunnersIconContainer: {
+        marginBottom: 16,
+    },
+    noRunnersTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: colors.text,
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    noRunnersDescription: {
+        fontSize: 14,
+        color: colors.text,
+        opacity: 0.7,
+        textAlign: 'center',
+        lineHeight: 20,
+    },
+
+    runnerCard: {
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 12,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        backgroundColor: "#fff",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 1,
+        marginBottom: 12,
+    },
+    runnerAvatar: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: colors.faint,
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+    },
+    runnerAvatarImage: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+    },
+    onlineIndicator: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: "#22c55e",
+    },
 
     bottomBar: {
         position: "absolute",

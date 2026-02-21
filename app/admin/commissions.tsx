@@ -6,6 +6,8 @@ import {
     Alert,
     FlatList,
     Image,
+    ImageStyle,
+    Linking,
     Modal,
     Platform,
     SafeAreaView,
@@ -48,12 +50,20 @@ type UserInfo = {
     first_name: string | null;
     last_name: string | null;
     email: string | null;
+    student_id_number?: string | null;
+    profile_picture_url?: string | null;
+};
+
+type TaskProgress = {
+    file_url?: string | null;
 };
 
 type CommissionWithUsers = CommissionRowDB & {
     caller?: UserInfo;
     runner?: UserInfo;
     totalPrice?: number | null;
+    task_progress?: TaskProgress[];
+    delivery_proof_url?: string | null;
 };
 
 function toUiStatus(s: string | null): string {
@@ -150,7 +160,15 @@ export default function AdminCommissions() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [commissions, setCommissions] = useState<CommissionWithUsers[]>([]);
+    const [selectedCommission, setSelectedCommission] = useState<CommissionWithUsers | null>(null);
+    const [showCommissionModal, setShowCommissionModal] = useState(false);
     const { width: screenWidth } = useWindowDimensions();
+
+    // Reusable function to open commission details modal
+    const handleOpenCommission = (commission: CommissionWithUsers) => {
+        setSelectedCommission(commission);
+        setShowCommissionModal(true);
+    };
 
     // Query limits for performance (conservative limit to reduce load time)
     const PAGE_SIZE = 200;
@@ -237,12 +255,36 @@ export default function AdminCommissions() {
                 setLoadingCommissions(true);
                 const { data: commissionsData, error: commissionsError } = await supabase
                     .from('commission')
-                    .select('id, title, commission_type, status, created_at, buddycaller_id, runner_id, meetup_location, due_at, description')
+                    .select(`
+                        id,
+                        title,
+                        commission_type,
+                        status,
+                        created_at,
+                        buddycaller_id,
+                        runner_id,
+                        meetup_location,
+                        due_at,
+                        description
+                    `)
                     .eq('status', 'completed')
                     .order('created_at', { ascending: false })
                     .limit(PAGE_SIZE);
                 
                 if (commissionsError) throw commissionsError;
+                
+                // Get all commission IDs for task progress fetch
+                const commissionIdsForTaskProgress = commissionsData?.map(c => c.id) || [];
+                
+                // Fetch task progress separately
+                const { data: taskProgressData, error: taskProgressError } = await supabase
+                    .from('task_progress')
+                    .select('commission_id, file_url')
+                    .in('commission_id', commissionIdsForTaskProgress);
+                
+                if (taskProgressError) {
+                    console.error('Error fetching task progress:', taskProgressError);
+                }
                 
                 // Fetch user information for callers and runners
                 const userIds = new Set<string>();
@@ -253,7 +295,14 @@ export default function AdminCommissions() {
 
                 const { data: usersData, error: usersError } = await supabase
                     .from('users')
-                    .select('id, first_name, last_name, email')
+                    .select(`
+                        id,
+                        first_name,
+                        last_name,
+                        email,
+                        student_id_number,
+                        profile_picture_url
+                    `)
                     .in('id', Array.from(userIds));
 
                 if (usersError) throw usersError;
@@ -382,14 +431,18 @@ export default function AdminCommissions() {
 
                 const commissionsWithUsers: CommissionWithUsers[] = (commissionsData || []).map(commission => {
                     const totalPrice = invoicesMap.get(commission.id) || null;
+                    const deliveryProof = taskProgressData?.find(
+                        (tp) => tp.commission_id === commission.id
+                    );
                     return {
                         ...commission,
                         caller: commission.buddycaller_id ? usersMap.get(commission.buddycaller_id) : undefined,
                         runner: commission.runner_id ? usersMap.get(commission.runner_id) : undefined,
                         totalPrice: totalPrice,
+                        delivery_proof_url: deliveryProof?.file_url || null,
                     };
                 });
-                
+
                 setCommissions(commissionsWithUsers);
             } catch (error) {
                 console.error('Error fetching commissions:', error);
@@ -590,11 +643,17 @@ export default function AdminCommissions() {
                                                 <Text style={[styles.tableHeaderText, styles.tableCellCreated]}>Created At</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellDueDate]}>Due At</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellPrice]}>Total Price</Text>
+                                                <View style={styles.tableCellAction}></View>
                                             </View>
                                             <FlatList
                                                 data={filteredCommissions}
                                                 renderItem={({ item: commission, index }) => (
-                                                    <CommissionTableRow commission={commission} index={index} />
+                                                    <CommissionTableRow 
+                                                        commission={commission} 
+                                                        index={index}
+                                                        onRowPress={() => handleOpenCommission(commission)}
+                                                        onIconPress={() => handleOpenCommission(commission)}
+                                                    />
                                                 )}
                                                 keyExtractor={(commission) => String(commission.id)}
                                                 initialNumToRender={10}
@@ -632,6 +691,17 @@ export default function AdminCommissions() {
                         </View>
                     </View>
                 </View>
+            )}
+
+            {showCommissionModal && selectedCommission && (
+                <CommissionDetailsModal
+                    commission={selectedCommission}
+                    visible={showCommissionModal}
+                    onClose={() => {
+                        setShowCommissionModal(false);
+                        setSelectedCommission(null);
+                    }}
+                />
             )}
         </SafeAreaView>
     );
@@ -1005,7 +1075,216 @@ function CalendarModal({
     );
 }
 
-function CommissionTableRow({ commission, index }: { commission: CommissionWithUsers; index: number }) {
+/* ===================== COMMISSION DETAILS MODAL ===================== */
+function CommissionDetailsModal({
+    commission,
+    visible,
+    onClose,
+}: {
+    commission: CommissionWithUsers;
+    visible: boolean;
+    onClose: () => void;
+}) {
+    const callerName = commission.caller 
+        ? `${titleCase(commission.caller.first_name)} ${titleCase(commission.caller.last_name)}`.trim() 
+        : "N/A";
+    const runnerName = commission.runner 
+        ? `${titleCase(commission.runner.first_name)} ${titleCase(commission.runner.last_name)}`.trim() 
+        : "Not Assigned";
+    const callerEmail = commission.caller?.email || "N/A";
+    const runnerEmail = commission.runner?.email || "N/A";
+    const callerStudentId = commission.caller?.student_id_number || "N/A";
+    const runnerStudentId = commission.runner?.student_id_number || "N/A";
+    const callerProfilePic = commission.caller?.profile_picture_url;
+    const runnerProfilePic = commission.runner?.profile_picture_url;
+    const category = commission.commission_type 
+        ? commission.commission_type.split(',').map(t => titleCase(t.trim())).join(', ')
+        : "N/A";
+    const price = commission.totalPrice ? `₱${commission.totalPrice.toFixed(2)}` : "N/A";
+    const createdAt = new Date(commission.created_at).toLocaleString();
+    const dueAt = commission.due_at ? new Date(commission.due_at).toLocaleString() : "N/A";
+
+    return (
+        <Modal
+            visible={visible}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={onClose}
+        >
+            <TouchableOpacity
+                style={styles.commissionModalOverlay}
+                activeOpacity={1}
+                onPress={onClose}
+            >
+                <View
+                    style={styles.commissionModalCard}
+                    onStartShouldSetResponder={() => true}
+                >
+                    {/* Header */}
+                    <View style={styles.commissionModalHeader}>
+                        <Text style={styles.commissionModalTitle}>Transaction Details</Text>
+                        <TouchableOpacity onPress={onClose} style={styles.commissionModalCloseButton}>
+                            <Ionicons name="close" size={24} color={colors.text} />
+                        </TouchableOpacity>
+                    </View>
+
+                    <ScrollView style={styles.commissionModalContent} showsVerticalScrollIndicator={true}>
+                        {/* Commission Transaction Details Section */}
+                        <View style={styles.commissionModalSection}>
+                            <Text style={styles.commissionModalSectionTitle}>Commission Transaction Details</Text>
+                            <View style={styles.commissionModalDetailRow}>
+                                <Text style={styles.commissionModalLabel}>Commission ID:</Text>
+                                <Text style={styles.commissionModalValue}>{commission.id}</Text>
+                            </View>
+                            <View style={styles.commissionModalDetailRow}>
+                                <Text style={styles.commissionModalLabel}>Created At:</Text>
+                                <Text style={styles.commissionModalValue}>{createdAt}</Text>
+                            </View>
+                            <View style={styles.commissionModalDetailRow}>
+                                <Text style={styles.commissionModalLabel}>Due At:</Text>
+                                <Text style={styles.commissionModalValue}>{dueAt}</Text>
+                            </View>
+                            <View style={styles.commissionModalDetailRow}>
+                                <Text style={styles.commissionModalLabel}>Category:</Text>
+                                <Text style={styles.commissionModalValue}>{category}</Text>
+                            </View>
+                            <View style={styles.commissionModalDetailRow}>
+                                <Text style={styles.commissionModalLabel}>Price:</Text>
+                                <Text style={styles.commissionModalValue}>{price}</Text>
+                            </View>
+                        </View>
+
+                        {/* Divider */}
+                        <View style={styles.commissionModalDivider} />
+
+                        {/* Caller Information Section */}
+                        <View style={styles.commissionModalSection}>
+                            <Text style={styles.commissionModalSectionTitle}>Caller Information</Text>
+                            <View style={styles.commissionModalProfileRow}>
+                                {callerProfilePic ? (
+                                    <Image 
+                                        source={{ uri: callerProfilePic }} 
+                                        style={styles.commissionModalProfileImage as ImageStyle}
+                                    />
+                                ) : (
+                                    <View style={styles.commissionModalProfileImagePlaceholder}>
+                                        <Ionicons name="person" size={24} color={colors.border} />
+                                    </View>
+                                )}
+                                <View style={styles.commissionModalProfileInfo}>
+                                    <Text style={styles.commissionModalProfileName}>{callerName}</Text>
+                                    <View style={styles.commissionModalProfileDetailRow}>
+                                        <Text style={styles.commissionModalProfileLabel}>Email:</Text>
+                                        <Text style={styles.commissionModalProfileValue}>{callerEmail}</Text>
+                                    </View>
+                                    <View style={styles.commissionModalProfileDetailRow}>
+                                        <Text style={styles.commissionModalProfileLabel}>Student ID:</Text>
+                                        <Text style={styles.commissionModalProfileValue}>{callerStudentId}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        </View>
+
+                        {/* Divider */}
+                        <View style={styles.commissionModalDivider} />
+
+                        {/* Runner Information Section */}
+                        <View style={styles.commissionModalSection}>
+                            <Text style={styles.commissionModalSectionTitle}>Runner Information</Text>
+                            <View style={styles.commissionModalProfileRow}>
+                                {runnerProfilePic ? (
+                                    <Image 
+                                        source={{ uri: runnerProfilePic }} 
+                                        style={styles.commissionModalProfileImage as ImageStyle}
+                                    />
+                                ) : (
+                                    <View style={styles.commissionModalProfileImagePlaceholder}>
+                                        <Ionicons name="person" size={24} color={colors.border} />
+                                    </View>
+                                )}
+                                <View style={styles.commissionModalProfileInfo}>
+                                    <Text style={styles.commissionModalProfileName}>{runnerName}</Text>
+                                    <View style={styles.commissionModalProfileDetailRow}>
+                                        <Text style={styles.commissionModalProfileLabel}>Email:</Text>
+                                        <Text style={styles.commissionModalProfileValue}>{runnerEmail}</Text>
+                                    </View>
+                                    <View style={styles.commissionModalProfileDetailRow}>
+                                        <Text style={styles.commissionModalProfileLabel}>Student ID:</Text>
+                                        <Text style={styles.commissionModalProfileValue}>{runnerStudentId}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        </View>
+
+                        {/* Divider */}
+                        <View style={styles.commissionModalDivider} />
+
+                        {/* Delivery Proof Section */}
+                        <View style={styles.commissionModalSection}>
+                            <Text style={styles.commissionModalSectionTitle}>Delivery Proof</Text>
+                            {commission.delivery_proof_url ? (
+                                (() => {
+                                    const urls = commission.delivery_proof_url.split(",");
+                                    const names = (commission as any).delivery_proof_name
+                                        ? (commission as any).delivery_proof_name.split(",")
+                                        : [];
+
+                                    return (
+                                        <View style={styles.deliveryContainer}>
+                                            {urls.map((rawUrl: string, index: number) => {
+                                                const url = rawUrl.trim().toLowerCase();
+                                                const name = names[index]?.trim() || `File ${index + 1}`;
+
+                                                const isImage =
+                                                    url.endsWith(".png") ||
+                                                    url.endsWith(".jpg") ||
+                                                    url.endsWith(".jpeg") ||
+                                                    url.endsWith(".webp");
+
+                                                if (isImage) {
+                                                    return (
+                                                        <View key={index} style={styles.imageWrapper}>
+                                                            <Image
+                                                                source={{ uri: rawUrl.trim() }}
+                                                                style={styles.deliveryImage as ImageStyle}
+                                                                resizeMode="contain"
+                                                            />
+                                                        </View>
+                                                    );
+                                                }
+
+                                                return (
+                                                    <View key={index} style={styles.fileCard}>
+                                                        <Text style={styles.fileName}>{name}</Text>
+
+                                                        <TouchableOpacity
+                                                            style={styles.openButton}
+                                                            onPress={() => Linking.openURL(rawUrl.trim())}
+                                                        >
+                                                            <Text style={styles.openButtonText}>Open File</Text>
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                );
+                                            })}
+                                        </View>
+                                    );
+                                })()
+                            ) : (
+                                <Text style={styles.noProofText}>
+                                    No delivery proof uploaded.
+                                </Text>
+                            )}
+                        </View>
+                    </ScrollView>
+                </View>
+            </TouchableOpacity>
+        </Modal>
+    );
+}
+
+function CommissionTableRow({ commission, index, onRowPress, onIconPress }: { commission: CommissionWithUsers; index: number; onRowPress: () => void; onIconPress: () => void }) {
+    const [isIconHovered, setIsIconHovered] = useState(false);
+    const [isRowHovered, setIsRowHovered] = useState(false);
     const commissionType = commission.commission_type 
         ? commission.commission_type.split(',').map(t => titleCase(t.trim())).join(', ')
         : "N/A";
@@ -1024,7 +1303,18 @@ function CommissionTableRow({ commission, index }: { commission: CommissionWithU
     const rowStyle = index % 2 === 0 ? styles.tableRow : styles.tableRowAlternate;
 
     return (
-        <View style={rowStyle}>
+        <TouchableOpacity
+            activeOpacity={0.8}
+            style={[
+                rowStyle,
+                isRowHovered && styles.tableRowHovered
+            ]}
+            onPress={onRowPress}
+            {...(Platform.OS === 'web' ? {
+                onMouseEnter: () => setIsRowHovered(true),
+                onMouseLeave: () => setIsRowHovered(false),
+            } as any : {})}
+        >
             <Text style={[styles.tableCellText, styles.tableCellCommissionId]} numberOfLines={1} ellipsizeMode="tail">{commission.id}</Text>
             <Text style={[styles.tableCellText, styles.tableCellCallerName]} numberOfLines={1} ellipsizeMode="tail">{callerName}</Text>
             <Text style={[styles.tableCellText, styles.tableCellCallerEmail]} numberOfLines={1} ellipsizeMode="tail">{callerEmail}</Text>
@@ -1034,7 +1324,26 @@ function CommissionTableRow({ commission, index }: { commission: CommissionWithU
             <Text style={[styles.tableCellText, styles.tableCellCreated]} numberOfLines={1} ellipsizeMode="tail">{createdAt}</Text>
             <Text style={[styles.tableCellText, styles.tableCellDueDate]} numberOfLines={1} ellipsizeMode="tail">{dueAt}</Text>
             <Text style={[styles.tableCellText, styles.tableCellPrice]} numberOfLines={1} ellipsizeMode="tail">{totalPrice}</Text>
-        </View>
+            <View style={styles.tableCellAction}>
+                <TouchableOpacity 
+                    style={[
+                        styles.actionIconContainer,
+                        isIconHovered && styles.actionIconContainerHovered
+                    ]} 
+                    activeOpacity={0.7}
+                    onPress={(e) => {
+                        e.stopPropagation?.();
+                        onIconPress();
+                    }}
+                    {...(Platform.OS === 'web' ? {
+                        onMouseEnter: () => setIsIconHovered(true),
+                        onMouseLeave: () => setIsIconHovered(false),
+                    } as any : {})}
+                >
+                    <Ionicons name="information-circle-outline" size={20} color={colors.text} />
+                </TouchableOpacity>
+            </View>
+        </TouchableOpacity>
     );
 }
 
@@ -1668,10 +1977,9 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     dropdownModalContainer: {
-        position: 'absolute',
+        position: 'absolute' as const,
         zIndex: 100000,
         ...(Platform.OS === 'web' ? {
-            position: 'fixed',
             zIndex: 100000,
         } : {}),
     },
@@ -1688,7 +1996,7 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         backgroundColor: "#fff",
         overflow: "hidden",
-        minWidth: 1570,
+        minWidth: 1630,
     },
     tableHeader: {
         flexDirection: "row",
@@ -1762,7 +2070,43 @@ const styles = StyleSheet.create({
     },
     tableCellPrice: {
         width: 110,
+        paddingRight: 24,
+    },
+    tableCellAction: {
+        width: 60,
         paddingRight: 0,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    actionIconContainer: {
+        padding: 6,
+        borderRadius: 4,
+        backgroundColor: "#F0F0F0",
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+        } : {
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.1,
+            shadowRadius: 2,
+            elevation: 2,
+        }),
+    },
+    actionIconContainerHovered: {
+        backgroundColor: "#E5E5E5",
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 2px 6px rgba(0, 0, 0, 0.15)',
+            transform: 'translateY(-1px)',
+        } : {}),
+    },
+    tableRowHovered: {
+        ...(Platform.OS === 'web' ? {
+            backgroundColor: "#f9f5f5",
+            cursor: 'pointer',
+            transition: 'background-color 0.2s ease',
+        } as any : {}),
     },
     emptyState: {
         alignItems: "center",
@@ -1834,6 +2178,198 @@ const styles = StyleSheet.create({
     modalButtonConfirmText: {
         color: "#fff",
         fontWeight: "700",
+    },
+    commissionModalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+    },
+    commissionModalCard: {
+        width: "90%",
+        maxWidth: 600,
+        maxHeight: "90%",
+        backgroundColor: "#fff",
+        borderRadius: 12,
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
+            maxHeight: '90vh',
+        } as any : {
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.15,
+            shadowRadius: 20,
+            elevation: 10,
+        }),
+    },
+    commissionModalHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: 24,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    commissionModalTitle: {
+        color: colors.text,
+        fontSize: 20,
+        fontWeight: "900",
+    },
+    commissionModalCloseButton: {
+        padding: 4,
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+        } : {}),
+    },
+    commissionModalContent: {
+        flex: 1,
+    },
+    commissionModalSection: {
+        padding: 24,
+    },
+    commissionModalSectionTitle: {
+        color: colors.text,
+        fontSize: 16,
+        fontWeight: "700",
+        marginBottom: 16,
+    },
+    commissionModalDetailRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 12,
+    },
+    commissionModalLabel: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
+        opacity: 0.7,
+    },
+    commissionModalValue: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "500",
+        flex: 1,
+        textAlign: "right",
+    },
+    commissionModalDivider: {
+        height: 1,
+        backgroundColor: colors.border,
+        marginHorizontal: 24,
+    },
+    commissionModalProfileRow: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 16,
+    },
+    commissionModalProfileImage: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        overflow: "hidden" as const,
+    },
+    commissionModalProfileImagePlaceholder: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: colors.faint,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    commissionModalProfileInfo: {
+        flex: 1,
+    },
+    commissionModalProfileName: {
+        color: colors.text,
+        fontSize: 16,
+        fontWeight: "700",
+        marginBottom: 8,
+    },
+    commissionModalProfileDetailRow: {
+        flexDirection: "row",
+        marginBottom: 6,
+        gap: 8,
+    },
+    commissionModalProfileLabel: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
+        opacity: 0.7,
+    },
+    commissionModalProfileValue: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "500",
+    },
+    deliveryProofImage: {
+        width: "100%",
+        height: 300,
+        borderRadius: 12,
+    },
+    noProofText: {
+        color: "#999",
+        fontStyle: "italic",
+        marginTop: 10,
+    },
+    fileContainer: {
+        padding: 16,
+        backgroundColor: "#f5f5f5",
+        borderRadius: 8,
+        alignItems: "center",
+    },
+    fileTitle: {
+        fontSize: 14,
+        marginBottom: 10,
+        fontWeight: "600",
+        color: "#333",
+    },
+    openFileButton: {
+        backgroundColor: "#8B0000",
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 6,
+    },
+    openFileText: {
+        color: "#fff",
+        fontWeight: "600",
+    },
+    deliveryContainer: {
+        gap: 12,
+        marginTop: 10,
+    },
+    imageWrapper: {
+        borderRadius: 10,
+        overflow: "hidden",
+        borderWidth: 1,
+        borderColor: "#eee",
+    },
+    deliveryImage: {
+        width: "100%",
+        height: 250,
+        backgroundColor: "#f5f5f5",
+    },
+    fileCard: {
+        backgroundColor: "#f8f8f8",
+        padding: 14,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: "#e5e5e5",
+    },
+    fileName: {
+        fontSize: 14,
+        marginBottom: 8,
+        fontWeight: "600",
+        color: "#333",
+    },
+    openButton: {
+        backgroundColor: "#8B0000",
+        paddingVertical: 8,
+        borderRadius: 6,
+        alignItems: "center",
+    },
+    openButtonText: {
+        color: "#fff",
+        fontWeight: "600",
     },
     sidebarOverlay: {
         position: 'absolute' as any,

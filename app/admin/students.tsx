@@ -6,6 +6,7 @@ import {
     Alert,
     FlatList,
     Image,
+    ImageStyle,
     Platform,
     SafeAreaView,
     ScrollView,
@@ -265,7 +266,7 @@ export default function AdminStudents() {
         });
 
         return sorted;
-    }, [students, roleFilter, searchQuery, selectedStudent]);
+    }, [students, roleFilter, searchQuery, selectedStudent]) as StudentRow[];
 
     // Fetch transactions when a student is selected
     React.useEffect(() => {
@@ -671,20 +672,20 @@ export default function AdminStudents() {
                                 >
                                     <Ionicons name="arrow-back" size={24} color={colors.maroon} />
                                 </TouchableOpacity>
-                                <View style={styles.searchContainer}>
-                                    <Ionicons name="search-outline" size={20} color={colors.text} style={{ opacity: 0.6 }} />
-                                    <TextInput
-                                        style={styles.searchInput}
-                                        placeholder="Search by name, email, course, or student ID..."
-                                        placeholderTextColor="#999"
-                                        value={searchQuery}
-                                        onChangeText={setSearchQuery}
-                                    />
-                                    {searchQuery.length > 0 && (
-                                        <TouchableOpacity onPress={() => setSearchQuery("")}>
-                                            <Ionicons name="close-circle" size={20} color={colors.text} />
-                                        </TouchableOpacity>
-                                    )}
+                            <View style={styles.searchContainer}>
+                                <Ionicons name="search-outline" size={20} color={colors.text} style={{ opacity: 0.6 }} />
+                                <TextInput
+                                    style={styles.searchInput}
+                                    placeholder="Search by name, email, course, or student ID..."
+                                    placeholderTextColor="#999"
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                />
+                                {searchQuery.length > 0 && (
+                                    <TouchableOpacity onPress={() => setSearchQuery("")}>
+                                        <Ionicons name="close-circle" size={20} color={colors.text} />
+                                    </TouchableOpacity>
+                                )}
                                 </View>
                             </View>
 
@@ -752,7 +753,7 @@ export default function AdminStudents() {
                                             {selectedStudent.profile_picture_url ? (
                                                 <Image 
                                                     source={{ uri: selectedStudent.profile_picture_url }} 
-                                                    style={styles.profilePicture}
+                                                    style={styles.profilePicture as ImageStyle}
                                                 />
                                             ) : (
                                                 <View style={styles.profilePicturePlaceholder}>
@@ -761,18 +762,18 @@ export default function AdminStudents() {
                                             )}
                                             <View style={styles.studentDetailsHeaderText}>
                                                 <View style={styles.studentNameRow}>
-                                                    <Text style={styles.studentName}>
-                                                        {(() => {
-                                                            const middleName = selectedStudent.middle_name ? selectedStudent.middle_name.trim().toLowerCase() : "";
-                                                            const shouldExcludeMiddleName = middleName === "n/a" || middleName === "na" || middleName === "none";
-                                                            const nameParts = [
-                                                                titleCase(selectedStudent.first_name),
-                                                                !shouldExcludeMiddleName ? titleCase(selectedStudent.middle_name) : null,
-                                                                titleCase(selectedStudent.last_name)
-                                                            ].filter(Boolean);
-                                                            return nameParts.join(" ") || "N/A";
-                                                        })()}
-                                                    </Text>
+                                                <Text style={styles.studentName}>
+                                                    {(() => {
+                                                        const middleName = selectedStudent.middle_name ? selectedStudent.middle_name.trim().toLowerCase() : "";
+                                                        const shouldExcludeMiddleName = middleName === "n/a" || middleName === "na" || middleName === "none";
+                                                        const nameParts = [
+                                                            titleCase(selectedStudent.first_name),
+                                                            !shouldExcludeMiddleName ? titleCase(selectedStudent.middle_name) : null,
+                                                            titleCase(selectedStudent.last_name)
+                                                        ].filter(Boolean);
+                                                        return nameParts.join(" ") || "N/A";
+                                                    })()}
+                                                </Text>
                                                     <View style={[
                                                         styles.statusBadge,
                                                         getStudentStatus(selectedStudent) === "ID Pending" && styles.statusBadgeIdPending,
@@ -909,14 +910,18 @@ export default function AdminStudents() {
                                             </View>
                                             <FlatList
                                                 data={filteredStudents}
-                                                renderItem={({ item: student, index }) => (
-                                                    <StudentTableRow 
-                                                        student={student} 
-                                                        index={index}
-                                                        onPress={() => setSelectedStudent(student)}
-                                                        isSelected={selectedStudent?.id === student.id}
-                                                        onIconPress={() => {
-                                                            setModalStudent(student);
+                                                renderItem={({ item, index }: { item: StudentRow; index: number }) => {
+                                                    const selectedId: string | undefined = selectedStudent ? (selectedStudent as StudentRow).id : undefined;
+                                                    const currentId: string = item.id;
+                                                    const isSelected: boolean = selectedId !== undefined && selectedId === currentId;
+                                                    return (
+                                                        <StudentTableRow 
+                                                            student={item} 
+                                                            index={index}
+                                                            onPress={() => setSelectedStudent(item)}
+                                                            isSelected={isSelected}
+                                                            onIconPress={() => {
+                                                                setModalStudent(item);
                                                             setShowStudentModal(true);
                                                             setIsEditMode(false);
                                                             setEditFormData({});
@@ -924,8 +929,9 @@ export default function AdminStudents() {
                                                             setIdImagePreview(null);
                                                         }}
                                                     />
-                                                )}
-                                                keyExtractor={(student) => student.id}
+                                                    );
+                                                }}
+                                                keyExtractor={(student: StudentRow) => student.id}
                                                 initialNumToRender={15}
                                                 windowSize={5}
                                                 removeClippedSubviews={true}
@@ -1022,7 +1028,7 @@ export default function AdminStudents() {
                                         {modalStudent.profile_picture_url ? (
                                             <Image 
                                                 source={{ uri: modalStudent.profile_picture_url }} 
-                                                style={styles.studentModalAvatar}
+                                                style={styles.studentModalAvatar as ImageStyle}
                                             />
                                         ) : (
                                             <View style={styles.studentModalAvatarPlaceholder}>
@@ -1195,7 +1201,7 @@ export default function AdminStudents() {
                                         <View style={styles.studentModalImageContainer}>
                                             <Image
                                                 source={{ uri: idImagePreview || convertBase64ToUrl(modalStudent.id_image_path || "") }}
-                                                style={styles.studentModalIdImage}
+                                                style={styles.studentModalIdImage as ImageStyle}
                                                 resizeMode="contain"
                                             />
                                         </View>
@@ -1271,7 +1277,7 @@ export default function AdminStudents() {
                                                 setIsSaving(true);
                                                 try {
                                                     // Validate Student ID
-                                                    if (editFormData.student_id_number !== undefined && !editFormData.student_id_number.trim()) {
+                                                    if (editFormData.student_id_number !== undefined && (!editFormData.student_id_number || !editFormData.student_id_number.trim())) {
                                                         Alert.alert('Validation Error', 'Student ID cannot be empty.');
                                                         setIsSaving(false);
                                                         return;
@@ -1281,7 +1287,7 @@ export default function AdminStudents() {
                                                     if (editFormData.first_name !== undefined) updateData.first_name = editFormData.first_name || null;
                                                     if (editFormData.middle_name !== undefined) updateData.middle_name = editFormData.middle_name || null;
                                                     if (editFormData.last_name !== undefined) updateData.last_name = editFormData.last_name || null;
-                                                    if (editFormData.student_id_number !== undefined) updateData.student_id_number = editFormData.student_id_number.trim() || null;
+                                                    if (editFormData.student_id_number !== undefined) updateData.student_id_number = (editFormData.student_id_number?.trim() || null);
                                                     if (editFormData.email !== undefined) updateData.email = editFormData.email || null;
                                                     if (editFormData.phone !== undefined) updateData.phone = editFormData.phone || null;
                                                     if (editFormData.course !== undefined) updateData.course = editFormData.course || null;
@@ -1486,8 +1492,10 @@ function StudentTableRow({ student, index, onPress, isSelected, onIconPress }: {
             style={combinedRowStyle}
             onPress={onPress}
             activeOpacity={0.7}
-            onMouseEnter={() => Platform.OS === 'web' && setIsHovered(true)}
-            onMouseLeave={() => Platform.OS === 'web' && setIsHovered(false)}
+            {...(Platform.OS === 'web' ? {
+                onMouseEnter: () => setIsHovered(true),
+                onMouseLeave: () => setIsHovered(false),
+            } as any : {})}
         >
             <Text style={[styles.tableCellText, styles.tableCellId]} numberOfLines={1} ellipsizeMode="tail">{studentId}</Text>
             <Text style={[styles.tableCellText, styles.tableCellName]} numberOfLines={1} ellipsizeMode="tail">{fullName}</Text>
@@ -1509,12 +1517,14 @@ function StudentTableRow({ student, index, onPress, isSelected, onIconPress }: {
                             e.stopPropagation();
                             onIconPress();
                         }}
-                        onMouseEnter={() => Platform.OS === 'web' && setIsIconHovered(true)}
-                        onMouseLeave={() => Platform.OS === 'web' && setIsIconHovered(false)}
+                        {...(Platform.OS === 'web' ? {
+                            onMouseEnter: () => setIsIconHovered(true),
+                            onMouseLeave: () => setIsIconHovered(false),
+                        } as any : {})}
                     >
                         <Ionicons name="open-outline" size={16} color={colors.text} />
                     </TouchableOpacity>
-                </View>
+        </View>
             </View>
         </TouchableOpacity>
     );
@@ -2225,8 +2235,8 @@ const styles = StyleSheet.create({
     },
     studentModalContent: {
         ...(Platform.OS === 'web' ? {
-            maxHeight: 'calc(90vh - 120px)',
-        } : {
+            maxHeight: 600,
+        } as any : {
             maxHeight: 600,
         }),
     },
@@ -2252,6 +2262,7 @@ const styles = StyleSheet.create({
         borderRadius: 40,
         borderWidth: 2,
         borderColor: colors.border,
+        overflow: "hidden" as const,
     },
     studentModalAvatarPlaceholder: {
         width: 80,
@@ -2378,6 +2389,7 @@ const styles = StyleSheet.create({
         maxWidth: 500,
         height: 400,
         borderRadius: 8,
+        overflow: "hidden" as const,
     },
     studentModalNoImage: {
         width: "100%",
@@ -2448,6 +2460,7 @@ const styles = StyleSheet.create({
         borderRadius: 50,
         borderWidth: 2,
         borderColor: colors.border,
+        overflow: "hidden" as const,
     },
     profilePicturePlaceholder: {
         width: 100,
@@ -2492,8 +2505,8 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         alignSelf: "flex-start",
         ...(Platform.OS === 'web' ? {
-            display: 'inline-flex',
-        } : {}),
+            display: 'flex',
+        } as any : {}),
     },
     statusBadgeClickable: {
         ...(Platform.OS === 'web' ? {

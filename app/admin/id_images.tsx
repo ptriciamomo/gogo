@@ -40,7 +40,7 @@ type UserWithIdImage = {
     id_image_path: string | null;
     id_image_approved: boolean | null;
     created_at: string;
-    updated_at: string | null;
+    updated_at?: string | null;
 };
 
 /* ===================== AUTH PROFILE HOOK ===================== */
@@ -412,26 +412,26 @@ export default function StudentIdImages() {
 
     const filteredUsers = users
         .filter((user) => {
-            // Apply search filter
-            if (searchQuery) {
-                const query = searchQuery.toLowerCase();
-                const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
-                const email = (user.email || '').toLowerCase();
-                const studentId = (user.student_id_number || '').toLowerCase();
-                const matchesSearch = fullName.includes(query) || email.includes(query) || studentId.includes(query);
-                if (!matchesSearch) return false;
-            }
+        // Apply search filter
+        if (searchQuery) {
+            const query = searchQuery.toLowerCase();
+            const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
+            const email = (user.email || '').toLowerCase();
+            const studentId = (user.student_id_number || '').toLowerCase();
+            const matchesSearch = fullName.includes(query) || email.includes(query) || studentId.includes(query);
+            if (!matchesSearch) return false;
+        }
 
-            // Apply filter type
-            if (filterType === 'all') {
-                return user.id_image_approved === null;
-            } else if (filterType === 'approved') {
-                return user.id_image_approved === true;
-            } else if (filterType === 'disapproved') {
-                return user.id_image_approved === false;
-            }
+        // Apply filter type
+        if (filterType === 'all') {
+            return user.id_image_approved === null;
+        } else if (filterType === 'approved') {
+            return user.id_image_approved === true;
+        } else if (filterType === 'disapproved') {
+            return user.id_image_approved === false;
+        }
 
-            return true;
+        return true;
         })
         .sort((a, b) => {
             // Sort based on filter type
@@ -446,7 +446,7 @@ export default function StudentIdImages() {
                 return bTime - aTime;
             }
             return 0;
-        });
+    });
 
     if (authLoading) {
         return (
@@ -634,36 +634,36 @@ export default function StudentIdImages() {
                                                         </View>
                                                     </TouchableOpacity>
                                                     {user.id_image_approved === null && (
-                                                        <View style={[styles.actionButtons, isSmall && styles.actionButtonsSmall]}>
-                                                            <TouchableOpacity
-                                                                style={[styles.actionButton, styles.approveButton, user.id_image_approved === true && styles.actionButtonActive]}
-                                                                onPress={() => {
-                                                                    console.log('Approve button clicked for user:', user.id, 'Current status:', user.id_image_approved);
-                                                                    handleApprove(user.id);
-                                                                }}
-                                                                activeOpacity={0.7}
-                                                                disabled={false}
-                                                            >
-                                                                <Ionicons name="checkmark" size={isSmall ? 14 : 16} color={user.id_image_approved === true ? "#fff" : colors.maroon} />
-                                                                <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === true && styles.actionButtonTextActive]}>
-                                                                    Approve
-                                                                </Text>
-                                                            </TouchableOpacity>
-                                                            <TouchableOpacity
-                                                                style={[styles.actionButton, styles.disapproveButton, user.id_image_approved === false && styles.actionButtonActive]}
-                                                                onPress={() => {
-                                                                    console.log('Disapprove button clicked for user:', user.id, 'Current status:', user.id_image_approved);
-                                                                    handleDisapprove(user.id);
-                                                                }}
-                                                                activeOpacity={0.7}
-                                                                disabled={false}
-                                                            >
-                                                                <Ionicons name="close" size={isSmall ? 14 : 16} color={user.id_image_approved === false ? "#fff" : colors.maroon} />
-                                                                <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === false && styles.actionButtonTextActive]}>
-                                                                    Disapprove
-                                                                </Text>
-                                                            </TouchableOpacity>
-                                                        </View>
+                                                    <View style={[styles.actionButtons, isSmall && styles.actionButtonsSmall]}>
+                                                        <TouchableOpacity
+                                                            style={[styles.actionButton, styles.approveButton, user.id_image_approved === true && styles.actionButtonActive]}
+                                                            onPress={() => {
+                                                                console.log('Approve button clicked for user:', user.id, 'Current status:', user.id_image_approved);
+                                                                handleApprove(user.id);
+                                                            }}
+                                                            activeOpacity={0.7}
+                                                            disabled={false}
+                                                        >
+                                                            <Ionicons name="checkmark" size={isSmall ? 14 : 16} color={user.id_image_approved === true ? "#fff" : colors.maroon} />
+                                                            <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === true && styles.actionButtonTextActive]}>
+                                                                Approve
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity
+                                                            style={[styles.actionButton, styles.disapproveButton, user.id_image_approved === false && styles.actionButtonActive]}
+                                                            onPress={() => {
+                                                                console.log('Disapprove button clicked for user:', user.id, 'Current status:', user.id_image_approved);
+                                                                handleDisapprove(user.id);
+                                                            }}
+                                                            activeOpacity={0.7}
+                                                            disabled={false}
+                                                        >
+                                                            <Ionicons name="close" size={isSmall ? 14 : 16} color={user.id_image_approved === false ? "#fff" : colors.maroon} />
+                                                            <Text style={[styles.actionButtonText, isSmall && styles.actionButtonTextSmall, user.id_image_approved === false && styles.actionButtonTextActive]}>
+                                                                Disapprove
+                                                            </Text>
+                                                        </TouchableOpacity>
+                                                    </View>
                                                     )}
                                                 </View>
                                             );

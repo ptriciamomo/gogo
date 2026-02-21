@@ -5,6 +5,7 @@ import {
     ActivityIndicator,
     Alert,
     Image,
+    ImageStyle,
     Modal,
     Platform,
     SafeAreaView,
@@ -35,6 +36,7 @@ type ErrandRowDB = {
     category: string | null;
     status: "pending" | "in_progress" | "completed" | "cancelled" | "delivered" | null;
     created_at: string;
+    completed_at?: string | null;
     buddycaller_id: string | null;
     runner_id: string | null;
     amount_price?: number | null;
@@ -42,6 +44,7 @@ type ErrandRowDB = {
     pickup_status?: string | null;
     pickup_photo?: string | null;
     pickup_confirmed_at?: string | null;
+    delivery_proof_photo?: string | null;
 };
 
 type UserInfo = {
@@ -49,6 +52,8 @@ type UserInfo = {
     first_name: string | null;
     last_name: string | null;
     email: string | null;
+    student_id_number?: string | null;
+    profile_picture_url?: string | null;
 };
 
 type ErrandWithUsers = ErrandRowDB & {
@@ -152,7 +157,15 @@ export default function AdminErrands() {
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [errands, setErrands] = useState<ErrandWithUsers[]>([]);
     const [loadingErrands, setLoadingErrands] = useState(true);
+    const [selectedErrand, setSelectedErrand] = useState<ErrandWithUsers | null>(null);
+    const [showErrandModal, setShowErrandModal] = useState(false);
     const { width: screenWidth } = useWindowDimensions();
+
+    // Reusable function to open transaction details modal
+    const handleOpenTransaction = (errand: ErrandWithUsers) => {
+        setSelectedErrand(errand);
+        setShowErrandModal(true);
+    };
 
     // Query limits for performance (conservative limit to reduce load time)
     const PAGE_SIZE = 200;
@@ -241,7 +254,7 @@ export default function AdminErrands() {
                 setLoadingErrands(true);
                 const { data: errandsData, error: errandsError } = await supabase
                     .from('errand')
-                    .select('id, title, category, status, created_at, buddycaller_id, runner_id, amount_price, description')
+                    .select('id, title, category, status, created_at, completed_at, buddycaller_id, runner_id, amount_price, description, delivery_proof_photo')
                     .eq('status', 'completed')
                     .order('created_at', { ascending: false })
                     .limit(PAGE_SIZE);
@@ -257,7 +270,7 @@ export default function AdminErrands() {
 
                 const { data: usersData, error: usersError } = await supabase
                     .from('users')
-                    .select('id, first_name, last_name, email')
+                    .select('id, first_name, last_name, email, student_id_number, profile_picture_url')
                     .in('id', Array.from(userIds));
 
                 if (usersError) throw usersError;
@@ -461,6 +474,7 @@ export default function AdminErrands() {
                                     <ScrollView horizontal showsHorizontalScrollIndicator={true}>
                                         <View style={styles.tableContainer}>
                                             <View style={styles.tableHeader}>
+                                                <Text style={[styles.tableHeaderText, styles.tableCellErrandId]}>Errand ID</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellCallerName]}>Caller Name</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellCallerEmail]}>Caller Email</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellRunnerName]}>Runner Name</Text>
@@ -468,9 +482,16 @@ export default function AdminErrands() {
                                                 <Text style={[styles.tableHeaderText, styles.tableCellCategory]}>Category</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellCreated]}>Created At</Text>
                                                 <Text style={[styles.tableHeaderText, styles.tableCellPrice]}>Total Price</Text>
+                                                <View style={styles.tableCellAction}></View>
                                             </View>
                                             {filteredErrands.map((errand, index) => (
-                                                <ErrandTableRow key={errand.id} errand={errand} index={index} />
+                                                <ErrandTableRow 
+                                                    key={errand.id} 
+                                                    errand={errand} 
+                                                    index={index}
+                                                    onRowPress={() => handleOpenTransaction(errand)}
+                                                    onIconPress={() => handleOpenTransaction(errand)}
+                                                />
                                             ))}
                                         </View>
                                     </ScrollView>
@@ -502,6 +523,17 @@ export default function AdminErrands() {
                         </View>
                     </View>
                 </View>
+            )}
+
+            {showErrandModal && selectedErrand && (
+                <ErrandDetailsModal
+                    errand={selectedErrand}
+                    visible={showErrandModal}
+                    onClose={() => {
+                        setShowErrandModal(false);
+                        setSelectedErrand(null);
+                    }}
+                />
             )}
         </SafeAreaView>
     );
@@ -876,7 +908,9 @@ function CalendarModal({
     );
 }
 
-function ErrandTableRow({ errand, index }: { errand: ErrandWithUsers; index: number }) {
+function ErrandTableRow({ errand, index, onRowPress, onIconPress }: { errand: ErrandWithUsers; index: number; onRowPress: () => void; onIconPress: () => void }) {
+    const [isIconHovered, setIsIconHovered] = useState(false);
+    const [isRowHovered, setIsRowHovered] = useState(false);
     const category = errand.category ? titleCase(errand.category) : "N/A";
     const callerName = errand.caller 
         ? `${titleCase(errand.caller.first_name)} ${titleCase(errand.caller.last_name)}`.trim() 
@@ -892,7 +926,19 @@ function ErrandTableRow({ errand, index }: { errand: ErrandWithUsers; index: num
     const rowStyle = index % 2 === 0 ? styles.tableRow : styles.tableRowAlternate;
 
     return (
-        <View style={rowStyle}>
+        <TouchableOpacity
+            activeOpacity={0.8}
+            style={[
+                rowStyle,
+                isRowHovered && styles.tableRowHovered
+            ]}
+            onPress={onRowPress}
+            {...(Platform.OS === 'web' ? {
+                onMouseEnter: () => setIsRowHovered(true),
+                onMouseLeave: () => setIsRowHovered(false),
+            } as any : {})}
+        >
+            <Text style={[styles.tableCellText, styles.tableCellErrandId]} numberOfLines={1} ellipsizeMode="tail">{errand.id}</Text>
             <Text style={[styles.tableCellText, styles.tableCellCallerName]} numberOfLines={1} ellipsizeMode="tail">{callerName}</Text>
             <Text style={[styles.tableCellText, styles.tableCellCallerEmail]} numberOfLines={1} ellipsizeMode="tail">{callerEmail}</Text>
             <Text style={[styles.tableCellText, styles.tableCellRunnerName]} numberOfLines={1} ellipsizeMode="tail">{runnerName}</Text>
@@ -900,7 +946,185 @@ function ErrandTableRow({ errand, index }: { errand: ErrandWithUsers; index: num
             <Text style={[styles.tableCellText, styles.tableCellCategory]} numberOfLines={1} ellipsizeMode="tail">{category}</Text>
             <Text style={[styles.tableCellText, styles.tableCellCreated]} numberOfLines={1} ellipsizeMode="tail">{createdAt}</Text>
             <Text style={[styles.tableCellText, styles.tableCellPrice]} numberOfLines={1} ellipsizeMode="tail">{amountPrice}</Text>
-        </View>
+            <View style={styles.tableCellAction}>
+                <TouchableOpacity 
+                    style={[
+                        styles.actionIconContainer,
+                        isIconHovered && styles.actionIconContainerHovered
+                    ]} 
+                    activeOpacity={0.7}
+                    onPress={(e) => {
+                        e.stopPropagation?.();
+                        onIconPress();
+                    }}
+                    {...(Platform.OS === 'web' ? {
+                        onMouseEnter: () => setIsIconHovered(true),
+                        onMouseLeave: () => setIsIconHovered(false),
+                    } as any : {})}
+                >
+                    <Ionicons name="information-circle-outline" size={20} color={colors.text} />
+                </TouchableOpacity>
+            </View>
+        </TouchableOpacity>
+    );
+}
+
+/* ===================== ERRAND DETAILS MODAL ===================== */
+function ErrandDetailsModal({
+    errand,
+    visible,
+    onClose,
+}: {
+    errand: ErrandWithUsers;
+    visible: boolean;
+    onClose: () => void;
+}) {
+    const callerName = errand.caller 
+        ? `${titleCase(errand.caller.first_name)} ${titleCase(errand.caller.last_name)}`.trim() 
+        : "N/A";
+    const runnerName = errand.runner 
+        ? `${titleCase(errand.runner.first_name)} ${titleCase(errand.runner.last_name)}`.trim() 
+        : "Not Assigned";
+    const callerEmail = errand.caller?.email || "N/A";
+    const runnerEmail = errand.runner?.email || "N/A";
+    const callerStudentId = errand.caller?.student_id_number || "N/A";
+    const runnerStudentId = errand.runner?.student_id_number || "N/A";
+    const callerProfilePic = errand.caller?.profile_picture_url;
+    const runnerProfilePic = errand.runner?.profile_picture_url;
+    const amountPrice = errand.amount_price ? `₱${errand.amount_price.toFixed(2)}` : "N/A";
+    const createdAt = new Date(errand.created_at).toLocaleString();
+    const completedAt = errand.completed_at ? new Date(errand.completed_at).toLocaleString() : "N/A";
+
+    return (
+        <Modal
+            visible={visible}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={onClose}
+        >
+            <TouchableOpacity
+                style={styles.errandModalOverlay}
+                activeOpacity={1}
+                onPress={onClose}
+            >
+                <View
+                    style={styles.errandModalCard}
+                    onStartShouldSetResponder={() => true}
+                >
+                    {/* Header */}
+                    <View style={styles.errandModalHeader}>
+                        <Text style={styles.errandModalTitle}>Transaction Details</Text>
+                        <TouchableOpacity onPress={onClose} style={styles.errandModalCloseButton}>
+                            <Ionicons name="close" size={24} color={colors.text} />
+                        </TouchableOpacity>
+                    </View>
+
+                    <ScrollView style={styles.errandModalContent} showsVerticalScrollIndicator={true}>
+                        {/* Transaction Details Section */}
+                        <View style={styles.errandModalSection}>
+                            <Text style={styles.errandModalSectionTitle}>Transaction Details</Text>
+                            <View style={styles.errandModalDetailRow}>
+                                <Text style={styles.errandModalLabel}>Errand ID:</Text>
+                                <Text style={styles.errandModalValue}>{errand.id}</Text>
+                            </View>
+                            <View style={styles.errandModalDetailRow}>
+                                <Text style={styles.errandModalLabel}>Created At:</Text>
+                                <Text style={styles.errandModalValue}>{createdAt}</Text>
+                            </View>
+                            <View style={styles.errandModalDetailRow}>
+                                <Text style={styles.errandModalLabel}>Completed At:</Text>
+                                <Text style={styles.errandModalValue}>{completedAt}</Text>
+                            </View>
+                            <View style={styles.errandModalDetailRow}>
+                                <Text style={styles.errandModalLabel}>Total Price:</Text>
+                                <Text style={styles.errandModalValue}>{amountPrice}</Text>
+                            </View>
+                        </View>
+
+                        {/* Divider */}
+                        <View style={styles.errandModalDivider} />
+
+                        {/* Caller Information Section */}
+                        <View style={styles.errandModalSection}>
+                            <Text style={styles.errandModalSectionTitle}>Caller Information</Text>
+                            <View style={styles.errandModalProfileRow}>
+                                {callerProfilePic ? (
+                                    <Image 
+                                        source={{ uri: callerProfilePic }} 
+                                        style={styles.errandModalProfileImage as ImageStyle}
+                                    />
+                                ) : (
+                                    <View style={styles.errandModalProfileImagePlaceholder}>
+                                        <Ionicons name="person" size={24} color={colors.border} />
+                                    </View>
+                                )}
+                                <View style={styles.errandModalProfileInfo}>
+                                    <Text style={styles.errandModalProfileName}>{callerName}</Text>
+                                    <View style={styles.errandModalProfileDetailRow}>
+                                        <Text style={styles.errandModalProfileLabel}>Email:</Text>
+                                        <Text style={styles.errandModalProfileValue}>{callerEmail}</Text>
+                                    </View>
+                                    <View style={styles.errandModalProfileDetailRow}>
+                                        <Text style={styles.errandModalProfileLabel}>Student ID:</Text>
+                                        <Text style={styles.errandModalProfileValue}>{callerStudentId}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        </View>
+
+                        {/* Divider */}
+                        <View style={styles.errandModalDivider} />
+
+                        {/* Runner Information Section */}
+                        <View style={styles.errandModalSection}>
+                            <Text style={styles.errandModalSectionTitle}>Runner Information</Text>
+                            <View style={styles.errandModalProfileRow}>
+                                {runnerProfilePic ? (
+                                    <Image 
+                                        source={{ uri: runnerProfilePic }} 
+                                        style={styles.errandModalProfileImage as ImageStyle}
+                                    />
+                                ) : (
+                                    <View style={styles.errandModalProfileImagePlaceholder}>
+                                        <Ionicons name="person" size={24} color={colors.border} />
+                                    </View>
+                                )}
+                                <View style={styles.errandModalProfileInfo}>
+                                    <Text style={styles.errandModalProfileName}>{runnerName}</Text>
+                                    <View style={styles.errandModalProfileDetailRow}>
+                                        <Text style={styles.errandModalProfileLabel}>Email:</Text>
+                                        <Text style={styles.errandModalProfileValue}>{runnerEmail}</Text>
+                                    </View>
+                                    <View style={styles.errandModalProfileDetailRow}>
+                                        <Text style={styles.errandModalProfileLabel}>Student ID:</Text>
+                                        <Text style={styles.errandModalProfileValue}>{runnerStudentId}</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        </View>
+
+                        {/* Divider */}
+                        <View style={styles.errandModalDivider} />
+
+                        {/* Delivery Proof Section */}
+                        <View style={styles.errandModalSection}>
+                            <Text style={styles.errandModalSectionTitle}>Delivery Proof</Text>
+                            {errand.delivery_proof_photo ? (
+                                <Image 
+                                    source={{ uri: errand.delivery_proof_photo }} 
+                                    style={styles.deliveryProofImage as ImageStyle}
+                                    resizeMode="contain"
+                                />
+                            ) : (
+                                <Text style={styles.noProofText}>
+                                    No delivery proof uploaded.
+                                </Text>
+                            )}
+                        </View>
+                    </ScrollView>
+                </View>
+            </TouchableOpacity>
+        </Modal>
     );
 }
 
@@ -1293,7 +1517,7 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         backgroundColor: "#fff",
         overflow: "hidden",
-        minWidth: 1450,
+        minWidth: 1630,
     },
     tableHeader: {
         flexDirection: "row",
@@ -1328,9 +1552,24 @@ const styles = StyleSheet.create({
         minHeight: 56,
         backgroundColor: "#F5F5F5",
     },
+    tableRowHovered: {
+        ...(Platform.OS === 'web' ? {
+            backgroundColor: "#f9f5f5",
+            cursor: 'pointer',
+            transition: 'background-color 0.2s ease',
+        } as any : {}),
+    },
     tableCellText: {
         color: colors.text,
         fontSize: 13,
+    },
+    tableCellErrandId: {
+        width: 120,
+        paddingRight: 24,
+        fontWeight: "600",
+        ...(Platform.OS === 'web' ? {
+            whiteSpace: 'nowrap',
+        } as any : {}),
     },
     tableCellCallerName: {
         width: 200,
@@ -1358,7 +1597,36 @@ const styles = StyleSheet.create({
     },
     tableCellPrice: {
         width: 110,
+        paddingRight: 24,
+    },
+    tableCellAction: {
+        width: 60,
         paddingRight: 0,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    actionIconContainer: {
+        padding: 6,
+        borderRadius: 4,
+        backgroundColor: "#F0F0F0",
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+        } : {
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.1,
+            shadowRadius: 2,
+            elevation: 2,
+        }),
+    },
+    actionIconContainerHovered: {
+        backgroundColor: "#E5E5E5",
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 2px 6px rgba(0, 0, 0, 0.15)',
+            transform: 'translateY(-1px)',
+        } : {}),
     },
     emptyState: {
         alignItems: "center",
@@ -1693,11 +1961,171 @@ const styles = StyleSheet.create({
          backgroundColor: 'transparent',
      },
      dropdownModalContainer: {
-         position: 'absolute',
+         position: 'absolute' as const,
          zIndex: 100000,
          ...(Platform.OS === 'web' ? {
-             position: 'fixed',
              zIndex: 100000,
          } : {}),
      },
+    errandModalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.5)",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+    },
+    errandModalCard: {
+        width: "90%",
+        maxWidth: 600,
+        maxHeight: "90%",
+        backgroundColor: "#fff",
+        borderRadius: 12,
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
+            maxHeight: '90vh',
+        } as any : {
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.15,
+            shadowRadius: 20,
+            elevation: 10,
+        }),
+    },
+    errandModalHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: 24,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+    },
+    errandModalTitle: {
+        color: colors.text,
+        fontSize: 20,
+        fontWeight: "900",
+    },
+    errandModalCloseButton: {
+        padding: 4,
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+        } : {}),
+    },
+    errandModalContent: {
+        flex: 1,
+    },
+    errandModalSection: {
+        padding: 24,
+    },
+    errandModalSectionTitle: {
+        color: colors.text,
+        fontSize: 16,
+        fontWeight: "700",
+        marginBottom: 16,
+    },
+    errandModalDetailRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 12,
+    },
+    errandModalLabel: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
+        opacity: 0.7,
+    },
+    errandModalValue: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "500",
+        flex: 1,
+        textAlign: "right",
+    },
+    errandModalDivider: {
+        height: 1,
+        backgroundColor: colors.border,
+        marginHorizontal: 24,
+    },
+    errandModalProfileRow: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 16,
+    },
+    errandModalProfileImage: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        overflow: "hidden" as const,
+    },
+    errandModalProfileImagePlaceholder: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: colors.faint,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    errandModalProfileInfo: {
+        flex: 1,
+    },
+    errandModalProfileName: {
+        color: colors.text,
+        fontSize: 16,
+        fontWeight: "700",
+        marginBottom: 8,
+    },
+    errandModalProfileDetailRow: {
+        flexDirection: "row",
+        marginBottom: 6,
+        gap: 8,
+    },
+    errandModalProfileLabel: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "600",
+        opacity: 0.7,
+    },
+    errandModalProfileValue: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: "500",
+    },
+    errandModalImageContainer: {
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.faint,
+        borderRadius: 8,
+        padding: 16,
+        minHeight: 200,
+    },
+    errandModalProofImage: {
+        width: "100%",
+        maxWidth: 500,
+        maxHeight: 400,
+        borderRadius: 8,
+        overflow: "hidden" as const,
+    },
+    deliveryProofImage: {
+        width: "100%",
+        height: 300,
+        borderRadius: 12,
+    },
+    noProofText: {
+        textAlign: "center",
+        color: "#888",
+        paddingVertical: 20,
+    },
+    errandModalNoImageContainer: {
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.faint,
+        borderRadius: 8,
+        padding: 40,
+        minHeight: 200,
+    },
+    errandModalNoImageText: {
+        color: colors.text,
+        fontSize: 14,
+        opacity: 0.6,
+        marginTop: 12,
+    },
 });

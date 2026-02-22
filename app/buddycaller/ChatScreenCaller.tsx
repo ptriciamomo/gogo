@@ -1189,7 +1189,10 @@ const ChatScreenCaller: React.FC<ChatScreenCallerProps> = ({ onBack, onNavigateT
               index,
             })}
             style={styles.messagesScrollView as ViewStyle}
-            contentContainerStyle={styles.messagesContent as ViewStyle}
+            contentContainerStyle={[
+              styles.messagesContent as ViewStyle,
+              (isDateFiltered ? filteredMessages : messages).length === 0 && { flexGrow: 1 }
+            ]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           />
@@ -1350,6 +1353,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'white',
     width: '100%',
+    ...(Platform.OS === 'web' && {
+      display: 'flex' as any,
+      flexDirection: 'column' as any,
+      height: '100%' as any,
+    }),
   },
 
   // Header section styling

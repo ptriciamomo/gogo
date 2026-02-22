@@ -161,7 +161,7 @@ export default function BuddyCallerMessagesHubWeb() {
         <MessagesList />
       </div>
       <div style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0, background: '#fff', paddingLeft: 0, boxSizing: 'border-box', height: '100vh', overflow: 'hidden' }}>
-        <div style={{ flex: 1, height: '100%', overflowY: 'auto', scrollbarGutter: 'stable both-edges' as any }}>
+        <div style={{ flex: 1, height: '100%', overflow: 'hidden' }}>
           <ChatScreenCaller />
         </div>
       </div>

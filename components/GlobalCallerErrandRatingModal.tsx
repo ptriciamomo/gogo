@@ -12,10 +12,13 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter, usePathname } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { callerErrandRatingService, CallerErrandRatingNotification } from '../services/CallerErrandRatingService';
 
 const GlobalCallerErrandRatingModal: React.FC = () => {
+  const router = useRouter();
+  const pathname = usePathname();
   const [visible, setVisible] = useState(false);
   const [notification, setNotification] = useState<CallerErrandRatingNotification | null>(null);
   const [rating, setRating] = useState(0);
@@ -106,6 +109,13 @@ const GlobalCallerErrandRatingModal: React.FC = () => {
       setVisible(false);
       setNotification(null);
       callerErrandRatingService.clearNotification();
+      
+      // Only redirect to home if not already there (mobile only)
+      if (Platform.OS !== 'web') {
+        if (pathname !== '/buddycaller/home') {
+          router.replace("/buddycaller/home");
+        }
+      }
     } catch (error) {
       console.error('Error submitting rating:', error);
       Alert.alert('Error', 'Failed to submit rating. Please try again.');
@@ -122,6 +132,13 @@ const GlobalCallerErrandRatingModal: React.FC = () => {
     setVisible(false);
     setNotification(null);
     callerErrandRatingService.clearNotification();
+    
+    // Only redirect to home if not already there (mobile only)
+    if (Platform.OS !== 'web') {
+      if (pathname !== '/buddycaller/home') {
+        router.replace("/buddycaller/home");
+      }
+    }
   };
 
   const renderStars = () => {

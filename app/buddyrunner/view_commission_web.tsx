@@ -989,7 +989,7 @@ export default function ViewCommissionWeb() {
             )}
             <View style={styles.sheet}>
                 <View style={styles.headerBar}>
-                    <Text style={styles.headerTitle}>Commission Request</Text>
+                        <Text style={styles.headerTitle}>Commission Request</Text>
                     <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
                         <Ionicons name="close" size={20} color={C.maroon} />
                     </TouchableOpacity>

@@ -1236,11 +1236,11 @@ export default function TaskProgressMobile() {
 				visible={ratingModalVisible}
 				onClose={() => {
 					setRatingModalVisible(false);
-					router.replace("/buddycaller/home");
+					// Navigation handled inside modal component (mobile only)
 				}}
 				onSubmit={() => {
 					setRatingModalVisible(false);
-					router.replace("/buddycaller/home");
+					// Navigation handled inside modal component (mobile only)
 				}}
 				taskTitle={commission?.title || ""}
 				runnerName={runner ? `${runner.first_name} ${runner.last_name}`.trim() : "Runner"}

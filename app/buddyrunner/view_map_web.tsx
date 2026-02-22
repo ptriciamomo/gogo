@@ -1256,11 +1256,23 @@ export default function ViewMapWeb() {
 				visible={ratingModalVisible}
 				onClose={() => {
 					setRatingModalVisible(false);
-					router.push("/buddyrunner/accepted_tasks_web?type=errands");
+					// Only redirect to home if not already there (web only)
+					if (Platform.OS === 'web' && typeof window !== 'undefined') {
+						const currentPath = window.location.pathname;
+						if (currentPath !== '/buddyrunner/home') {
+							router.replace("/buddyrunner/home");
+						}
+					}
 				}}
 				onSubmit={() => {
 					setRatingModalVisible(false);
-					router.push("/buddyrunner/accepted_tasks_web?type=errands");
+					// Only redirect to home if not already there (web only)
+					if (Platform.OS === 'web' && typeof window !== 'undefined') {
+						const currentPath = window.location.pathname;
+						if (currentPath !== '/buddyrunner/home') {
+							router.replace("/buddyrunner/home");
+						}
+					}
 				}}
 				taskTitle={errand?.title || ""}
 				callerName={callerName}

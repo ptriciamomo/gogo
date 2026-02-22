@@ -3576,7 +3576,7 @@ function HomeMobile() {
             <View style={{ paddingHorizontal: 16, marginBottom: 6 }}>
                 <Text style={{ color: colors.text, fontWeight: "800", fontSize: 16 }}>
                     {loading ? "Loading…" : `Hi, ${firstName || "User"} 👋`}
-                </Text>
+            </Text>
                 <Text style={{ color: colors.text, fontSize: 16, fontWeight: "400", marginTop: 4, marginBottom: 8 }}>
                     What do you need help with?
                 </Text>
@@ -3774,11 +3774,11 @@ function RunnerCardMobile({ data }: { data: Runner }) {
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <View style={m.onlineIndicator} />
                     <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>Online</Text>
-                </View>
+            </View>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <Ionicons name="walk-outline" size={14} color={colors.maroon} />
                     <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>BuddyRunner</Text>
-                </View>
+            </View>
             </View>
 
             {/* View Profile - Right */}
@@ -3862,11 +3862,11 @@ function CommissionerCardMobile({ c }: { c: Commissioner }) {
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <View style={m.onlineIndicator} />
                     <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>Online</Text>
-                </View>
+            </View>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <Ionicons name="walk-outline" size={14} color={colors.maroon} />
                     <Text style={{ color: colors.text, fontSize: 13, opacity: 0.8 }}>BuddyRunner</Text>
-                </View>
+            </View>
             </View>
 
             {/* View Profile - Right */}

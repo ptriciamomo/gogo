@@ -1066,14 +1066,12 @@ export default function TaskProgressWeb() {
 										}
 									]}>
 										{runner.profile_picture_url ? (
-											<Image source={{ uri: runner.profile_picture_url }} style={[
-												web.profileImage,
-												{
-													width: isSmallContent ? 50 : isMediumContent ? 55 : 60,
-													height: isSmallContent ? 50 : isMediumContent ? 55 : 60,
-													borderRadius: isSmallContent ? 25 : isMediumContent ? 27.5 : 30,
-												}
-											]} />
+											<Image source={{ uri: runner.profile_picture_url }} style={{
+												width: isSmallContent ? 50 : isMediumContent ? 55 : 60,
+												height: isSmallContent ? 50 : isMediumContent ? 55 : 60,
+												borderRadius: isSmallContent ? 25 : isMediumContent ? 27.5 : 30,
+												overflow: "hidden",
+											}} />
 										) : (
 											<Ionicons name="person" size={isSmallContent ? 20 : isMediumContent ? 22 : 24} color={colors.maroon} />
 										)}
@@ -1920,11 +1918,23 @@ export default function TaskProgressWeb() {
 				visible={ratingModalVisible}
 				onClose={() => {
 					setRatingModalVisible(false);
-					router.replace("/buddycaller/home");
+					// Only redirect to home if not already there (web only)
+					if (Platform.OS === 'web' && typeof window !== 'undefined') {
+						const currentPath = window.location.pathname;
+						if (currentPath !== '/buddycaller/home') {
+							router.replace("/buddycaller/home");
+						}
+					}
 				}}
 				onSubmit={() => {
 					setRatingModalVisible(false);
-					router.replace("/buddycaller/home");
+					// Only redirect to home if not already there (web only)
+					if (Platform.OS === 'web' && typeof window !== 'undefined') {
+						const currentPath = window.location.pathname;
+						if (currentPath !== '/buddycaller/home') {
+							router.replace("/buddycaller/home");
+						}
+					}
 				}}
 				taskTitle={commission?.title || ""}
 				runnerName={runner ? `${runner.first_name} ${runner.last_name}`.trim() : "Runner"}
@@ -2667,7 +2677,7 @@ const web = StyleSheet.create({
 		zIndex: 9999,
 	},
 	modalOverlayWeb: {
-		position: 'fixed',
+		position: 'absolute',
 		top: 0,
 		left: 0,
 		right: 0,

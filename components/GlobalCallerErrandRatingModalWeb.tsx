@@ -7,12 +7,15 @@ import {
   StyleSheet,
   TouchableWithoutFeedback,
   Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { supabase } from '../lib/supabase';
 import { callerErrandRatingService, CallerErrandRatingNotification } from '../services/CallerErrandRatingService';
 
 const GlobalCallerErrandRatingModalWeb: React.FC = () => {
+  const router = useRouter();
   const [visible, setVisible] = useState(false);
   const [notification, setNotification] = useState<CallerErrandRatingNotification | null>(null);
   const [rating, setRating] = useState(0);
@@ -103,6 +106,14 @@ const GlobalCallerErrandRatingModalWeb: React.FC = () => {
       setVisible(false);
       setNotification(null);
       callerErrandRatingService.clearNotification();
+      
+      // Only redirect to home if not already there (web only)
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const currentPath = window.location.pathname;
+        if (currentPath !== '/buddycaller/home') {
+          router.replace("/buddycaller/home");
+        }
+      }
     } catch (error) {
       console.error('Error submitting rating:', error);
       Alert.alert('Error', 'Failed to submit rating. Please try again.');
@@ -119,6 +130,14 @@ const GlobalCallerErrandRatingModalWeb: React.FC = () => {
     setVisible(false);
     setNotification(null);
     callerErrandRatingService.clearNotification();
+    
+    // Only redirect to home if not already there (web only)
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const currentPath = window.location.pathname;
+      if (currentPath !== '/buddycaller/home') {
+        router.replace("/buddycaller/home");
+      }
+    }
   };
 
   const renderStars = () => {
@@ -232,7 +251,7 @@ const GlobalCallerErrandRatingModalWeb: React.FC = () => {
 
 const styles = StyleSheet.create({
   overlay: {
-    position: 'fixed',
+    position: 'absolute',
     top: 0,
     left: 0,
     right: 0,

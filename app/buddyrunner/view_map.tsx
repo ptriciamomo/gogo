@@ -890,11 +890,11 @@ export default function ViewMap() {
 				visible={ratingModalVisible}
 				onClose={() => {
 					setRatingModalVisible(false);
-					router.push("/buddyrunner/accepted_tasks?type=errands");
+					// Navigation handled inside modal component (mobile only)
 				}}
 				onSubmit={() => {
 					setRatingModalVisible(false);
-					router.push("/buddyrunner/accepted_tasks?type=errands");
+					// Navigation handled inside modal component (mobile only)
 				}}
 				taskTitle={errand?.title || ""}
 				callerName={callerName}

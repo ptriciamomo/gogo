@@ -1712,15 +1712,15 @@ function NotificationWebInstant() {
                                         <TouchableOpacity
                                 key={notification.id}
                                 style={web.notificationCard}
-                                        onPress={() => {
-                                            if (notification.commission_id) {
+                                onPress={() => {
+                                    if (notification.commission_id) {
                                                 router.push(`/buddyrunner/view_commission_web?id=${notification.commission_id}`);
-                                            } else if (notification.errand_id) {
-                                                router.push(`/buddyrunner/view_errand_web?id=${notification.errand_id}&withSidebar=1`);
-                                            } else {
-                                                router.push('/buddyrunner/messages');
-                                            }
-                                        }}
+                                    } else if (notification.errand_id) {
+                                        router.push(`/buddyrunner/view_errand_web?id=${notification.errand_id}&withSidebar=1`);
+                                    } else {
+                                        router.push('/buddyrunner/messages');
+                                    }
+                                }}
                             >
                                 <View style={web.notificationContent}>
                                     {!(notification.id && typeof notification.id === 'string' && notification.id.startsWith('warning_')) && (

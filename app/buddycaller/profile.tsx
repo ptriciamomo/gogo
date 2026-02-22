@@ -424,19 +424,21 @@ export default function BuddycallerProfile() {
     const displayFirstName = isViewingOtherUser ? (displayProfile?.first_name || '') : firstName;
     const displayLastName = isViewingOtherUser ? (displayProfile?.last_name || '') : lastName;
     
-    // Helper to construct full name with middle name filtering
+    // Helper to construct full name without middle name (mobile only)
     const getDisplayFullName = () => {
         if (!isViewingOtherUser) {
-            return fullName || 'User';
+            // For current user, use first name and last name only
+            const f = titleCase(firstName || '');
+            const l = titleCase(lastName || '');
+            return [f, l].filter(Boolean).join(" ").trim() || 'User';
         }
         if (!displayProfile) {
             return 'User';
         }
+        // For other user, use first name and last name only (no middle name)
         const f = titleCase(displayProfile.first_name || '');
-        const m = titleCase(displayProfile.middle_name || '');
         const l = titleCase(displayProfile.last_name || '');
-        const shouldIgnoreM = shouldIgnoreMiddleName(displayProfile.middle_name);
-        return [f, !shouldIgnoreM ? m : null, l].filter(Boolean).join(" ").trim() || 'User';
+        return [f, l].filter(Boolean).join(" ").trim() || 'User';
     };
     
     const displayFullName = getDisplayFullName();
@@ -489,6 +491,8 @@ export default function BuddycallerProfile() {
     // Reviews data
     const [reviews, setReviews] = useState<Review[]>([]);
     const [reviewsLoading, setReviewsLoading] = useState(true);
+    const [showAllReviews, setShowAllReviews] = useState(false);
+    const REVIEW_LIMIT = 3;
 
     // Function to fetch reviews from database
     const fetchReviews = async (userId: string) => {
@@ -932,9 +936,28 @@ export default function BuddycallerProfile() {
                     {reviewsLoading ? (
                         <Text style={styles.loadingText}>Loading reviews...</Text>
                     ) : reviews.length > 0 ? (
-                        reviews.map((review) => (
-                            <ReviewCard key={review.id} review={review} />
-                        ))
+                        <>
+                            {(showAllReviews ? reviews : reviews.slice(0, REVIEW_LIMIT)).map((review) => (
+                                <ReviewCard key={review.id} review={review} />
+                            ))}
+                            {reviews.length > REVIEW_LIMIT && (
+                                <TouchableOpacity 
+                                    style={styles.seeMoreButton} 
+                                    onPress={() => setShowAllReviews(!showAllReviews)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={styles.seeMoreText}>
+                                        {showAllReviews ? 'Show fewer reviews' : 'See more reviews'}
+                                    </Text>
+                                    <Ionicons 
+                                        name={showAllReviews ? "chevron-up" : "chevron-down"} 
+                                        size={16} 
+                                        color={colors.text} 
+                                        style={{ opacity: 0.6 }} 
+                                    />
+                                </TouchableOpacity>
+                            )}
+                        </>
                     ) : (
                         <Text style={styles.noReviewsText}>No reviews yet</Text>
                     )}
@@ -1403,5 +1426,19 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         paddingVertical: 20,
         fontStyle: 'italic',
+    },
+    seeMoreButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: rp(8),
+        paddingVertical: rp(12),
+        gap: 6,
+    },
+    seeMoreText: {
+        color: colors.text,
+        fontSize: 14,
+        fontWeight: '500',
+        opacity: 0.7,
     },
 });

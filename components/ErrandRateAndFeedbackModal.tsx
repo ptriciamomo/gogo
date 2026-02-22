@@ -9,8 +9,10 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
   Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter, usePathname } from 'expo-router';
 import { supabase } from '../lib/supabase';
 
 interface ErrandRateAndFeedbackModalProps {
@@ -32,6 +34,8 @@ const ErrandRateAndFeedbackModal: React.FC<ErrandRateAndFeedbackModalProps> = ({
   errandId,
   buddycallerId,
 }) => {
+  const router = useRouter();
+  const pathname = usePathname();
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
   const [hoveredRating, setHoveredRating] = useState(0);
@@ -92,6 +96,13 @@ const ErrandRateAndFeedbackModal: React.FC<ErrandRateAndFeedbackModalProps> = ({
       
       Alert.alert('Success', 'Thank you for your feedback!');
       onSubmit();
+      
+      // Only redirect to home if not already there (mobile only)
+      if (Platform.OS !== 'web') {
+        if (pathname !== '/buddyrunner/home') {
+          router.replace("/buddyrunner/home");
+        }
+      }
     } catch (error) {
       console.error('Error submitting rating:', error);
       Alert.alert('Error', 'Failed to submit rating. Please try again.');
@@ -106,6 +117,13 @@ const ErrandRateAndFeedbackModal: React.FC<ErrandRateAndFeedbackModalProps> = ({
     setFeedback('');
     setHoveredRating(0);
     onClose();
+    
+    // Only redirect to home if not already there (mobile only)
+    if (Platform.OS !== 'web') {
+      if (pathname !== '/buddyrunner/home') {
+        router.replace("/buddyrunner/home");
+      }
+    }
   };
 
   const renderStars = () => {

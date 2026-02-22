@@ -107,7 +107,7 @@ export default function BuddyCallerMessagesHubWeb() {
     if (hasConversation) {
       // Show only chat, no top mobile header
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100%', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', width: '100%', boxSizing: 'border-box' }}>
           {/* Chat view (no top header) */}
           <div style={{ 
             display: 'flex', 
@@ -127,7 +127,7 @@ export default function BuddyCallerMessagesHubWeb() {
     } else {
       // Show only messages list
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100%', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', width: '100%', boxSizing: 'border-box' }}>
           <div style={{ 
             flex: 1,
             overflowY: 'auto', 

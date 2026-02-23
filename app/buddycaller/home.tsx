@@ -1088,10 +1088,28 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
     try {
         logCaller(`Timeout check: Starting check for commission ${commissionId}`);
         
-        // Get the commission with all relevant fields
+        // Persistence check: Prevent modal from showing again after page refresh
+        const storageKey = `no_runner_modal_shown_commission_${commissionId}`;
+        if (Platform.OS === 'web') {
+            // Web version: Use localStorage
+            const alreadyShown = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
+            if (alreadyShown) {
+                logCaller(`Timeout check: Commission ${commissionId} modal already shown (persistence check) - skipping`);
+                return false;
+            }
+        } else {
+            // Mobile version: Use AsyncStorage
+            const alreadyShown = await AsyncStorage.getItem(storageKey);
+            if (alreadyShown) {
+                logCaller(`Timeout check: Commission ${commissionId} modal already shown (persistence check) - skipping`);
+                return false;
+            }
+        }
+        
+        // Get the commission with all relevant fields (including ranked_runner_ids for queue comparison)
         const { data: commission, error: commissionError } = await supabase
             .from('commission')
-            .select('id, title, status, buddycaller_id, commission_type, timeout_runner_ids, declined_runner_id, notified_at, notified_runner_id, created_at')
+            .select('id, title, status, buddycaller_id, commission_type, timeout_runner_ids, ranked_runner_ids, declined_runner_id, notified_at, notified_runner_id, created_at, cancelled_at')
             .eq('id', commissionId)
             .single();
 
@@ -1100,10 +1118,42 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             return false;
         }
 
-        // Only check pending commissions
-        if (commission.status !== 'pending') {
-            logCaller(`Timeout check: Commission ${commissionId} is not pending (status: ${commission.status}), skipping`);
+        // DEBUG: Log commission state
+        logCaller(`DEBUG — Commission ID: ${commissionId}`);
+        logCaller(`DEBUG — status: ${commission.status}`);
+        logCaller(`DEBUG — ranked_runner_ids: ${JSON.stringify(commission.ranked_runner_ids)}`);
+        logCaller(`DEBUG — timeout_runner_ids: ${JSON.stringify(commission.timeout_runner_ids)}`);
+        logCaller(`DEBUG — created_at: ${commission.created_at}`);
+        logCaller(`DEBUG — cancelled_at: ${commission.cancelled_at || 'null'}`);
+
+        const createdAt = new Date(commission.created_at);
+        const cancelledAt = commission.cancelled_at ? new Date(commission.cancelled_at) : null;
+        const now = new Date();
+
+        const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
+        const secondsSinceCancel = cancelledAt
+            ? (now.getTime() - cancelledAt.getTime()) / 1000
+            : null;
+
+        logCaller(`DEBUG — secondsSinceCreation: ${secondsSinceCreation}`);
+        logCaller(`DEBUG — secondsSinceCancel: ${secondsSinceCancel !== null ? secondsSinceCancel : 'null'}`);
+
+        // Check pending commissions OR cancelled commissions that were cancelled due to timeout
+        if (commission.status !== 'pending' && commission.status !== 'cancelled') {
+            logCaller(`Timeout check: Commission ${commissionId} is not pending or cancelled (status: ${commission.status}), skipping`);
             return false;
+        }
+        
+        // For cancelled commissions, only proceed if they have timeout_runner_ids (cancelled due to timeout)
+        if (commission.status === 'cancelled') {
+            const timeoutRunnerIds = Array.isArray(commission.timeout_runner_ids) 
+                ? commission.timeout_runner_ids 
+                : (commission.timeout_runner_ids ? [commission.timeout_runner_ids] : []);
+            
+            if (timeoutRunnerIds.length === 0) {
+                logCaller(`Timeout check: Commission ${commissionId} is cancelled but has no timeout_runner_ids (Situation 1), skipping`);
+                return false;
+            }
         }
 
         // If there's a runner currently notified, wait for them to respond or timeout
@@ -1112,106 +1162,24 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             return false;
         }
 
-        // Get caller location for distance calculation
-        const { data: callerData, error: callerError } = await supabase
-            .from('users')
-            .select('latitude, longitude')
-            .eq('id', commission.buddycaller_id)
-            .single();
-
-        if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-            logCaller(`Timeout check: Caller has no location, cannot check`);
-            return false;
-        }
-
-        const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
-        const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
-
-        if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-            logCaller(`Timeout check: Invalid caller location for commission ${commissionId}`);
-            return false;
-        }
-
-        // Parse commission types (if any)
-        const commissionTypes = commission.commission_type 
-            ? commission.commission_type.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
-            : [];
-
-        // Get ALL available runners (online and available)
-        const { data: allRunners, error: runnersError } = await supabase
-            .from('users')
-            .select('id, latitude, longitude, is_available')
-            .eq('role', 'BuddyRunner')
-            .eq('is_available', true);
-
-        if (runnersError) {
-            logCallerError('Timeout check: Error fetching runners', runnersError);
-            return false;
-        }
-
-        if (!allRunners || allRunners.length === 0) {
-            logCaller(`Timeout check: No runners available at all - all have timed out`);
-            // Ensure at least 60 seconds have passed since commission creation
-            const createdAt = new Date(commission.created_at);
-            const now = new Date();
-            const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
-            return secondsSinceCreation >= 60;
-        }
-
-        logCaller(`Timeout check: Found ${allRunners.length} total available runners`);
-
-        // Filter runners within 500m of caller
-        const eligibleRunners = allRunners.filter(runner => {
-            if (!runner.latitude || !runner.longitude) return false;
-            const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-            const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-            if (!lat || !lon || isNaN(lat) || isNaN(lon)) return false;
-
-            const distanceKm = LocationService.calculateDistance(lat, lon, callerLat, callerLon);
-            const distanceMeters = distanceKm * 1000;
-            return distanceMeters <= 500;
-        });
-
-        logCaller(`Timeout check: Found ${eligibleRunners.length} eligible runners within 500m`);
-
-        if (eligibleRunners.length === 0) {
-            logCaller(`Timeout check: No eligible runners within 500m - all have timed out`);
-            // Ensure at least 60 seconds have passed since commission creation
-            const createdAt = new Date(commission.created_at);
-            const now = new Date();
-            const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
-            if (secondsSinceCreation >= 60) {
-                logCaller(`Timeout check: Commission ${commissionId} has been pending for ${secondsSinceCreation.toFixed(1)}s, no eligible runners - TRIGGERING MODAL`);
-                return true;
-            }
-            return false;
-        }
-
-        // Get timeout_runner_ids array (ensure it's an array)
+        // Use ranked_runner_ids as source of truth (backend queue logic)
+        // Normalize arrays to handle different formats
+        const rankedRunnerIds = Array.isArray(commission.ranked_runner_ids) 
+            ? commission.ranked_runner_ids 
+            : (commission.ranked_runner_ids ? [commission.ranked_runner_ids] : []);
+        
         const timeoutRunnerIds = Array.isArray(commission.timeout_runner_ids) 
             ? commission.timeout_runner_ids 
             : (commission.timeout_runner_ids ? [commission.timeout_runner_ids] : []);
 
-        logCaller(`Timeout check: Commission ${commissionId} details`, {
-            totalEligibleRunners: eligibleRunners.length,
-            timeoutRunnerIdsCount: timeoutRunnerIds.length,
-            declinedRunnerId: commission.declined_runner_id ? 'present' : 'none',
-            eligibleRunnerIds: eligibleRunners.map(r => r.id.substring(0, 8))
+        logCaller(`Timeout check: Commission ${commissionId} queue details`, {
+            rankedRunnerIdsCount: rankedRunnerIds.length,
+            timeoutRunnerIdsCount: timeoutRunnerIds.length
         });
 
-        // Check if ALL eligible runners are either:
-        // 1. In timeout_runner_ids (they timed out/ignored)
-        // 2. Equal to declined_runner_id (caller declined them)
-        const timedOutOrDeclinedRunners = eligibleRunners.filter(runner => {
-            const isTimedOut = timeoutRunnerIds.includes(runner.id);
-            const isDeclined = commission.declined_runner_id === runner.id;
-            return isTimedOut || isDeclined;
-        });
-
-        logCaller(`Timeout check: Runners that timed out or were declined: ${timedOutOrDeclinedRunners.length} out of ${eligibleRunners.length}`);
-
-        // Check if all eligible runners have timed out or been declined
-        const allTimedOut = timedOutOrDeclinedRunners.length === eligibleRunners.length && eligibleRunners.length > 0;
+        // Check if all runners in the queue have timed out
+        // Backend logic: queue exhausted when timeout_runner_ids.length === ranked_runner_ids.length
+        const allTimedOut = rankedRunnerIds.length > 0 && timeoutRunnerIds.length === rankedRunnerIds.length;
 
         if (allTimedOut) {
             // Ensure at least 60 seconds have passed since commission creation
@@ -1220,15 +1188,59 @@ async function checkIfAllRunnersTimedOut(commissionId: number): Promise<boolean>
             const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
             
             if (secondsSinceCreation >= 60) {
-                logCaller(`Timeout check: ✅ ALL ${eligibleRunners.length} eligible runners have timed out/declined for commission ${commissionId} (${secondsSinceCreation.toFixed(1)}s since creation) - TRIGGERING MODAL`);
-                return true;
+                // Time window guard: Only trigger modal if cancelled commission was cancelled within last 5 minutes (300 seconds)
+                // This prevents old cancelled commissions from re-triggering the modal on page refresh
+                if (commission.status === 'cancelled') {
+                    if (!commission.cancelled_at) {
+                        logCaller(`Timeout check: Commission ${commissionId} is cancelled but cancelled_at is NULL - skipping modal`);
+                        return false;
+                    }
+                    
+                    const cancelledAt = new Date(commission.cancelled_at);
+                    const secondsSinceCancel = (Date.now() - cancelledAt.getTime()) / 1000;
+                    
+                    // Prevent old cancelled commissions from re-triggering modal
+                    if (secondsSinceCancel > 300) {
+                        logCaller(`Timeout check: Commission ${commissionId} was cancelled ${secondsSinceCancel.toFixed(1)}s ago (more than 5 minutes) - skipping modal to prevent re-triggering`);
+                        return false;
+                    }
+                    
+                    logCaller(`Timeout check: ✅ ALL ${rankedRunnerIds.length} runners in queue have timed out for commission ${commissionId} (${secondsSinceCreation.toFixed(1)}s since creation, ${secondsSinceCancel.toFixed(1)}s since cancellation) - TRIGGERING MODAL`);
+                    
+                    // Set persistence flag to prevent modal from showing again after page refresh
+                    const storageKey = `no_runner_modal_shown_commission_${commissionId}`;
+                    if (Platform.OS === 'web') {
+                        if (typeof window !== 'undefined') {
+                            localStorage.setItem(storageKey, 'true');
+                        }
+                    } else {
+                        await AsyncStorage.setItem(storageKey, 'true');
+                    }
+                    
+                    return true;
+                } else {
+                    // For pending commissions, no time guard needed (they're still active)
+                    logCaller(`Timeout check: ✅ ALL ${rankedRunnerIds.length} runners in queue have timed out for commission ${commissionId} (${secondsSinceCreation.toFixed(1)}s since creation) - TRIGGERING MODAL`);
+                    
+                    // Set persistence flag to prevent modal from showing again after page refresh
+                    const storageKey = `no_runner_modal_shown_commission_${commissionId}`;
+                    if (Platform.OS === 'web') {
+                        if (typeof window !== 'undefined') {
+                            localStorage.setItem(storageKey, 'true');
+                        }
+                    } else {
+                        await AsyncStorage.setItem(storageKey, 'true');
+                    }
+                    
+                    return true;
+                }
             } else {
                 logCaller(`Timeout check: All runners timed out but only ${secondsSinceCreation.toFixed(1)}s since creation, waiting...`);
                 return false;
             }
         } else {
-            const remainingRunners = eligibleRunners.length - timedOutOrDeclinedRunners.length;
-            logCaller(`Timeout check: ⏳ Commission ${commissionId} still has ${remainingRunners} available runner(s) - not all timed out yet`);
+            const remainingRunners = rankedRunnerIds.length - timeoutRunnerIds.length;
+            logCaller(`Timeout check: ⏳ Commission ${commissionId} still has ${remainingRunners} available runner(s) in queue - not all timed out yet`);
             return false;
         }
     } catch (error) {
@@ -1246,12 +1258,28 @@ const notifiedErrands = new Set<number>();
 // Helper function to check if all eligible runners have timed out for an errand
 async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boolean> {
     try {
-        logCaller(`Errand timeout check: Starting check for errand ${errandId}`);
+        // Persistence check: Prevent modal from showing again after page refresh
+        const storageKey = `no_runner_modal_shown_errand_${errandId}`;
+        if (Platform.OS === 'web') {
+            // Web version: Use localStorage
+            const alreadyShown = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
+            if (alreadyShown) {
+                logCaller(`Timeout check: Errand ${errandId} modal already shown (persistence check) - skipping`);
+                return false;
+            }
+        } else {
+            // Mobile version: Use AsyncStorage
+            const alreadyShown = await AsyncStorage.getItem(storageKey);
+            if (alreadyShown) {
+                logCaller(`Timeout check: Errand ${errandId} modal already shown (persistence check) - skipping`);
+                return false;
+            }
+        }
         
-        // Get the errand with all relevant fields
+        // Get the errand with all relevant fields (including ranked_runner_ids for queue comparison)
         const { data: errand, error: errandError } = await supabase
             .from('errand')
-            .select('id, title, status, buddycaller_id, category, timeout_runner_ids, notified_at, notified_runner_id, created_at')
+            .select('id, title, status, buddycaller_id, category, timeout_runner_ids, ranked_runner_ids, notified_at, notified_runner_id, created_at, cancelled_at')
             .eq('id', errandId)
             .single();
 
@@ -1260,108 +1288,41 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             return false;
         }
 
-        // Only check pending errands
-        if (errand.status !== 'pending') {
-            logCaller(`Errand timeout check: Errand ${errandId} is not pending (status: ${errand.status}), skipping`);
+        // Check pending errands OR cancelled errands that were cancelled due to timeout
+        // Situation 2: All runners timed out → backend cancels errand, but we still need to show modal
+        if (errand.status !== 'pending' && errand.status !== 'cancelled') {
             return false;
+        }
+        
+        // For cancelled errands, only proceed if they have timeout_runner_ids (cancelled due to timeout)
+        if (errand.status === 'cancelled') {
+            const timeoutRunnerIds = Array.isArray(errand.timeout_runner_ids) 
+                ? errand.timeout_runner_ids 
+                : (errand.timeout_runner_ids ? [errand.timeout_runner_ids] : []);
+            
+            if (timeoutRunnerIds.length === 0) {
+                return false;
+            }
         }
 
         // If there's a runner currently notified, wait for them to respond or timeout
         if (errand.notified_runner_id !== null) {
-            logCaller(`Errand timeout check: Errand ${errandId} has a notified runner, waiting...`);
             return false;
         }
 
-        // Get caller location for distance calculation
-        const { data: callerData, error: callerError } = await supabase
-            .from('users')
-            .select('latitude, longitude')
-            .eq('id', errand.buddycaller_id)
-            .single();
-
-        if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
-            logCaller(`Errand timeout check: Caller has no location, cannot check`);
-            return false;
-        }
-
-        const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
-        const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
-
-        if (!callerLat || !callerLon || isNaN(callerLat) || isNaN(callerLon)) {
-            logCaller(`Errand timeout check: Invalid caller location for errand ${errandId}`);
-            return false;
-        }
-
-        // Get ALL available runners (online and available)
-        const { data: allRunners, error: runnersError } = await supabase
-            .from('users')
-            .select('id, latitude, longitude, is_available')
-            .eq('role', 'BuddyRunner')
-            .eq('is_available', true);
-
-        if (runnersError) {
-            logCallerError('Errand timeout check: Error fetching runners', runnersError);
-            return false;
-        }
-
-        if (!allRunners || allRunners.length === 0) {
-            logCaller(`Errand timeout check: No runners available at all - all have timed out`);
-            // Ensure at least 60 seconds have passed since errand creation
-            const createdAt = new Date(errand.created_at);
-            const now = new Date();
-            const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
-            return secondsSinceCreation >= 60;
-        }
-
-        logCaller(`Errand timeout check: Found ${allRunners.length} total available runners`);
-
-        // Filter runners within 500m of caller
-        const eligibleRunners = allRunners.filter(runner => {
-            if (!runner.latitude || !runner.longitude) return false;
-            const lat = typeof runner.latitude === 'number' ? runner.latitude : parseFloat(String(runner.latitude || ''));
-            const lon = typeof runner.longitude === 'number' ? runner.longitude : parseFloat(String(runner.longitude || ''));
-            if (!lat || !lon || isNaN(lat) || isNaN(lon)) return false;
-
-            const distanceKm = LocationService.calculateDistance(lat, lon, callerLat, callerLon);
-            const distanceMeters = distanceKm * 1000;
-            return distanceMeters <= 500;
-        });
-
-        logCaller(`Errand timeout check: Found ${eligibleRunners.length} eligible runners within 500m`);
-
-        if (eligibleRunners.length === 0) {
-            logCaller(`Errand timeout check: No eligible runners within 500m - all have timed out`);
-            // Ensure at least 60 seconds have passed since errand creation
-            const createdAt = new Date(errand.created_at);
-            const now = new Date();
-            const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
-            if (secondsSinceCreation >= 60) {
-                logCaller(`Errand timeout check: Errand ${errandId} has been pending for ${secondsSinceCreation.toFixed(1)}s, no eligible runners - TRIGGERING MODAL`);
-                return true;
-            }
-            return false;
-        }
-
-        // Get timeout_runner_ids array (ensure it's an array)
+        // Use ranked_runner_ids as source of truth (backend queue logic)
+        // Normalize arrays to handle different formats
+        const rankedRunnerIds = Array.isArray(errand.ranked_runner_ids) 
+            ? errand.ranked_runner_ids 
+            : (errand.ranked_runner_ids ? [errand.ranked_runner_ids] : []);
+        
         const timeoutRunnerIds = Array.isArray(errand.timeout_runner_ids) 
             ? errand.timeout_runner_ids 
             : (errand.timeout_runner_ids ? [errand.timeout_runner_ids] : []);
 
-        logCaller(`Errand timeout check: Errand ${errandId} details`, {
-            totalEligibleRunners: eligibleRunners.length,
-            timeoutRunnerIdsCount: timeoutRunnerIds.length,
-            eligibleRunnerIds: eligibleRunners.map(r => r.id.substring(0, 8))
-        });
-
-        // Check if ALL eligible runners are in timeout_runner_ids
-        const timedOutRunners = eligibleRunners.filter(runner => {
-            return timeoutRunnerIds.includes(runner.id);
-        });
-
-        logCaller(`Errand timeout check: Runners that timed out: ${timedOutRunners.length} out of ${eligibleRunners.length}`);
-
-        // Check if all eligible runners have timed out
-        const allTimedOut = timedOutRunners.length === eligibleRunners.length && eligibleRunners.length > 0;
+        // Check if all runners in the queue have timed out
+        // Backend logic: queue exhausted when timeout_runner_ids.length === ranked_runner_ids.length
+        const allTimedOut = rankedRunnerIds.length > 0 && timeoutRunnerIds.length === rankedRunnerIds.length;
 
         if (allTimedOut) {
             // Ensure at least 60 seconds have passed since errand creation
@@ -1370,15 +1331,30 @@ async function checkIfAllRunnersTimedOutForErrand(errandId: number): Promise<boo
             const secondsSinceCreation = (now.getTime() - createdAt.getTime()) / 1000;
             
             if (secondsSinceCreation >= 60) {
-                logCaller(`Errand timeout check: ✅ ALL ${eligibleRunners.length} eligible runners have timed out for errand ${errandId} (${secondsSinceCreation.toFixed(1)}s since creation) - TRIGGERING MODAL`);
-                return true;
+                // Time window guard: Only trigger modal if cancelled errand was cancelled within last 5 minutes (300 seconds)
+                // This prevents old cancelled errands from re-triggering the modal on page refresh
+                if (errand.status === 'cancelled') {
+                    if (!errand.cancelled_at) {
+                        return false;
+                    }
+                    
+                    const cancelledAt = new Date(errand.cancelled_at);
+                    const secondsSinceCancel = (Date.now() - cancelledAt.getTime()) / 1000;
+                    
+                    // Prevent old cancelled errands from re-triggering modal
+                    if (secondsSinceCancel > 300) {
+                        return false;
+                    }
+                    
+                    return true;
+                } else {
+                    // For pending errands, no time guard needed (they're still active)
+                    return true;
+                }
             } else {
-                logCaller(`Errand timeout check: All runners timed out but only ${secondsSinceCreation.toFixed(1)}s since creation, waiting...`);
                 return false;
             }
         } else {
-            const remainingRunners = eligibleRunners.length - timedOutRunners.length;
-            logCaller(`Errand timeout check: ⏳ Errand ${errandId} still has ${remainingRunners} available runner(s) - not all timed out yet`);
             return false;
         }
     } catch (error) {
@@ -1397,28 +1373,49 @@ async function monitorErrandsForTimeout(userId: string, errandId?: number) {
         if (errandId) {
             const { data: errand, error } = await supabase
                 .from('errand')
-                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids')
+                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids, cancelled_at')
                 .eq('id', errandId)
                 .eq('buddycaller_id', userId)
-                .eq('status', 'pending')
+                .in('status', ['pending', 'cancelled'])
                 .single();
             
             if (error || !errand) {
                 return;
             }
+            // For cancelled errands, only check if they have timeout_runner_ids (Situation 2)
+            if (errand.status === 'cancelled') {
+                const timeoutRunnerIds = Array.isArray(errand.timeout_runner_ids) 
+                    ? errand.timeout_runner_ids 
+                    : (errand.timeout_runner_ids ? [errand.timeout_runner_ids] : []);
+                if (timeoutRunnerIds.length === 0) {
+                    return; // Situation 1: cancelled immediately, skip
+                }
+            }
             errands = [errand];
         } else {
-            // Get all pending errands for this caller that might need checking
+            // Get all pending errands OR cancelled errands with timeout_runner_ids for this caller
             const { data: data, error } = await supabase
                 .from('errand')
-                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids')
+                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids, cancelled_at')
                 .eq('buddycaller_id', userId)
-                .eq('status', 'pending');
+                .in('status', ['pending', 'cancelled']);
 
             if (error || !data || data.length === 0) {
                 return;
             }
-            errands = data;
+            // Filter: keep pending OR cancelled with timeout_runner_ids (Situation 2)
+            errands = data.filter(errand => {
+                if (errand.status === 'pending') {
+                    return true;
+                }
+                if (errand.status === 'cancelled') {
+                    const timeoutRunnerIds = Array.isArray(errand.timeout_runner_ids) 
+                        ? errand.timeout_runner_ids 
+                        : (errand.timeout_runner_ids ? [errand.timeout_runner_ids] : []);
+                    return timeoutRunnerIds.length > 0; // Only cancelled with timeout_runner_ids
+                }
+                return false;
+            });
         }
 
         // Check each errand
@@ -1435,26 +1432,32 @@ async function monitorErrandsForTimeout(userId: string, errandId?: number) {
 
             // Check if all runners have timed out
             // The checkIfAllRunnersTimedOutForErrand function will verify:
-            // 1. Errand is pending
+            // 1. Errand is pending OR cancelled with timeout_runner_ids (Situation 2)
             // 2. No runner is currently notified (notified_runner_id is NULL)
             // 3. At least 60 seconds have passed since creation
             // 4. ALL eligible runners have timed out
-            logCaller(`Errand timeout monitor: Checking errand ${errand.id} for all runners timed out`);
-            
             const allTimedOut = await checkIfAllRunnersTimedOutForErrand(errand.id);
             
             if (allTimedOut) {
-                logCaller(`Errand timeout monitor: ✅ All runners have timed out for errand ${errand.id}, triggering notification`);
                 // Mark as notified to prevent duplicate notifications
                 notifiedErrands.add(errand.id);
+                
+                // Set persistence flag to prevent modal from showing again after page refresh
+                const storageKey = `no_runner_modal_shown_errand_${errand.id}`;
+                if (Platform.OS === 'web') {
+                    if (typeof window !== 'undefined') {
+                        localStorage.setItem(storageKey, 'true');
+                    }
+                } else {
+                    await AsyncStorage.setItem(storageKey, 'true');
+                }
+                
                 // Trigger the notification
                 noRunnersAvailableService.notify({
                     type: 'errand',
                     errandId: errand.id,
                     errandTitle: errand.title || 'Untitled Errand'
                 });
-            } else {
-                logCaller(`Errand timeout monitor: ⏳ Errand ${errand.id} still has available runners or waiting`);
             }
         }
     } catch (error) {
@@ -1465,6 +1468,9 @@ async function monitorErrandsForTimeout(userId: string, errandId?: number) {
 // Monitor commissions and trigger notification if all runners have timed out
 async function monitorCommissionsForTimeout(userId: string, commissionId?: number) {
     try {
+        // DEBUG: Log function entry
+        logCaller(`DEBUG — monitorCommissionsForTimeout triggered for: ${commissionId || 'all commissions'}`);
+        
         // Check for "all runners timed out" notification (when notified_runner_id is NULL)
         // NOTE: Timeout enforcement (notified_expires_at) is handled by backend cron + Edge Function only
         // If specific commission ID provided, check only that one
@@ -1472,28 +1478,49 @@ async function monitorCommissionsForTimeout(userId: string, commissionId?: numbe
         if (commissionId) {
             const { data: commission, error } = await supabase
                 .from('commission')
-                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids')
+                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids, cancelled_at')
                 .eq('id', commissionId)
                 .eq('buddycaller_id', userId)
-                .eq('status', 'pending')
+                .in('status', ['pending', 'cancelled'])
                 .single();
             
             if (error || !commission) {
                 return;
             }
+            // For cancelled commissions, only check if they have timeout_runner_ids (Situation 2)
+            if (commission.status === 'cancelled') {
+                const timeoutRunnerIds = Array.isArray(commission.timeout_runner_ids) 
+                    ? commission.timeout_runner_ids 
+                    : (commission.timeout_runner_ids ? [commission.timeout_runner_ids] : []);
+                if (timeoutRunnerIds.length === 0) {
+                    return; // Situation 1: cancelled immediately, skip
+                }
+            }
             commissions = [commission];
         } else {
-            // Get all pending commissions for this caller that might need checking
+            // Get all pending commissions OR cancelled commissions with timeout_runner_ids for this caller
             const { data: data, error } = await supabase
                 .from('commission')
-                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids')
+                .select('id, title, status, notified_at, notified_runner_id, timeout_runner_ids, cancelled_at')
                 .eq('buddycaller_id', userId)
-                .eq('status', 'pending');
+                .in('status', ['pending', 'cancelled']);
 
             if (error || !data || data.length === 0) {
                 return;
             }
-            commissions = data;
+            // Filter: keep pending OR cancelled with timeout_runner_ids (Situation 2)
+            commissions = data.filter(commission => {
+                if (commission.status === 'pending') {
+                    return true;
+                }
+                if (commission.status === 'cancelled') {
+                    const timeoutRunnerIds = Array.isArray(commission.timeout_runner_ids) 
+                        ? commission.timeout_runner_ids 
+                        : (commission.timeout_runner_ids ? [commission.timeout_runner_ids] : []);
+                    return timeoutRunnerIds.length > 0; // Only cancelled with timeout_runner_ids
+                }
+                return false;
+            });
         }
 
         // Check each commission
@@ -1969,6 +1996,16 @@ function HomeWeb() {
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
                         
+                        // DEBUG: Log realtime trigger
+                        logCaller(`DEBUG — Realtime commission update detected: ${newData?.id || 'unknown'}`);
+                        logCaller(`DEBUG — old status: ${oldData?.status || 'null'}`);
+                        logCaller(`DEBUG — new status: ${newData?.status || 'null'}`);
+                        
+                        // Check if status changed to 'cancelled' (timeout cancellation)
+                        if (oldData?.status !== 'cancelled' && newData?.status === 'cancelled') {
+                            monitorCommissionsForTimeout(user.id, newData.id);
+                        }
+                        
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_commission_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
@@ -1983,6 +2020,34 @@ function HomeWeb() {
                 )
                 .subscribe();
 
+            // CRITICAL: Check for already-cancelled commissions on page load
+            // The realtime subscription only fires on UPDATE events, so if commission was already cancelled
+            // before page load, we need to check manually
+            const runInitialCommissionTimeoutCheck = async () => {
+                try {
+                    const { data, error } = await supabase
+                        .from('commission')
+                        .select('id, status, timeout_runner_ids')
+                        .eq('buddycaller_id', user.id)
+                        .eq('status', 'cancelled');
+
+                    if (error || !data || data.length === 0) return;
+
+                    data.forEach((commission) => {
+                        if (
+                            commission.timeout_runner_ids &&
+                            commission.timeout_runner_ids.length > 0
+                        ) {
+                            monitorCommissionsForTimeout(user.id, commission.id);
+                        }
+                    });
+                } catch (err) {
+                    // silent fail — do not break existing flow
+                }
+            };
+
+            runInitialCommissionTimeoutCheck();
+
             // Also monitor on errand updates - specifically when notified_runner_id becomes NULL
             const errandTimeoutCheckChannel = supabase
                 .channel(`errand_timeout_check_${user.id}`)
@@ -1995,14 +2060,17 @@ function HomeWeb() {
                         filter: `buddycaller_id=eq.${user.id}`
                     },
                     async (payload) => {
-                        logCaller(`Timeout monitor: Errand update detected: ${payload.new?.id || 'unknown'}`);
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
+                        
+                        // Check if status changed to 'cancelled' (timeout cancellation)
+                        if (oldData?.status !== 'cancelled' && newData?.status === 'cancelled') {
+                            monitorErrandsForTimeout(user.id, newData.id);
+                        }
                         
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_errand_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
-                            logCaller(`Timeout monitor: notified_runner_id cleared for errand ${newData.id}, checking immediately`);
                             // Check this specific errand immediately
                             await monitorErrandsForTimeout(user.id, newData.id);
                         } else {
@@ -2012,6 +2080,11 @@ function HomeWeb() {
                     }
                 )
                 .subscribe();
+            
+            // CRITICAL: Check for already-cancelled errands on page load
+            // The realtime subscription only fires on UPDATE events, so if errand was already cancelled
+            // before page load, we need to check manually
+            monitorErrandsForTimeout(user.id);
 
             return () => {
                 logCaller("Commission monitor: Cleaning up subscription and polling");
@@ -3226,6 +3299,16 @@ function HomeMobile() {
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
                         
+                        // DEBUG: Log realtime trigger
+                        logCaller(`DEBUG — Realtime commission update detected: ${newData?.id || 'unknown'}`);
+                        logCaller(`DEBUG — old status: ${oldData?.status || 'null'}`);
+                        logCaller(`DEBUG — new status: ${newData?.status || 'null'}`);
+                        
+                        // Check if status changed to 'cancelled' (timeout cancellation)
+                        if (oldData?.status !== 'cancelled' && newData?.status === 'cancelled') {
+                            monitorCommissionsForTimeout(user.id, newData.id);
+                        }
+                        
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_commission_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
@@ -3239,6 +3322,34 @@ function HomeMobile() {
                     }
                 )
                 .subscribe();
+
+            // CRITICAL: Check for already-cancelled commissions on page load (mobile)
+            // The realtime subscription only fires on UPDATE events, so if commission was already cancelled
+            // before page load, we need to check manually
+            const runInitialCommissionTimeoutCheck = async () => {
+                try {
+                    const { data, error } = await supabase
+                        .from('commission')
+                        .select('id, status, timeout_runner_ids')
+                        .eq('buddycaller_id', user.id)
+                        .eq('status', 'cancelled');
+
+                    if (error || !data || data.length === 0) return;
+
+                    data.forEach((commission) => {
+                        if (
+                            commission.timeout_runner_ids &&
+                            commission.timeout_runner_ids.length > 0
+                        ) {
+                            monitorCommissionsForTimeout(user.id, commission.id);
+                        }
+                    });
+                } catch (err) {
+                    // silent fail — do not break existing flow
+                }
+            };
+
+            runInitialCommissionTimeoutCheck();
 
             // Also monitor on errand updates - specifically when notified_runner_id becomes NULL
             const errandTimeoutCheckChannel = supabase
@@ -3255,10 +3366,14 @@ function HomeMobile() {
                         const oldData = payload.old as any;
                         const newData = payload.new as any;
                         
+                        // Check if status changed to 'cancelled' (timeout cancellation)
+                        if (oldData?.status !== 'cancelled' && newData?.status === 'cancelled') {
+                            monitorErrandsForTimeout(user.id, newData.id);
+                        }
+                        
                         // Check if notified_runner_id changed from non-null to null
                         // This indicates clear_errand_notification was called
                         if (oldData?.notified_runner_id && !newData?.notified_runner_id) {
-                            logCaller(`Timeout monitor: notified_runner_id cleared for errand ${newData.id}, checking immediately`);
                             // Check this specific errand immediately
                             await monitorErrandsForTimeout(user.id, newData.id);
                         } else {
@@ -3268,6 +3383,9 @@ function HomeMobile() {
                     }
                 )
                 .subscribe();
+            
+            // CRITICAL: Check for already-cancelled errands on page load (mobile)
+            monitorErrandsForTimeout(user.id);
 
             return () => {
                 logCaller('Commission monitor: Cleaning up subscription and polling');

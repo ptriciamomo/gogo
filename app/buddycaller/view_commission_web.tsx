@@ -21,6 +21,7 @@ type CommissionRow = {
 	meetup_location?: string | null;
 	due_at?: string | null;
 	created_at?: string | null;
+	scheduled_meetup?: boolean | null;
 };
 
 type UserRow = { id: string; first_name?: string | null; last_name?: string | null; course?: string | null; student_id_number?: string | null; profile_picture_url?: string | null };
@@ -49,10 +50,18 @@ export default function ViewCommissionCallerWeb() {
 		setVisible(false);
 		try { router.replace("/buddycaller/home" as any); } catch { try { router.replace("/"); } catch {} }
 	};
+	const closeModal = () => {
+		setVisible(false);
+		router.back();
+	};
 
 	// in-app cancel confirmation overlay
 	const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 	const [cancelSubmitting, setCancelSubmitting] = useState(false);
+
+	// repost flow
+	const [showRepostConfirm, setShowRepostConfirm] = useState(false);
+	const [repostSubmitting, setRepostSubmitting] = useState(false);
 
 	// countdown ticker
 	const [now, setNow] = useState(() => Date.now());
@@ -67,7 +76,7 @@ export default function ViewCommissionCallerWeb() {
 			if (!Number.isFinite(numericId)) throw new Error(`Invalid commission id: ${String(idParam)}`);
 			const { data: cm, error } = await supabase
 				.from("commission")
-				.select("id, title, description, commission_type, status, runner_id, buddycaller_id, meetup_location, due_at, created_at")
+				.select("id, title, description, commission_type, status, runner_id, buddycaller_id, meetup_location, due_at, created_at, scheduled_meetup")
 				.eq("id", numericId)
 				.single();
 			if (error) throw error;
@@ -118,6 +127,80 @@ export default function ViewCommissionCallerWeb() {
 		goHome();
 	};
 
+	/* ---------- repost flow ---------- */
+	const onRepostPress = () => {
+		setShowRepostConfirm(true);
+	};
+
+	const confirmRepost = async () => {
+		if (!commission) return;
+		setRepostSubmitting(true);
+
+		try {
+			const { data: auth } = await supabase.auth.getUser();
+			if (!auth?.user) {
+				Alert.alert("Error", "You must be logged in to repost a commission.");
+				setRepostSubmitting(false);
+				setShowRepostConfirm(false);
+				return;
+			}
+
+			const payload: any = {
+				buddycaller_id: auth.user.id,
+				title: commission.title?.trim() || "",
+				description: commission.description?.trim() || null,
+				commission_type: commission.commission_type || null,
+				status: "pending",
+				due_at: commission.due_at || null,
+				scheduled_meetup: !!(commission as any).scheduled_meetup || false,
+				meetup_location: commission.meetup_location || null,
+			};
+
+			// Insert new commission
+			const { error: insertError, data: insertedData } = await supabase
+				.from("commission")
+				.insert([payload])
+				.select();
+
+			if (insertError) {
+				Alert.alert("Error", `Failed to repost commission: ${insertError.message}`);
+				setRepostSubmitting(false);
+				setShowRepostConfirm(false);
+				return;
+			}
+
+			// Call Edge Function to assign top runner and notify
+			if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
+				try {
+					const { data: { session } } = await supabase.auth.getSession();
+					
+					if (session?.access_token) {
+						await supabase.functions.invoke('assign-and-notify-commission', {
+							body: { commission_id: insertedData[0].id },
+							headers: {
+								Authorization: `Bearer ${session.access_token}`,
+							},
+						});
+					}
+				} catch (assignError) {
+					console.warn('⚠️ [REPOST] Assignment failed:', assignError);
+					// Don't block repost if assignment fails
+				}
+			}
+
+			setRepostSubmitting(false);
+			setShowRepostConfirm(false);
+			setVisible(false);
+			// Navigate to My Request – Commissions page after successful repost
+			router.replace("/buddycaller/my_request_commission_web" as any);
+		} catch (error: any) {
+			console.error("Repost error:", error);
+			Alert.alert("Error", `Failed to repost commission: ${error?.message || "Unknown error"}`);
+			setRepostSubmitting(false);
+			setShowRepostConfirm(false);
+		}
+	};
+
 	if (!visible) return null;
 
 	return (
@@ -126,7 +209,7 @@ export default function ViewCommissionCallerWeb() {
 			transparent
 			animationType="fade"
 			onRequestClose={() => {
-				if (showCancelConfirm) { setShowCancelConfirm(false); } else { goHome(); }
+				if (showCancelConfirm) { setShowCancelConfirm(false); } else { closeModal(); }
 			}}
 		>
 			<View style={ui.overlay}>
@@ -134,7 +217,7 @@ export default function ViewCommissionCallerWeb() {
 					{/* Header */}
 					<View style={ui.header}>
 						<Text style={ui.headerTitle}>Commission Request</Text>
-						<TouchableOpacity onPress={goHome} style={ui.headerClose} activeOpacity={0.9}>
+						<TouchableOpacity onPress={closeModal} style={ui.headerClose} activeOpacity={0.9}>
 							<Ionicons name="close" size={20} color={colors.maroon} />
 						</TouchableOpacity>
 					</View>
@@ -167,15 +250,15 @@ export default function ViewCommissionCallerWeb() {
 									<Image source={require("../../assets/images/logo.png")} style={{ width: 90, height: 60, resizeMode: "contain", marginTop: 10 }} />
 								</View>
 								<Row label="Commission Title:" value={commission.title || ""} />
-								<View style={s.row}><View style={s.pill}><Text style={s.pillLabel}>Type:</Text></View></View>
+								<View style={s.row}>
+									<Text style={s.label}>Commission Type:</Text>
+								</View>
 								<View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6, marginBottom: 10 }}>
 									{commission.commission_type ? (
 										commission.commission_type.split(',').map((type: string, index: number) => {
 											const formattedType = type.trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
 											return formattedType ? (
-												<View key={index} style={{ backgroundColor: colors.maroon, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
-													<Text style={{ color: colors.white, fontSize: 12, fontWeight: "700" }}>{formattedType}</Text>
-												</View>
+												<Text key={index} style={s.value}>{formattedType}</Text>
 											) : null;
 										}).filter(Boolean)
 									) : (
@@ -184,13 +267,19 @@ export default function ViewCommissionCallerWeb() {
 								</View>
 								<Row label="Meetup Location:" value={commission.meetup_location || "—"} />
 								<Row label="Due At:" value={commission.due_at ? new Date(commission.due_at).toLocaleString() : "—"} />
-								<View style={s.row}><View style={s.pill}><Text style={s.pillLabel}>Commission Description:</Text></View></View>
+								<View style={s.row}>
+									<Text style={s.label}>Commission Description:</Text>
+								</View>
 								<Text style={[s.value, { marginTop: 6 }]}>{commission.description || "—"}</Text>
 							</View>
 
-							{/* Bottom action: Cancel with 30s gate */}
+							{/* Bottom action: Cancel with 30s gate or Repost for cancelled */}
 							<View style={{ paddingTop: 12 }}>
-								{canCancel ? (
+								{commission.status === "cancelled" ? (
+									<TouchableOpacity style={s.repostBtn} onPress={onRepostPress} activeOpacity={0.9}>
+										<Text style={s.repostText}>Repost Commission</Text>
+									</TouchableOpacity>
+								) : canCancel ? (
 									<>
 										<TouchableOpacity style={s.cancelBtn} onPress={onCancelRequestPress} activeOpacity={0.9}>
 											<Text style={s.cancelText}>Cancel Request</Text>
@@ -222,6 +311,36 @@ export default function ViewCommissionCallerWeb() {
 						</View>
 					</View>
 				)}
+
+				{/* Repost confirmation overlay */}
+				{showRepostConfirm && (
+					<View style={confirm.overlay} pointerEvents="auto">
+						<View style={confirm.card}>
+							<Text style={confirm.title}>Repost Commission</Text>
+							<Text style={confirm.msg}>Are you sure you want to repost this commission?</Text>
+							<View style={confirm.row}>
+								<TouchableOpacity
+									style={[confirm.btn, confirm.ghost]}
+									onPress={() => setShowRepostConfirm(false)}
+									disabled={repostSubmitting}
+									activeOpacity={0.9}
+								>
+									<Text style={[confirm.btnText, { color: colors.maroon }]}>Cancel</Text>
+								</TouchableOpacity>
+								<TouchableOpacity
+									style={[confirm.btn, confirm.solid]}
+									onPress={confirmRepost}
+									disabled={repostSubmitting}
+									activeOpacity={0.9}
+								>
+									<Text style={[confirm.btnText, { color: "#fff" }]}>
+										{repostSubmitting ? "Reposting..." : "Confirm"}
+									</Text>
+								</TouchableOpacity>
+							</View>
+						</View>
+					</View>
+				)}
 			</View>
 		</Modal>
 	);
@@ -230,7 +349,7 @@ export default function ViewCommissionCallerWeb() {
 function Row({ label, value }: { label: string; value?: string | number | null }) {
 	return (
 		<View style={s.row}>
-			<View style={s.pill}><Text style={s.pillLabel}>{label}</Text></View>
+			<Text style={s.label}>{label}</Text>
 			<Text style={s.value}>{value ?? "—"}</Text>
 		</View>
 	);
@@ -267,11 +386,12 @@ const s = StyleSheet.create({
 	runnerMeta: { marginTop: 2, color: colors.grayText, fontSize: 12 },
 	detailsCard: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.maroon, borderRadius: 10, padding: 14 },
 	row: { flexDirection: "row", alignItems: "center", marginTop: 8, flexWrap: "wrap" },
-	pill: { backgroundColor: colors.maroon, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, marginRight: 8 },
-	pillLabel: { color: colors.white, fontSize: 12, fontWeight: "700" },
+	label: { color: colors.maroon, fontSize: 13, fontWeight: "700", marginRight: 8 },
 	value: { color: colors.text, fontSize: 13, flexShrink: 1 },
 	cancelBtn: { backgroundColor: colors.maroon, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
 	cancelText: { color: colors.white, fontWeight: "700" },
+	repostBtn: { backgroundColor: colors.maroon, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
+	repostText: { color: colors.white, fontWeight: "700" },
 	countdownNote: { marginTop: 6, color: colors.text, fontSize: 12, opacity: 0.8 },
 	countdownNoteMuted: { marginTop: 6, color: colors.grayText, fontSize: 12 },
 }); 

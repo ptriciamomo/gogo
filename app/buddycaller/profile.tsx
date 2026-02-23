@@ -938,7 +938,7 @@ export default function BuddycallerProfile() {
                     ) : reviews.length > 0 ? (
                         <>
                             {(showAllReviews ? reviews : reviews.slice(0, REVIEW_LIMIT)).map((review) => (
-                                <ReviewCard key={review.id} review={review} />
+                            <ReviewCard key={review.id} review={review} />
                             ))}
                             {reviews.length > REVIEW_LIMIT && (
                                 <TouchableOpacity 

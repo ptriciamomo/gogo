@@ -195,6 +195,8 @@ export default function MyCommissionRequestsWeb() {
 	// Responsive sidebar: collapse on small screens (< 1024px), expand on larger screens
 	const isSmallScreen = width < 1024;
 	const [open, setOpen] = React.useState(!isSmallScreen);
+	const [pastCommissionsExpanded, setPastCommissionsExpanded] = React.useState(false);
+	const [cancelledCommissionsExpanded, setCancelledCommissionsExpanded] = React.useState(false);
 
 	// Auto-collapse/expand sidebar based on screen size
 	React.useEffect(() => {
@@ -213,7 +215,8 @@ export default function MyCommissionRequestsWeb() {
 	}));
 
 	const ongoing = mapped.filter((c) => c && (c.status === "Pending" || c.status === "Accepted" || c.status === "In Progress"));
-	const past = mapped.filter((c) => c && (c.status === "Completed" || c.status === "Delivered" || c.status === "Cancelled"));
+	const past = mapped.filter((c) => c && (c.status === "Completed" || c.status === "Delivered"));
+	const cancelled = mapped.filter((c) => c && c.status === "Cancelled");
 
 	return (
 		<SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
@@ -310,9 +313,53 @@ export default function MyCommissionRequestsWeb() {
 										<Text style={web.emptySubtext}>Your completed commissions will appear here</Text>
 									</View>
 								) : (
+									<>
 									<View style={web.list}>
-										{past.map((c) => (<CommissionCardWeb key={c.id} commission={c} />))}
+											{(pastCommissionsExpanded ? past : past.slice(0, 5)).map((c) => (<CommissionCardWeb key={c.id} commission={c} />))}
+										</View>
+										{past.length > 5 && (
+											<TouchableOpacity
+												onPress={() => setPastCommissionsExpanded(!pastCommissionsExpanded)}
+												style={web.seeMoreButton}
+												activeOpacity={0.7}
+											>
+												<Text style={web.seeMoreText}>
+													{pastCommissionsExpanded ? "See Less" : "See More"}
+												</Text>
+											</TouchableOpacity>
+										)}
+									</>
+								)}
+							</View>
+
+							{/* Cancelled */}
+							<View style={web.section}>
+								<Text style={web.sectionTitle}>Cancelled Commissions</Text>
+								{initialLoading ? (
+									<Text style={web.loadingText}>Loading…</Text>
+								) : cancelled.length === 0 ? (
+									<View style={web.emptyState}>
+										<Ionicons name="close-circle-outline" size={48} color={colors.border} />
+										<Text style={web.emptyText}>No cancelled commissions</Text>
+										<Text style={web.emptySubtext}>Your cancelled commissions will appear here</Text>
 									</View>
+								) : (
+									<>
+										<View style={web.list}>
+											{(cancelledCommissionsExpanded ? cancelled : cancelled.slice(0, 5)).map((c) => (<CommissionCardWeb key={c.id} commission={c} />))}
+										</View>
+										{cancelled.length > 5 && (
+											<TouchableOpacity
+												onPress={() => setCancelledCommissionsExpanded(!cancelledCommissionsExpanded)}
+												style={web.seeMoreButton}
+												activeOpacity={0.7}
+											>
+												<Text style={web.seeMoreText}>
+													{cancelledCommissionsExpanded ? "See Less" : "See More"}
+												</Text>
+											</TouchableOpacity>
+										)}
+									</>
 								)}
 							</View>
 						</View>
@@ -425,8 +472,11 @@ function CommissionCardWeb({ commission }: { commission: Commission }) {
 		if (commission.status === "Pending") {
 			// For pending commissions, go to view_commission_web (with 30-second cancellation)
 			router.push(`/buddycaller/view_commission_web?id=${commission.id}`);
+		} else if (commission.status === "Cancelled") {
+			// For cancelled commissions, open the modal view
+			router.push(`/buddycaller/view_commission_web?id=${commission.id}`);
 		} else {
-			// For accepted/in progress/completed commissions, go to task_progress_web
+			// For completed, accepted, and in progress commissions, go to task_progress_web
 			router.push(`/buddycaller/task_progress_web?id=${commission.id}`);
 		}
 	};
@@ -531,4 +581,6 @@ const web = StyleSheet.create({
 	infoText: { fontSize: 14, color: colors.text, opacity: 0.8 },
 	cardFooter: { alignItems: "flex-end" },
 	viewText: { color: colors.maroon, fontSize: 14, fontWeight: "600" },
+	seeMoreButton: { marginTop: 12, alignItems: "center", paddingVertical: 8 },
+	seeMoreText: { color: colors.maroon, fontSize: 14, fontWeight: "600" },
 }); 

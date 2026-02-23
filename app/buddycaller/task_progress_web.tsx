@@ -1067,9 +1067,9 @@ export default function TaskProgressWeb() {
 									]}>
 										{runner.profile_picture_url ? (
 											<Image source={{ uri: runner.profile_picture_url }} style={{
-												width: isSmallContent ? 50 : isMediumContent ? 55 : 60,
-												height: isSmallContent ? 50 : isMediumContent ? 55 : 60,
-												borderRadius: isSmallContent ? 25 : isMediumContent ? 27.5 : 30,
+													width: isSmallContent ? 50 : isMediumContent ? 55 : 60,
+													height: isSmallContent ? 50 : isMediumContent ? 55 : 60,
+													borderRadius: isSmallContent ? 25 : isMediumContent ? 27.5 : 30,
 												overflow: "hidden",
 											}} />
 										) : (
@@ -1922,7 +1922,7 @@ export default function TaskProgressWeb() {
 					if (Platform.OS === 'web' && typeof window !== 'undefined') {
 						const currentPath = window.location.pathname;
 						if (currentPath !== '/buddycaller/home') {
-							router.replace("/buddycaller/home");
+					router.replace("/buddycaller/home");
 						}
 					}
 				}}
@@ -1932,7 +1932,7 @@ export default function TaskProgressWeb() {
 					if (Platform.OS === 'web' && typeof window !== 'undefined') {
 						const currentPath = window.location.pathname;
 						if (currentPath !== '/buddycaller/home') {
-							router.replace("/buddycaller/home");
+					router.replace("/buddycaller/home");
 						}
 					}
 				}}

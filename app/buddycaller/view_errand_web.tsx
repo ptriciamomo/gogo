@@ -69,6 +69,12 @@ type ErrandRow = {
     pickup_status?: string | null;
     pickup_photo?: string | null;
     pickup_confirmed_at?: string | null;
+    delivery_location_id?: string | null;
+    delivery_latitude?: number | null;
+    delivery_longitude?: number | null;
+    is_scheduled?: boolean | null;
+    scheduled_time?: string | null;
+    scheduled_date?: string | null;
 };
 
 type UserRow = {
@@ -161,6 +167,10 @@ export default function ViewErrandWeb() {
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
     const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
+    // repost confirmation
+    const [showRepostConfirm, setShowRepostConfirm] = useState(false);
+    const [repostSubmitting, setRepostSubmitting] = useState(false);
+
     // ticker so the countdown updates every second
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
@@ -190,7 +200,13 @@ export default function ViewErrandWeb() {
           buddycaller_id,
           items,
           files,
-          created_at
+          created_at,
+          delivery_location_id,
+          delivery_latitude,
+          delivery_longitude,
+          is_scheduled,
+          scheduled_time,
+          scheduled_date
         `
                 )
                 .eq("id", numericId)
@@ -447,6 +463,121 @@ export default function ViewErrandWeb() {
         goHome();
     };
 
+    /* ---------- repost flow ---------- */
+    const onRepostPress = () => {
+        setShowRepostConfirm(true);
+    };
+
+    const confirmRepost = async () => {
+        if (!errand) return;
+        setRepostSubmitting(true);
+
+        try {
+            const { data: auth } = await supabase.auth.getUser();
+            if (!auth?.user) {
+                Alert.alert("Error", "You must be logged in to repost an errand.");
+                setRepostSubmitting(false);
+                setShowRepostConfirm(false);
+                return;
+            }
+
+            // Prepare items data (preserve price if available)
+            const itemsData = (errand.items ?? []).map((item: any) => ({
+                name: item.name || "",
+                qty: item.qty || 1,
+                price: item.price || undefined,
+            }));
+
+            // Prepare files data (copy file references)
+            const filesData = (errand.files ?? []).map((file: any) => ({
+                fileName: file.fileName || file.name || "",
+                fileUri: file.fileUri || file.url || file.link || file.href || "",
+                bucket: file.bucket || undefined,
+                path: file.path || undefined,
+            }));
+
+            const payload: any = {
+                buddycaller_id: auth.user.id,
+                title: errand.title?.trim() || "",
+                description: errand.description?.trim() || "",
+                category: errand.category || null,
+                status: "pending",
+                items: itemsData,
+                files: filesData,
+                is_scheduled: (errand as any).is_scheduled || false,
+                scheduled_time: (errand as any).scheduled_time || null,
+                scheduled_date: (errand as any).scheduled_date || null,
+            };
+
+            // Set pickup_status based on category
+            if (errand.category === "Deliver Items") {
+                payload.pickup_status = 'pending';
+                payload.pickup_photo = null;
+                payload.pickup_confirmed_at = null;
+            } else {
+                payload.pickup_status = null;
+                payload.pickup_photo = null;
+                payload.pickup_confirmed_at = null;
+            }
+
+            // For Deliver Items, preserve delivery location if available
+            if (errand.category === "Deliver Items" && (errand as any).delivery_location_id) {
+                payload.delivery_location_id = (errand as any).delivery_location_id;
+                payload.delivery_latitude = (errand as any).delivery_latitude;
+                payload.delivery_longitude = (errand as any).delivery_longitude;
+            }
+
+            // Calculate and set amount_price (will be recalculated by backend/formula)
+            // We'll let the system recalculate it, but include it for consistency
+            if (priceBreakdown.total > 0) {
+                payload.amount_price = priceBreakdown.total;
+            }
+
+            // Insert new errand
+            const { error: insertError, data: insertedData } = await supabase
+                .from("errand")
+                .insert([payload])
+                .select();
+
+            if (insertError) {
+                Alert.alert("Error", `Failed to repost errand: ${insertError.message}`);
+                setRepostSubmitting(false);
+                setShowRepostConfirm(false);
+                return;
+            }
+
+            // Call Edge Function to assign top runner and notify
+            if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
+                try {
+                    const { data: { session } } = await supabase.auth.getSession();
+                    
+                    if (session?.access_token) {
+                        await supabase.functions.invoke('assign-errand', {
+                            body: { errand_id: insertedData[0].id },
+                            headers: {
+                                Authorization: `Bearer ${session.access_token}`,
+                            },
+                        });
+                    }
+                } catch (assignError) {
+                    console.warn('⚠️ [REPOST] Assignment failed:', assignError);
+                    // Don't block repost if assignment fails
+                }
+            }
+
+            setRepostSubmitting(false);
+            setShowRepostConfirm(false);
+            setVisible(false);
+            // Navigate to My Request – Errands page after successful repost
+            router.replace("/buddycaller/my_request_errands_web" as any);
+        } catch (error: any) {
+            console.error("Repost error:", error);
+            Alert.alert("Error", `Failed to repost errand: ${error?.message || "Unknown error"}`);
+            setRepostSubmitting(false);
+            setShowRepostConfirm(false);
+        }
+    };
+
     if (!visible) return null;
 
     const isPrintCategory = !!(errand?.category || "").toLowerCase().match(/print|file|school/);
@@ -466,6 +597,8 @@ export default function ViewErrandWeb() {
             onRequestClose={() => {
                 if (showCancelConfirm) {
                     setShowCancelConfirm(false);
+                } else if (showRepostConfirm) {
+                    setShowRepostConfirm(false);
                 } else {
                     goHome();
                 }
@@ -473,7 +606,7 @@ export default function ViewErrandWeb() {
         >
             <View style={ui.overlay}>
                 {/* Main modal content. Disable pointer events while confirm is open. */}
-                <View style={ui.modal} pointerEvents={showCancelConfirm ? "none" : "auto"}>
+                <View style={ui.modal} pointerEvents={showCancelConfirm || showRepostConfirm ? "none" : "auto"}>
                     {/* Header */}
                     <View style={ui.header}>
                         <Text style={ui.headerTitle}>Errand Request</Text>
@@ -682,9 +815,13 @@ export default function ViewErrandWeb() {
                                 </View>
                             </View>
 
-                            {/* Bottom action: Cancel Request (30s gate) */}
+                            {/* Bottom action: Cancel Request (30s gate) or Repost Errand (cancelled only) */}
                             <View style={{ paddingTop: 12 }}>
-                                {canCancel ? (
+                                {errand.status === "cancelled" ? (
+                                    <TouchableOpacity style={s.repostBtn} onPress={onRepostPress} activeOpacity={0.9}>
+                                        <Text style={s.repostText}>Repost Errand</Text>
+                                    </TouchableOpacity>
+                                ) : canCancel ? (
                                     <>
                                         <TouchableOpacity style={s.cancelBtn} onPress={onCancelRequestPress} activeOpacity={0.9}>
                                             <Text style={s.cancelText}>Cancel Request</Text>
@@ -722,6 +859,36 @@ export default function ViewErrandWeb() {
                                 >
                                     <Text style={[confirm.btnText, { color: "#fff" }]}>
                                         {cancelSubmitting ? "Cancelling..." : "Yes, cancel"}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                )}
+
+                {/* ---------- Repost confirmation overlay ---------- */}
+                {showRepostConfirm && (
+                    <View style={confirm.overlay} pointerEvents="auto">
+                        <View style={confirm.card}>
+                            <Text style={confirm.title}>Repost Errand</Text>
+                            <Text style={confirm.msg}>Are you sure you want to repost this errand?</Text>
+                            <View style={confirm.row}>
+                                <TouchableOpacity
+                                    style={[confirm.btn, confirm.ghost]}
+                                    onPress={() => setShowRepostConfirm(false)}
+                                    disabled={repostSubmitting}
+                                    activeOpacity={0.9}
+                                >
+                                    <Text style={[confirm.btnText, { color: colors.maroon }]}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[confirm.btn, confirm.solid]}
+                                    onPress={confirmRepost}
+                                    disabled={repostSubmitting}
+                                    activeOpacity={0.9}
+                                >
+                                    <Text style={[confirm.btnText, { color: "#fff" }]}>
+                                        {repostSubmitting ? "Reposting..." : "Confirm"}
                                     </Text>
                                 </TouchableOpacity>
                             </View>
@@ -930,6 +1097,13 @@ const s = StyleSheet.create({
         alignItems: "center",
     },
     cancelText: { color: colors.white, fontWeight: "700" },
+    repostBtn: {
+        backgroundColor: colors.maroon,
+        borderRadius: 10,
+        paddingVertical: 12,
+        alignItems: "center",
+    },
+    repostText: { color: colors.white, fontWeight: "700" },
 
     fileRow: { flexDirection: "row", alignItems: "center", gap: 8 },
     inlineBtn: {

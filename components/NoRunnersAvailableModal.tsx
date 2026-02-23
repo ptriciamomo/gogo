@@ -26,17 +26,72 @@ const NoRunnersAvailableModal: React.FC = () => {
   const [visible, setVisible] = useState(false);
   const [notification, setNotification] = useState<NoRunnersAvailableNotification | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [errandStatus, setErrandStatus] = useState<string | null>(null);
+  const [commissionStatus, setCommissionStatus] = useState<string | null>(null);
 
   useEffect(() => {
     console.log('NoRunnersAvailableModal: Setting up subscription');
-    const unsubscribe = noRunnersAvailableService.subscribe((newNotification) => {
+    const unsubscribe = noRunnersAvailableService.subscribe(async (newNotification) => {
       console.log('NoRunnersAvailableModal: Received notification:', newNotification);
       if (newNotification) {
         setNotification(newNotification);
         setVisible(true);
+        
+        // Fetch errand status and timeout_runner_ids to determine if it's Situation 1 (cancelled immediately) or Situation 2 (cancelled due to timeout)
+        if (newNotification.type === 'errand' && newNotification.errandId) {
+          try {
+            const numericId = typeof newNotification.errandId === 'string' 
+              ? parseInt(newNotification.errandId, 10) 
+              : newNotification.errandId;
+            
+            if (!isNaN(numericId)) {
+              const { data: errandData } = await supabase
+                .from('errand')
+                .select('status, timeout_runner_ids')
+                .eq('id', numericId)
+                .single();
+              
+              if (errandData) {
+                setErrandStatus(errandData.status);
+                // Situation 1: cancelled immediately (no timeout_runner_ids)
+                // Situation 2: cancelled due to timeout (has timeout_runner_ids) OR pending
+                // The modal will use status to determine behavior, but we need to distinguish
+                // cancelled without timeout (Situation 1) vs cancelled with timeout (Situation 2)
+                // For Situation 2, status can be 'pending' or 'cancelled' with timeout_runner_ids
+              }
+            }
+          } catch (error) {
+            console.error('NoRunnersAvailableModal: Error fetching errand status:', error);
+          }
+        }
+        
+        // Fetch commission status to determine if it's Situation 1 (cancelled) or Scenario 2 (pending)
+        if (newNotification.type === 'commission' && newNotification.commissionId) {
+          try {
+            const numericId = typeof newNotification.commissionId === 'string' 
+              ? parseInt(newNotification.commissionId, 10) 
+              : newNotification.commissionId;
+            
+            if (!isNaN(numericId)) {
+              const { data: commissionData } = await supabase
+                .from('commission')
+                .select('status')
+                .eq('id', numericId)
+                .single();
+              
+              if (commissionData) {
+                setCommissionStatus(commissionData.status);
+              }
+            }
+          } catch (error) {
+            console.error('NoRunnersAvailableModal: Error fetching commission status:', error);
+          }
+        }
       } else {
         setVisible(false);
         setNotification(null);
+        setErrandStatus(null);
+        setCommissionStatus(null);
       }
     });
 
@@ -46,14 +101,44 @@ const NoRunnersAvailableModal: React.FC = () => {
   const handleClose = async () => {
     if (deleting || !notification) return;
     
+    const isErrand = notification.type === 'errand';
+    const isCommission = notification.type === 'commission';
+    
+    // For errands: Always just close modal (both Situation 1 and Situation 2)
+    // Do NOT delete errands anymore
+    if (isErrand) {
+      console.log('[NoRunnersAvailableModal] Errand modal closed - errand remains in database');
+      setVisible(false);
+      setNotification(null);
+      setErrandStatus(null);
+      setCommissionStatus(null);
+      setDeleting(false);
+      noRunnersAvailableService.clearNotification();
+      return;
+    }
+    
+    // Commission logic remains unchanged
+    const isCommissionSituation1 = isCommission && commissionStatus === 'cancelled';
+    
+    if (isCommissionSituation1) {
+      console.log('[NoRunnersAvailableModal] Commission Situation 1 detected - skipping deletion, commission remains cancelled');
+      setVisible(false);
+      setNotification(null);
+      setErrandStatus(null);
+      setCommissionStatus(null);
+      setDeleting(false);
+      noRunnersAvailableService.clearNotification();
+      return;
+    }
+    
+    // Commission Scenario 2 (Timeout): Proceed with deletion
     setDeleting(true);
     let shouldClose = true;
     
     try {
-      const isErrand = notification.type === 'errand';
-      const itemId = isErrand ? notification.errandId : notification.commissionId;
-      const tableName = isErrand ? 'errand' : 'commission';
-      const itemType = isErrand ? 'errand' : 'commission';
+      const itemId = notification.commissionId;
+      const tableName = 'commission';
+      const itemType = 'commission';
       
       console.log(`[NoRunnersAvailableModal] Attempting to delete ${itemType}:`, itemId, typeof itemId);
       
@@ -177,13 +262,15 @@ const NoRunnersAvailableModal: React.FC = () => {
     } catch (error: any) {
       console.error('[NoRunnersAvailableModal] Unexpected error:', error);
       console.error('[NoRunnersAvailableModal] Error stack:', error?.stack);
-      const itemType = notification?.type === 'errand' ? 'errand' : 'commission';
+      const itemType = 'commission';
       alert(`Failed to delete ${itemType}: ${error?.message || 'Unknown error'}`);
       shouldClose = false;
     } finally {
       if (shouldClose) {
         setVisible(false);
         setNotification(null);
+        setErrandStatus(null);
+        setCommissionStatus(null);
         setDeleting(false);
         noRunnersAvailableService.clearNotification();
       } else {
@@ -208,15 +295,31 @@ const NoRunnersAvailableModal: React.FC = () => {
               <Ionicons name="alert-circle" size={48} color="#f59e0b" />
             </View>
             <Text style={styles.title}>No Runners Available</Text>
+            {notification.type === 'errand' && notification.errandTitle && (
+              <Text style={styles.errandTitle}>
+                Errand: <Text style={styles.errandTitleBold}>{notification.errandTitle}</Text>
+              </Text>
+            )}
+            {notification.type === 'commission' && notification.commissionTitle && (
+              <Text style={styles.errandTitle}>
+                Commission: <Text style={styles.errandTitleBold}>{notification.commissionTitle}</Text>
+              </Text>
+            )}
           </View>
 
           <View style={styles.content}>
             <Text style={styles.message}>
               There are no runners available at the moment.
             </Text>
-            <Text style={styles.subMessage}>
-              Your {notification.type === 'errand' ? 'errand' : 'commission'} "{notification.type === 'errand' ? notification.errandTitle : notification.commissionTitle}" will be removed from your requests.
-            </Text>
+            {(notification.type === 'errand' && errandStatus === 'cancelled') || (notification.type === 'commission' && commissionStatus === 'cancelled') ? (
+              <Text style={styles.subMessage}>
+                You may try posting your {notification.type === 'errand' ? 'errand' : 'commission'} again later.
+              </Text>
+            ) : (
+              <Text style={styles.subMessage}>
+                Your {notification.type === 'errand' ? 'errand' : 'commission'} "{notification.type === 'errand' ? notification.errandTitle : notification.commissionTitle}" will be removed from your requests.
+              </Text>
+            )}
           </View>
 
           <View style={styles.buttonContainer}>
@@ -270,6 +373,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.text,
     textAlign: 'center',
+  },
+  errandTitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+  },
+  errandTitleBold: {
+    fontWeight: '600',
+    color: colors.text,
   },
   content: {
     marginBottom: 24,

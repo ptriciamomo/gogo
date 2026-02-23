@@ -74,7 +74,11 @@ function isOngoingErrand(status: Errand["status"]): boolean {
 }
 
 function isPastErrand(status: Errand["status"]): boolean {
-    return status === "Completed" || status === "Delivered" || status === "Cancelled";
+    return status === "Completed" || status === "Delivered";
+}
+
+function isCancelledErrand(status: Errand["status"]): boolean {
+    return status === "Cancelled";
 }
 
 /* ===================== AUTH PROFILE HOOK ===================== */
@@ -262,6 +266,8 @@ export default function MyRequestsWeb() {
     // Responsive sidebar: hide on small screens (< 1024px) and show via hamburger
     const isSmallScreen = width < 1024;
     const [open, setOpen] = React.useState(!isSmallScreen);
+    const [pastErrandsExpanded, setPastErrandsExpanded] = React.useState(false);
+    const [cancelledErrandsExpanded, setCancelledErrandsExpanded] = React.useState(false);
 
     React.useEffect(() => {
         setOpen(!isSmallScreen);
@@ -290,6 +296,18 @@ export default function MyRequestsWeb() {
             amount_price: r.amount_price || undefined,
         }))
         .filter(errand => isPastErrand(errand.status));
+
+    const cancelledErrands = errands
+        .map(r => ({
+            id: String(r.id),
+            title: r.title || "(Untitled)",
+            status: toUiStatus(r.status),
+            requester: r.runner_id && runnerNameMap[r.runner_id] ? runnerNameMap[r.runner_id] : "No buddyrunner yet",
+            created_at: r.created_at,
+            category: r.category || undefined,
+            amount_price: r.amount_price || undefined,
+        }))
+        .filter(errand => isCancelledErrand(errand.status));
 
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
@@ -390,11 +408,57 @@ export default function MyRequestsWeb() {
                                         <Text style={web.emptySubtext}>Your completed errands will appear here</Text>
                                     </View>
                                 ) : (
-                                    <View style={web.errandsList}>
-                                        {pastErrands.map((errand) => (
-                                            <ErrandCardWeb key={errand.id} errand={errand} />
-                                        ))}
+                                    <>
+                                        <View style={web.errandsList}>
+                                            {(pastErrandsExpanded ? pastErrands : pastErrands.slice(0, 5)).map((errand) => (
+                                                <ErrandCardWeb key={errand.id} errand={errand} />
+                                            ))}
+                                        </View>
+                                        {pastErrands.length > 5 && (
+                                            <TouchableOpacity
+                                                onPress={() => setPastErrandsExpanded(!pastErrandsExpanded)}
+                                                style={web.seeMoreButton}
+                                                activeOpacity={0.7}
+                                            >
+                                                <Text style={web.seeMoreText}>
+                                                    {pastErrandsExpanded ? "See Less" : "See More"}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </>
+                                )}
+                            </View>
+
+                            {/* Cancelled Errands Section */}
+                            <View style={web.section}>
+                                <Text style={web.sectionTitle}>Cancelled Errands</Text>
+                                {initialLoading ? (
+                                    <Text style={web.loadingText}>Loading…</Text>
+                                ) : cancelledErrands.length === 0 ? (
+                                    <View style={web.emptyState}>
+                                        <Ionicons name="close-circle-outline" size={48} color={colors.border} />
+                                        <Text style={web.emptyText}>No cancelled errands</Text>
+                                        <Text style={web.emptySubtext}>Your cancelled errands will appear here</Text>
                                     </View>
+                                ) : (
+                                    <>
+                                        <View style={web.errandsList}>
+                                            {(cancelledErrandsExpanded ? cancelledErrands : cancelledErrands.slice(0, 5)).map((errand) => (
+                                                <ErrandCardWeb key={errand.id} errand={errand} />
+                                            ))}
+                                        </View>
+                                        {cancelledErrands.length > 5 && (
+                                            <TouchableOpacity
+                                                onPress={() => setCancelledErrandsExpanded(!cancelledErrandsExpanded)}
+                                                style={web.seeMoreButton}
+                                                activeOpacity={0.7}
+                                            >
+                                                <Text style={web.seeMoreText}>
+                                                    {cancelledErrandsExpanded ? "See Less" : "See More"}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </>
                                 )}
                             </View>
                         </View>
@@ -812,6 +876,16 @@ const web = StyleSheet.create({
         alignItems: "flex-end",
     },
     viewText: {
+        color: colors.maroon,
+        fontSize: 14,
+        fontWeight: "600",
+    },
+    seeMoreButton: {
+        marginTop: 12,
+        alignItems: "center",
+        paddingVertical: 8,
+    },
+    seeMoreText: {
         color: colors.maroon,
         fontSize: 14,
         fontWeight: "600",

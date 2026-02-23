@@ -20,6 +20,7 @@ type CommissionRow = {
 	meetup_location?: string | null;
 	due_at?: string | null;
 	created_at?: string | null;
+	scheduled_meetup?: boolean | null;
 };
 
 type UserRow = { id: string; first_name?: string | null; last_name?: string | null; course?: string | null; student_id_number?: string | null; profile_picture_url?: string | null };
@@ -56,7 +57,7 @@ export default function ViewCommissionCaller() {
 
 			const { data: cm, error } = await supabase
 				.from("commission")
-				.select("id, title, description, commission_type, status, runner_id, buddycaller_id, meetup_location, due_at, created_at")
+				.select("id, title, description, commission_type, status, runner_id, buddycaller_id, meetup_location, due_at, created_at, scheduled_meetup")
 				.eq("id", numericId)
 				.single();
 			if (error) throw error;
@@ -115,6 +116,79 @@ export default function ViewCommissionCaller() {
 		);
 	};
 
+	/* ---------- repost flow ---------- */
+	const onRepostCommission = async () => {
+		if (!commission) return;
+
+		Alert.alert(
+			"Repost Commission",
+			"Are you sure you want to repost this commission?",
+			[
+				{ text: "Cancel" },
+				{
+					text: "Confirm",
+					style: "default",
+					onPress: async () => {
+						try {
+							const { data: auth } = await supabase.auth.getUser();
+							if (!auth?.user) {
+								Alert.alert("Error", "You must be logged in to repost a commission.");
+								return;
+							}
+
+							const payload: any = {
+								buddycaller_id: auth.user.id,
+								title: commission.title?.trim() || "",
+								description: commission.description?.trim() || null,
+								commission_type: commission.commission_type || null,
+								status: "pending",
+								due_at: commission.due_at || null,
+								scheduled_meetup: !!(commission as any).scheduled_meetup || false,
+								meetup_location: commission.meetup_location || null,
+							};
+
+							// Insert new commission
+							const { error: insertError, data: insertedData } = await supabase
+								.from("commission")
+								.insert([payload])
+								.select();
+
+							if (insertError) {
+								Alert.alert("Error", `Failed to repost commission: ${insertError.message}`);
+								return;
+							}
+
+							// Call Edge Function to assign top runner and notify
+							if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
+								try {
+									const { data: { session } } = await supabase.auth.getSession();
+									
+									if (session?.access_token) {
+										await supabase.functions.invoke('assign-and-notify-commission', {
+											body: { commission_id: insertedData[0].id },
+											headers: {
+												Authorization: `Bearer ${session.access_token}`,
+											},
+										});
+									}
+								} catch (assignError) {
+									console.warn('⚠️ [REPOST] Assignment failed:', assignError);
+									// Don't block repost if assignment fails
+								}
+							}
+
+							// Navigate to My Request – Commissions page after successful repost
+							router.replace("/buddycaller/my_request_commission" as any);
+						} catch (error: any) {
+							console.error("Repost error:", error);
+							Alert.alert("Error", `Failed to repost commission: ${error?.message || "Unknown error"}`);
+						}
+					},
+				},
+			]
+		);
+	};
+
 	if (loading) {
 		return (
 			<SafeAreaView style={{ flex: 1, backgroundColor: colors.light }}>
@@ -169,15 +243,15 @@ export default function ViewCommissionCaller() {
 						<Image source={require("../../assets/images/logo.png")} style={{ width: 90, height: 60, resizeMode: "contain", marginTop: 10 }} />
 					</View>
 					<Row label="Commission Title:" value={commission.title || ""} />
-					<View style={s.row}><View style={s.pill}><Text style={s.pillLabel}>Type:</Text></View></View>
+					<View style={s.row}>
+						<Text style={s.label}>Commission Type:</Text>
+					</View>
 					<View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6, marginBottom: 10 }}>
 						{commission.commission_type ? (
 							commission.commission_type.split(',').map((type: string, index: number) => {
 								const formattedType = type.trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
 								return formattedType ? (
-									<View key={index} style={{ backgroundColor: colors.maroon, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
-										<Text style={{ color: colors.white, fontSize: 12, fontWeight: "700" }}>{formattedType}</Text>
-									</View>
+									<Text key={index} style={s.value}>{formattedType}</Text>
 								) : null;
 							}).filter(Boolean)
 						) : (
@@ -186,13 +260,25 @@ export default function ViewCommissionCaller() {
 					</View>
 					<Row label="Meetup Location:" value={commission.meetup_location || "—"} />
 					<Row label="Due At:" value={commission.due_at ? new Date(commission.due_at).toLocaleString() : "—"} />
-					<View style={s.row}><View style={s.pill}><Text style={s.pillLabel}>Commission Description:</Text></View></View>
+					<View style={s.row}>
+						<Text style={s.label}>Commission Description:</Text>
+					</View>
 					<Text style={[s.value, { marginTop: 6 }]}>{commission.description || "—"}</Text>
 				</View>
 			</ScrollView>
 
-			{/* Cancel section */}
+			{/* Cancel section or Repost for cancelled */}
 			<View style={{ padding: 16 }}>
+				{commission.status === "cancelled" ? (
+					<TouchableOpacity
+						style={s.repostBtn}
+						onPress={onRepostCommission}
+						activeOpacity={0.9}
+					>
+						<Text style={s.repostText}>Repost Commission</Text>
+					</TouchableOpacity>
+				) : (
+					<>
 				<TouchableOpacity
 					style={[s.cancelBtn, !canCancel && { backgroundColor: colors.grayBtn }]}
 					onPress={onCancelRequest}
@@ -205,6 +291,8 @@ export default function ViewCommissionCaller() {
 					<Text style={s.countdownNote}>You can cancel for {remainingSec}s.</Text>
 				) : (
 					<Text style={s.countdownNoteMuted}>Cancellation window ended.</Text>
+						)}
+					</>
 				)}
 			</View>
 		</SafeAreaView>
@@ -224,7 +312,7 @@ function Header({ router }: { router: ReturnType<typeof useRouter> }) {
 function Row({ label, value }: { label: string; value?: string | number | null }) {
 	return (
 		<View style={s.row}>
-			<View style={s.pill}><Text style={s.pillLabel}>{label}</Text></View>
+			<Text style={s.label}>{label}</Text>
 			<Text style={s.value}>{value ?? "—"}</Text>
 		</View>
 	);
@@ -242,13 +330,14 @@ const s = StyleSheet.create({
 	viewProfileText: { color: colors.white, fontSize: 12, fontWeight: "600" },
 	detailsCard: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.maroon, borderRadius: 10, padding: 14 },
 	row: { flexDirection: "row", alignItems: "center", marginTop: 8, flexWrap: "wrap" },
-	pill: { backgroundColor: colors.maroon, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10, marginRight: 8 },
-	pillLabel: { color: colors.white, fontSize: 12, fontWeight: "700" },
+	label: { color: colors.maroon, fontSize: 13, fontWeight: "700", marginRight: 8 },
 	value: { color: colors.text, fontSize: 13, flexShrink: 1 },
 
 	// new styles for cancel
 	cancelBtn: { backgroundColor: colors.maroon, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
 	cancelText: { color: colors.white, fontWeight: "700" },
+	repostBtn: { backgroundColor: colors.maroon, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
+	repostText: { color: colors.white, fontWeight: "700" },
 	countdownNote: { marginTop: 6, color: colors.text, fontSize: 12, opacity: 0.8, textAlign: "center" },
 	countdownNoteMuted: { marginTop: 6, color: colors.grayText, fontSize: 12, textAlign: "center" },
 }); 

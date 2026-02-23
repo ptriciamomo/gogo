@@ -113,6 +113,12 @@ type ErrandRow = {
     pickup_status?: string | null;
     pickup_photo?: string | null;
     pickup_confirmed_at?: string | null;
+    delivery_location_id?: string | null;
+    delivery_latitude?: number | null;
+    delivery_longitude?: number | null;
+    is_scheduled?: boolean | null;
+    scheduled_time?: string | null;
+    scheduled_date?: string | null;
 };
 
 type UserRow = {
@@ -170,7 +176,13 @@ export default function ViewErrandScreen() {
           buddycaller_id,
           items,
           files,
-          created_at
+          created_at,
+          delivery_location_id,
+          delivery_latitude,
+          delivery_longitude,
+          is_scheduled,
+          scheduled_time,
+          scheduled_date
         `)
                 .eq("id", numericId)
                 .single();
@@ -359,6 +371,118 @@ export default function ViewErrandScreen() {
 
                         // Go back to Home and let it refresh (one-shot handler clears the flag)
                         router.replace("/buddycaller/home" as any);
+                    },
+                },
+            ]
+        );
+    };
+
+    /* ---------- Repost flow ---------- */
+    const onRepostErrand = async () => {
+        if (!errand) return;
+
+        Alert.alert(
+            "Repost Errand",
+            "Are you sure you want to repost this errand?",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Confirm",
+                    onPress: async () => {
+                        try {
+                            const { data: auth } = await supabase.auth.getUser();
+                            if (!auth?.user) {
+                                Alert.alert("Error", "You must be logged in to repost an errand.");
+                                return;
+                            }
+
+                            // Prepare items data (preserve price if available)
+                            const itemsData = (errand.items ?? []).map((item: any) => ({
+                                name: item.name || "",
+                                qty: item.qty || 1,
+                                price: item.price || undefined,
+                            }));
+
+                            // Prepare files data (copy file references)
+                            const filesData = (errand.files ?? []).map((file: any) => ({
+                                fileName: file.fileName || file.name || "",
+                                fileUri: file.fileUri || file.url || file.link || file.href || "",
+                                bucket: file.bucket || undefined,
+                                path: file.path || undefined,
+                            }));
+
+                            const payload: any = {
+                                buddycaller_id: auth.user.id,
+                                title: errand.title?.trim() || "",
+                                description: errand.description?.trim() || "",
+                                category: errand.category || null,
+                                status: "pending",
+                                items: itemsData,
+                                files: filesData,
+                                is_scheduled: (errand as any).is_scheduled || false,
+                                scheduled_time: (errand as any).scheduled_time || null,
+                                scheduled_date: (errand as any).scheduled_date || null,
+                            };
+
+                            // Set pickup_status based on category
+                            if (errand.category === "Deliver Items") {
+                                payload.pickup_status = 'pending';
+                                payload.pickup_photo = null;
+                                payload.pickup_confirmed_at = null;
+                            } else {
+                                payload.pickup_status = null;
+                                payload.pickup_photo = null;
+                                payload.pickup_confirmed_at = null;
+                            }
+
+                            // For Deliver Items, preserve delivery location if available
+                            if (errand.category === "Deliver Items" && (errand as any).delivery_location_id) {
+                                payload.delivery_location_id = (errand as any).delivery_location_id;
+                                payload.delivery_latitude = (errand as any).delivery_latitude;
+                                payload.delivery_longitude = (errand as any).delivery_longitude;
+                            }
+
+                            // Calculate and set amount_price
+                            if (priceBreakdown.total > 0) {
+                                payload.amount_price = priceBreakdown.total;
+                            }
+
+                            // Insert new errand
+                            const { error: insertError, data: insertedData } = await supabase
+                                .from("errand")
+                                .insert([payload])
+                                .select();
+
+                            if (insertError) {
+                                Alert.alert("Error", `Failed to repost errand: ${insertError.message}`);
+                                return;
+                            }
+
+                            // Call Edge Function to assign top runner and notify
+                            if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
+                                try {
+                                    const { data: { session } } = await supabase.auth.getSession();
+                                    
+                                    if (session?.access_token) {
+                                        await supabase.functions.invoke('assign-errand', {
+                                            body: { errand_id: insertedData[0].id },
+                                            headers: {
+                                                Authorization: `Bearer ${session.access_token}`,
+                                            },
+                                        });
+                                    }
+                                } catch (assignError) {
+                                    console.warn('⚠️ [REPOST] Assignment failed:', assignError);
+                                    // Don't block repost if assignment fails
+                                }
+                            }
+
+                            // Navigate to My Request – Errands page after successful repost
+                            router.replace("/buddycaller/my_request_errands" as any);
+                        } catch (error: any) {
+                            console.error("Repost error:", error);
+                            Alert.alert("Error", `Failed to repost errand: ${error?.message || "Unknown error"}`);
+                        }
                     },
                 },
             ]
@@ -642,6 +766,16 @@ export default function ViewErrandScreen() {
             </ScrollView>
 
             <View style={{ padding: 16 }}>
+                {errand.status === "cancelled" ? (
+                    <TouchableOpacity
+                        style={s.repostBtn}
+                        onPress={onRepostErrand}
+                        activeOpacity={0.9}
+                    >
+                        <Text style={s.repostText}>Repost Errand</Text>
+                    </TouchableOpacity>
+                ) : (
+                    <>
                 <TouchableOpacity
                     style={[s.cancelBtn, !canCancel && { backgroundColor: colors.grayBtn }]}
                     onPress={onCancelRequest}
@@ -654,6 +788,8 @@ export default function ViewErrandScreen() {
                     <Text style={s.countdownNote}>You can cancel for {remainingSec}s.</Text>
                 ) : (
                     <Text style={s.countdownNoteMuted}>Cancellation window ended.</Text>
+                        )}
+                    </>
                 )}
             </View>
         </SafeAreaView>
@@ -828,6 +964,13 @@ const s = StyleSheet.create({
         alignItems: "center",
     },
     cancelText: { color: colors.white, fontWeight: "700" },
+    repostBtn: {
+        backgroundColor: colors.maroon,
+        borderRadius: 10,
+        paddingVertical: 12,
+        alignItems: "center",
+    },
+    repostText: { color: colors.white, fontWeight: "700" },
 
     /* for Files "View" button */
     fileRow: { flexDirection: "row", alignItems: "center", gap: 8 },

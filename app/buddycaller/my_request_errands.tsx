@@ -73,7 +73,11 @@ function isOngoingErrand(status: Errand["status"]): boolean {
 }
 
 function isPastErrand(status: Errand["status"]): boolean {
-    return status === "Completed" || status === "Delivered" || status === "Cancelled";
+    return status === "Completed" || status === "Delivered";
+}
+
+function isCancelledErrand(status: Errand["status"]): boolean {
+    return status === "Cancelled";
 }
 
 /* ===================== AUTH PROFILE HOOK ===================== */
@@ -260,6 +264,8 @@ export default function MyRequestsMobile() {
     const { loading, firstName } = useAuthProfile();
     const insets = useSafeAreaInsets();
     const { initialLoading, rows: errands, runnerNameMap, refetch } = useMyErrands();
+    const [pastErrandsExpanded, setPastErrandsExpanded] = React.useState(false);
+    const [cancelledErrandsExpanded, setCancelledErrandsExpanded] = React.useState(false);
 
     const ongoingErrands = errands
         .map(r => ({
@@ -284,6 +290,18 @@ export default function MyRequestsMobile() {
             amount_price: r.amount_price || undefined,
         }))
         .filter(errand => isPastErrand(errand.status));
+
+    const cancelledErrands = errands
+        .map(r => ({
+            id: String(r.id),
+            title: r.title || "(Untitled)",
+            status: toUiStatus(r.status),
+            requester: r.runner_id && runnerNameMap[r.runner_id] ? runnerNameMap[r.runner_id] : "No buddyrunner yet",
+            created_at: r.created_at,
+            category: r.category || undefined,
+            amount_price: r.amount_price || undefined,
+        }))
+        .filter(errand => isCancelledErrand(errand.status));
 
     const scrollBottomPad = (insets.bottom || 0) + 100;
 
@@ -343,11 +361,57 @@ export default function MyRequestsMobile() {
                             <Text style={m.emptySubtext}>Your completed errands will appear here</Text>
                         </View>
                     ) : (
-                        <View style={m.errandsList}>
-                            {pastErrands.map((errand) => (
-                                <ErrandCardMobile key={errand.id} errand={errand} />
-                            ))}
+                        <>
+                            <View style={m.errandsList}>
+                                {(pastErrandsExpanded ? pastErrands : pastErrands.slice(0, 5)).map((errand) => (
+                                    <ErrandCardMobile key={errand.id} errand={errand} />
+                                ))}
+                            </View>
+                            {pastErrands.length > 5 && (
+                                <TouchableOpacity
+                                    onPress={() => setPastErrandsExpanded(!pastErrandsExpanded)}
+                                    style={m.seeMoreButton}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={m.seeMoreText}>
+                                        {pastErrandsExpanded ? "See Less" : "See More"}
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                        </>
+                    )}
+                </View>
+
+                {/* Cancelled Errands Section */}
+                <View style={m.section}>
+                    <Text style={m.sectionTitle}>Cancelled Errands</Text>
+                    {initialLoading ? (
+                        <Text style={m.loadingText}>Loading…</Text>
+                    ) : cancelledErrands.length === 0 ? (
+                        <View style={m.emptyState}>
+                            <Ionicons name="close-circle-outline" size={48} color={colors.border} />
+                            <Text style={m.emptyText}>No cancelled errands</Text>
+                            <Text style={m.emptySubtext}>Your cancelled errands will appear here</Text>
                         </View>
+                    ) : (
+                        <>
+                            <View style={m.errandsList}>
+                                {(cancelledErrandsExpanded ? cancelledErrands : cancelledErrands.slice(0, 5)).map((errand) => (
+                                    <ErrandCardMobile key={errand.id} errand={errand} />
+                                ))}
+                            </View>
+                            {cancelledErrands.length > 5 && (
+                                <TouchableOpacity
+                                    onPress={() => setCancelledErrandsExpanded(!cancelledErrandsExpanded)}
+                                    style={m.seeMoreButton}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={m.seeMoreText}>
+                                        {cancelledErrandsExpanded ? "See Less" : "See More"}
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                        </>
                     )}
                 </View>
             </ScrollView>
@@ -552,6 +616,16 @@ const m = StyleSheet.create({
         alignItems: "flex-end",
     },
     viewText: {
+        color: colors.maroon,
+        fontSize: 12,
+        fontWeight: "600",
+    },
+    seeMoreButton: {
+        marginTop: 10,
+        alignItems: "center",
+        paddingVertical: 8,
+    },
+    seeMoreText: {
         color: colors.maroon,
         fontSize: 12,
         fontWeight: "600",

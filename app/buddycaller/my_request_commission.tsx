@@ -75,7 +75,11 @@ function isOngoingCommission(status: Commission["status"]): boolean {
 }
 
 function isPastCommission(status: Commission["status"]): boolean {
-    return status === "Completed" || status === "Delivered" || status === "Cancelled";
+    return status === "Completed" || status === "Delivered";
+}
+
+function isCancelledCommission(status: Commission["status"]): boolean {
+    return status === "Cancelled";
 }
 
 /* ===================== AUTH PROFILE HOOK ===================== */
@@ -303,6 +307,22 @@ export default function MyCommissionRequestsMobile() {
         }))
         .filter(commission => isPastCommission(commission.status));
 
+    const cancelledCommissions = commissions
+        .map(r => ({
+            id: String(r.id),
+            title: r.title || "(Untitled)",
+            status: toUiStatus(r.status), // Use actual status from database
+            requester: r.runner_id && runnerNameMap[r.runner_id] ? runnerNameMap[r.runner_id] : "No buddyrunner yet",
+            created_at: r.created_at,
+            commission_type: r.commission_type || undefined,
+            meetup_location: r.meetup_location || undefined,
+            due_at: r.due_at || undefined,
+        }))
+        .filter(commission => isCancelledCommission(commission.status));
+
+    const [pastCommissionsExpanded, setPastCommissionsExpanded] = React.useState(false);
+    const [cancelledCommissionsExpanded, setCancelledCommissionsExpanded] = React.useState(false);
+
     const scrollBottomPad = (insets.bottom || 0) + 100;
 
     return (
@@ -361,11 +381,57 @@ export default function MyCommissionRequestsMobile() {
                             <Text style={m.emptySubtext}>Your completed commissions will appear here</Text>
                         </View>
                     ) : (
+                        <>
+                            <View style={m.commissionsList}>
+                                {(pastCommissionsExpanded ? pastCommissions : pastCommissions.slice(0, 5)).map((commission) => (
+                                    <CommissionCardMobile key={commission.id} commission={commission} />
+                                ))}
+                            </View>
+                            {pastCommissions.length > 5 && (
+                                <TouchableOpacity
+                                    onPress={() => setPastCommissionsExpanded(!pastCommissionsExpanded)}
+                                    style={m.seeMoreButton}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={m.seeMoreText}>
+                                        {pastCommissionsExpanded ? "See Less" : "See More"}
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                        </>
+                    )}
+                </View>
+
+                {/* Cancelled Commissions Section */}
+                <View style={m.section}>
+                    <Text style={m.sectionTitle}>Cancelled Commissions</Text>
+                    {initialLoading ? (
+                        <Text style={m.loadingText}>Loading…</Text>
+                    ) : cancelledCommissions.length === 0 ? (
+                        <View style={m.emptyState}>
+                            <Ionicons name="close-circle-outline" size={48} color={colors.border} />
+                            <Text style={m.emptyText}>No cancelled commissions</Text>
+                            <Text style={m.emptySubtext}>Your cancelled commissions will appear here</Text>
+                        </View>
+                    ) : (
+                        <>
                         <View style={m.commissionsList}>
-                            {pastCommissions.map((commission) => (
+                                {(cancelledCommissionsExpanded ? cancelledCommissions : cancelledCommissions.slice(0, 5)).map((commission) => (
                                 <CommissionCardMobile key={commission.id} commission={commission} />
                             ))}
                         </View>
+                            {cancelledCommissions.length > 5 && (
+                                <TouchableOpacity
+                                    onPress={() => setCancelledCommissionsExpanded(!cancelledCommissionsExpanded)}
+                                    style={m.seeMoreButton}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={m.seeMoreText}>
+                                        {cancelledCommissionsExpanded ? "See Less" : "See More"}
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                        </>
                     )}
                 </View>
             </ScrollView>
@@ -420,8 +486,14 @@ function CommissionCardMobile({ commission }: { commission: Commission }) {
                 pathname: "/buddycaller/view_commission",
                 params: { id: commission.id },
             });
+        } else if (commission.status === "Cancelled") {
+            // For cancelled commissions, open the modal view
+            router.push({
+                pathname: "/buddycaller/view_commission",
+                params: { id: commission.id },
+            });
         } else {
-            // For accepted/in progress/completed commissions, go to task_progress
+            // For completed, accepted, and in progress commissions, go to task_progress
             router.push({
                 pathname: "/buddycaller/task_progress",
                 params: { id: commission.id },
@@ -565,6 +637,16 @@ const m = StyleSheet.create({
         alignItems: "flex-end",
     },
     viewText: {
+        color: colors.maroon,
+        fontSize: 12,
+        fontWeight: "600",
+    },
+    seeMoreButton: {
+        marginTop: 10,
+        alignItems: "center",
+        paddingVertical: 8,
+    },
+    seeMoreText: {
         color: colors.maroon,
         fontSize: 12,
         fontWeight: "600",

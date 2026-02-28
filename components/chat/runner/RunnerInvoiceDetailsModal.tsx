@@ -1,3 +1,4 @@
+// Force rebuild
 import React from 'react';
 import { View, Text, TouchableOpacity, Modal, Platform, type ViewStyle, type TextStyle } from 'react-native';
 

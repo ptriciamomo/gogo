@@ -57,11 +57,10 @@ export const useInvoiceActionsRunner = ({
     const message = messages.find(msg => msg.id === messageId);
     if (message && message.invoice) {
       // Extract subtotal from total amount
-      // Total = Subtotal + (Subtotal * 0.12) + (Subtotal * 0.10)
-      // Total = Subtotal * (1 + 0.12 + 0.10) = Subtotal * 1.22
-      // Subtotal = Total / 1.22
+      // Total = Subtotal + (5 + 0.12 × Subtotal) = Subtotal × 1.12 + 5
+      // Subtotal = (Total - 5) / 1.12
       const totalAmount = typeof message.invoice.amount === 'number' ? message.invoice.amount : parseFloat(message.invoice.amount || '0');
-      const subtotal = totalAmount / 1.22; // Reverse calculate to get the base subtotal
+      const subtotal = totalAmount > 5 ? (totalAmount - 5) / 1.12 : 0; // Reverse calculate to get the base subtotal
       
       setInvoiceData({
         amount: subtotal.toFixed(2), // Store subtotal in the form field
@@ -206,9 +205,12 @@ export const useInvoiceActionsRunner = ({
       try {
         // CALCULATION FORMALA SA INVOICE FOR COMMISSIONS NI BAI
         const baseAmount = parseFloat(invoiceData.amount) || 0;
-        const vatDeduction = baseAmount * 0.12;
-        const serviceFee = baseAmount * 0.10;
-        const totalServiceFee = vatDeduction + serviceFee;
+        let totalServiceFee = 0;
+        if (baseAmount > 0) {
+          const baseFee = 5;
+          const vatAmount = baseAmount * 0.12;
+          totalServiceFee = baseFee + vatAmount;
+        }
         const totalAmount = baseAmount + totalServiceFee;
 
         const updatedInvoiceData = {
@@ -290,9 +292,12 @@ export const useInvoiceActionsRunner = ({
 
         // Calculate total amount with new service fee formula
         const baseAmount = parseFloat(invoiceData.amount) || 0;
-        const vatDeduction = baseAmount * 0.12;
-        const serviceFee = baseAmount * 0.10;
-        const totalServiceFee = vatDeduction + serviceFee;
+        let totalServiceFee = 0;
+        if (baseAmount > 0) {
+          const baseFee = 5;
+          const vatAmount = baseAmount * 0.12;
+          totalServiceFee = baseFee + vatAmount;
+        }
         const totalAmount = baseAmount + totalServiceFee;
 
         // Create the invoice data for both table and message_text

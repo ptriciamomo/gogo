@@ -328,10 +328,11 @@ export default function ViewErrandWeb() {
         const extraItems = Math.max(totalQuantity - 1, 0);
         const deliveryFee = baseFlatFee + (addOnPerExtra * extraItems);
 
-        // Service fee: ₱10 flat per transaction
-        const serviceFeeBase = 10;
-        // VAT: 12% applied only to the service fee
-        const vatAmount = serviceFeeBase * 0.12;
+        // System fee: ₱5 flat per transaction
+        const serviceFeeBase = 5;
+        // VAT: 12% applied to (Subtotal + Delivery Fee)
+        const baseAmount = subtotal + deliveryFee;
+        const vatAmount = baseAmount * 0.12;
         const serviceFeeWithVat = serviceFeeBase + vatAmount;
 
         // Total

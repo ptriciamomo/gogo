@@ -39,6 +39,7 @@ import { RunnerImageViewerModal } from '../../components/chat/runner/RunnerImage
 import { RunnerInvoiceAcceptedModal } from '../../components/chat/runner/RunnerInvoiceAcceptedModal';
 import { RunnerDatePickerModal } from '../../components/chat/runner/RunnerDatePickerModal';
 import { RunnerInvoiceFormModal } from '../../components/chat/runner/RunnerInvoiceFormModal';
+import { RunnerInvoiceDetailsModal } from '../../components/chat/runner/RunnerInvoiceDetailsModal';
 import { RunnerMessageBubble } from '../../components/chat/runner/RunnerMessageBubble';
 // Import hooks
 import { useChatMessagesRunner } from '../../hooks/chat/useChatMessagesRunner';
@@ -163,6 +164,16 @@ const ChatScreen: React.FC<ChatScreenRunnerProps> = ({ onBack, onNavigateToTaskR
 
   // State hook to track if invoice already exists for this commission
   const [invoiceExists, setInvoiceExists] = useState(false);
+
+  // State hook to store commission data for invoice modal
+  const [commissionData, setCommissionData] = useState<{ id: string | number | null; title: string | null }>({
+    id: null,
+    title: null,
+  });
+
+  // State hook to manage invoice details modal
+  const [showInvoiceDetailsModal, setShowInvoiceDetailsModal] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<{ amount: number; description: string; status: string; messageId?: string } | null>(null);
 
   // State hook to manage invoice acceptance modal (copied from Accepted Successfully modal)
   const [invoiceAcceptedOpen, setInvoiceAcceptedOpen] = useState(false);
@@ -356,6 +367,40 @@ const ChatScreen: React.FC<ChatScreenRunnerProps> = ({ onBack, onNavigateToTaskR
     };
     getUser();
   }, []);
+
+  // Fetch commission data for invoice modal
+  useEffect(() => {
+    const fetchCommissionData = async () => {
+      const finalCommissionId = resolvedCommissionId || commissionId;
+      if (!finalCommissionId) {
+        setCommissionData({ id: null, title: null });
+        return;
+      }
+
+      try {
+        const { data: commission, error } = await supabase
+          .from('commission')
+          .select('id, title')
+          .eq('id', parseInt(finalCommissionId as string))
+          .single();
+
+        if (error || !commission) {
+          setCommissionData({ id: null, title: null });
+          return;
+        }
+
+        setCommissionData({
+          id: commission.id,
+          title: commission.title,
+        });
+      } catch (e) {
+        console.warn('Failed to fetch commission data:', e);
+        setCommissionData({ id: null, title: null });
+      }
+    };
+
+    fetchCommissionData();
+  }, [resolvedCommissionId, commissionId]);
 
   // Message sending function is now handled by useFileUploadRunner hook
 
@@ -871,6 +916,37 @@ const ChatScreen: React.FC<ChatScreenRunnerProps> = ({ onBack, onNavigateToTaskR
               onInvoiceDelete={(messageId) => {
                   handleDeleteInvoiceImmediateWeb(messageId);
               }}
+                  onInvoiceViewDetails={async (invoice) => {
+                    setSelectedInvoice(invoice);
+                    // Fetch commission data from invoice record
+                    if (invoice.messageId) {
+                      try {
+                        const { data: invoiceRecord, error } = await supabase
+                          .from('invoices')
+                          .select('commission_id')
+                          .eq('message_id', invoice.messageId)
+                          .single();
+
+                        if (!error && invoiceRecord?.commission_id) {
+                          const { data: commission, error: commissionError } = await supabase
+                            .from('commission')
+                            .select('id, title')
+                            .eq('id', invoiceRecord.commission_id)
+                            .single();
+
+                          if (!commissionError && commission) {
+                            setCommissionData({
+                              id: commission.id,
+                              title: commission.title,
+                            });
+                          }
+                        }
+                      } catch (e) {
+                        console.warn('Failed to fetch commission data for invoice:', e);
+                      }
+                    }
+                    setShowInvoiceDetailsModal(true);
+                  }}
             />
           )}
             keyExtractor={(item) => item.id}
@@ -942,6 +1018,37 @@ const ChatScreen: React.FC<ChatScreenRunnerProps> = ({ onBack, onNavigateToTaskR
                   onInvoiceDelete={(messageId) => {
                     handleDeleteInvoice(messageId);
                   }}
+                  onInvoiceViewDetails={async (invoice) => {
+                    setSelectedInvoice(invoice);
+                    // Fetch commission data from invoice record
+                    if (invoice.messageId) {
+                      try {
+                        const { data: invoiceRecord, error } = await supabase
+                          .from('invoices')
+                          .select('commission_id')
+                          .eq('message_id', invoice.messageId)
+                          .single();
+
+                        if (!error && invoiceRecord?.commission_id) {
+                          const { data: commission, error: commissionError } = await supabase
+                            .from('commission')
+                            .select('id, title')
+                            .eq('id', invoiceRecord.commission_id)
+                            .single();
+
+                          if (!commissionError && commission) {
+                            setCommissionData({
+                              id: commission.id,
+                              title: commission.title,
+                            });
+                          }
+                        }
+                      } catch (e) {
+                        console.warn('Failed to fetch commission data for invoice:', e);
+                      }
+                    }
+                    setShowInvoiceDetailsModal(true);
+                  }}
                 />
               ));
             })()}
@@ -971,6 +1078,8 @@ const ChatScreen: React.FC<ChatScreenRunnerProps> = ({ onBack, onNavigateToTaskR
         onDescriptionChange={(text) => setInvoiceData(prev => ({ ...prev, description: text }))}
         onCancel={handleInvoiceCancel}
         onSubmit={handleInvoiceSubmit}
+        commissionId={commissionData.id}
+        commissionTitle={commissionData.title}
       />
 
       {/* Date Picker Modal */}
@@ -1026,6 +1135,19 @@ const ChatScreen: React.FC<ChatScreenRunnerProps> = ({ onBack, onNavigateToTaskR
         visible={invoiceAcceptedOpen}
         callerName={acceptedCallerName}
         onOk={() => { setInvoiceAcceptedOpen(false); acceptedOnOk(); }}
+      />
+
+      {/* Invoice Details Modal */}
+      <RunnerInvoiceDetailsModal
+        styles={styles}
+        visible={showInvoiceDetailsModal}
+        invoice={selectedInvoice}
+        commissionId={commissionData.id}
+        commissionTitle={commissionData.title}
+        onClose={() => {
+          setShowInvoiceDetailsModal(false);
+          setSelectedInvoice(null);
+        }}
       />
 
       {/* Commission Settings Modal */}
@@ -1735,6 +1857,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: Platform.OS === 'web' ? 1000 : undefined,
   },
 
   // Invoice form
@@ -2103,6 +2226,62 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#EDEDED',
     marginVertical: 4,
+  },
+
+  // Invoice Details Modal
+  invoiceDetailsModal: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    zIndex: Platform.OS === 'web' ? 1001 : undefined,
+    ...(Platform.OS === 'web' ? { boxShadow: '0px 4px 12px rgba(0,0,0,0.3)' } : {}),
+  },
+  invoiceDetailsHeader: {
+    marginBottom: 20,
+  },
+  invoiceDetailsTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#8B2323',
+    textAlign: 'center',
+  },
+  invoiceDetailsContent: {
+    marginBottom: 20,
+  },
+  invoiceDetailsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  invoiceDetailsLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6C757D',
+    flex: 1,
+  },
+  invoiceDetailsValue: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#495057',
+    flex: 1,
+    textAlign: 'right',
+  },
+  invoiceDetailsOkButton: {
+    backgroundColor: '#8B2323',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  invoiceDetailsOkText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

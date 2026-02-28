@@ -18,6 +18,7 @@ interface ChatMessageBubbleProps {
   onFileDownload: (fileUrl: string, fileName: string) => void;
   onInvoiceAccept: (messageId: string) => void;
   onInvoiceDecline: (messageId: string) => void;
+  onInvoiceViewDetails?: (invoice: { amount: number; description: string; status: string; messageId?: string }) => void;
 }
 
 export default function ChatMessageBubble({
@@ -30,6 +31,7 @@ export default function ChatMessageBubble({
   onFileDownload,
   onInvoiceAccept,
   onInvoiceDecline,
+  onInvoiceViewDetails,
 }: ChatMessageBubbleProps) {
   // Skip empty messages (no text/attachment/invoice)
   if (!message.text && !message.attachment && !message.invoice) {
@@ -157,13 +159,29 @@ export default function ChatMessageBubble({
                 <TouchableOpacity
                   style={styles.viewDetailsButton as ViewStyle}
                   onPress={() => {
-                    if (message.invoice) {
-                      const statusText = message.invoice.status === 'accepted' ? 'Accepted' : 'Declined';
+                    if (message.invoice && onInvoiceViewDetails) {
                       const invoiceAmount = typeof message.invoice.amount === 'number' ? message.invoice.amount : parseFloat(message.invoice.amount || '0');
-                      const amount = invoiceAmount.toFixed(2);
-                      Alert.alert('Invoice Details', `Amount: ₱${amount}\nDescription: ${message.invoice.description}\nStatus: ${statusText}`);
+                      onInvoiceViewDetails({
+                        amount: invoiceAmount,
+                        description: message.invoice.description || '',
+                        status: message.invoice.status || 'pending',
+                        messageId: message.id,
+                      });
                     }
                   }}
+                  {...(Platform.OS === 'web' ? {
+                    onClick: () => {
+                      if (message.invoice && onInvoiceViewDetails) {
+                        const invoiceAmount = typeof message.invoice.amount === 'number' ? message.invoice.amount : parseFloat(message.invoice.amount || '0');
+                        onInvoiceViewDetails({
+                          amount: invoiceAmount,
+                          description: message.invoice.description || '',
+                          status: message.invoice.status || 'pending',
+                          messageId: message.id,
+                        });
+                      }
+                    }
+                  } as any : {})}
                 >
                   <Ionicons name="eye-outline" size={16} color="#8B2323" />
                   <Text style={styles.viewDetailsButtonText as TextStyle}>View Details</Text>

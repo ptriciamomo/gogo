@@ -935,12 +935,16 @@ export default function TaskProgressMobile() {
 									<Text style={m.invoiceBreakdownTitle}>Invoice Details:</Text>
 									{(() => {
 										// Reverse calculate subtotal from total
-										// Total = Subtotal × 1.22 (where 1.22 = 1 + 0.12 VAT + 0.10 Service Fee)
+										// Total = Subtotal + (5 + 0.12 × Subtotal) = Subtotal × 1.12 + 5
+										// Subtotal = (Total - 5) / 1.12
 										const total = invoiceAmount;
-										const subtotal = total / 1.22;
-										const vatDeduction = subtotal * 0.12;
-										const serviceFee = subtotal * 0.10;
-										const totalServiceFee = vatDeduction + serviceFee;
+										const subtotal = (total - 5) / 1.12;
+										let totalServiceFee = 0;
+										if (subtotal > 0) {
+											const baseFee = 5;
+											const vatAmount = subtotal * 0.12;
+											totalServiceFee = baseFee + vatAmount;
+										}
 										
 										return (
 											<View style={m.invoiceBreakdownContainer}>
@@ -949,7 +953,7 @@ export default function TaskProgressMobile() {
 													<Text style={m.invoiceBreakdownValue}>₱{subtotal.toFixed(2)}</Text>
 												</View>
 												<View style={m.invoiceBreakdownRow}>
-													<Text style={m.invoiceBreakdownLabel}>Service Fee:</Text>
+													<Text style={m.invoiceBreakdownLabel}>System Fee (incl. VAT):</Text>
 													<Text style={m.invoiceBreakdownValue}>₱{totalServiceFee.toFixed(2)}</Text>
 												</View>
 												<View style={[m.invoiceBreakdownRow, m.invoiceBreakdownTotalRow]}>

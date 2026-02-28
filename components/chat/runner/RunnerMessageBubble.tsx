@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Image, Platform, Alert, type ViewStyle, type TextStyle, type ImageStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SharedMessage } from '../SharedMessagingService';
+import { SharedMessage } from '../../SharedMessagingService';
 
 interface ChatMessage extends SharedMessage {
   isTyping?: boolean;
@@ -18,6 +18,7 @@ interface RunnerMessageBubbleProps {
   onFileDownload: (fileUrl: string, fileName: string) => void;
   onInvoiceEdit: (messageId: string) => void;
   onInvoiceDelete: (messageId: string) => void;
+  onInvoiceViewDetails?: (invoice: { amount: number; description: string; status: string; messageId?: string }) => void;
 }
 
 export function RunnerMessageBubble({
@@ -31,6 +32,7 @@ export function RunnerMessageBubble({
   onFileDownload,
   onInvoiceEdit,
   onInvoiceDelete,
+  onInvoiceViewDetails,
 }: RunnerMessageBubbleProps) {
   // Render system status messages (accepted/declined/commission acceptance) outside bubbles
   if (!message.invoice && !message.attachment && message.text && (
@@ -143,13 +145,29 @@ export function RunnerMessageBubble({
                   <TouchableOpacity
                     style={styles.viewDetailsButton as ViewStyle}
                     onPress={() => {
-                      if (message.invoice) {
-                        const statusText = message.invoice.status === 'accepted' ? 'Accepted by Caller' : 'Declined by Caller';
+                      if (message.invoice && onInvoiceViewDetails) {
                         const invoiceAmount = typeof message.invoice.amount === 'number' ? message.invoice.amount : parseFloat(message.invoice.amount || '0');
-                        const amount = invoiceAmount.toFixed(2);
-                        Alert.alert('Invoice Details', `Amount: ₱${amount}\nDescription: ${message.invoice.description}\nStatus: ${statusText}`);
+                        onInvoiceViewDetails({
+                          amount: invoiceAmount,
+                          description: message.invoice.description || '',
+                          status: message.invoice.status || 'pending',
+                          messageId: message.id,
+                        });
                       }
                     }}
+                    {...(Platform.OS === 'web' ? {
+                      onClick: () => {
+                        if (message.invoice && onInvoiceViewDetails) {
+                          const invoiceAmount = typeof message.invoice.amount === 'number' ? message.invoice.amount : parseFloat(message.invoice.amount || '0');
+                          onInvoiceViewDetails({
+                            amount: invoiceAmount,
+                            description: message.invoice.description || '',
+                            status: message.invoice.status || 'pending',
+                            messageId: message.id,
+                          });
+                        }
+                      }
+                    } as any : {})}
                   >
                     <Ionicons name="eye-outline" size={16} color="#8B2323" />
                     <Text style={styles.viewDetailsButtonText as TextStyle}>View Details</Text>

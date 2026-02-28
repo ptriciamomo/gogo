@@ -484,10 +484,11 @@ export default function ErrandDetailsWeb() {
         const extraItems = Math.max(totalQuantity - 1, 0);
         const deliveryFee = baseFlatFee + (addOnPerExtra * extraItems);
 
-        // Service fee: ₱10 flat per transaction
-        const serviceFeeBase = 10;
-        // VAT: 12% applied only to the service fee
-        const vatAmount = serviceFeeBase * 0.12;
+        // System fee: ₱5 flat per transaction
+        const serviceFeeBase = 5;
+        // VAT: 12% applied to (Subtotal + Delivery Fee)
+        const baseAmount = subtotal + deliveryFee;
+        const vatAmount = baseAmount * 0.12;
         const serviceFeeWithVat = serviceFeeBase + vatAmount;
 
         // Total
@@ -779,10 +780,10 @@ export default function ErrandDetailsWeb() {
                                     </View>
                                 )}
 
-                                {/* Service Fee (incl. VAT) - Only shown when there's subtotal or delivery fee */}
+                                {/* System Fee (incl. VAT) - Only shown when there's subtotal or delivery fee */}
                                 {(priceBreakdown.subtotal > 0 || priceBreakdown.deliveryFee > 0) && (
                                     <View style={s.priceBreakdownRow}>
-                                        <Text style={s.priceBreakdownLabel}>Service Fee (incl. VAT)</Text>
+                                        <Text style={s.priceBreakdownLabel}>System Fee (incl. VAT)</Text>
                                         <Text style={s.priceBreakdownValue}>
                                             ₱{priceBreakdown.serviceFee.toFixed(2)}
                                         </Text>

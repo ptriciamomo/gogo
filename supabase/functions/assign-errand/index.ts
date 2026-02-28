@@ -39,20 +39,12 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-  // NOTE: Test Mode Bypass (Development/Testing Only)
-  // The x-test-mode header allows manual testing in Supabase Dashboard or other testing tools
-  // without requiring a valid JWT token. This bypass is for manual testing only.
-  // IMPORTANT: Test mode is automatically disabled in production environments.
-  // When ENVIRONMENT=production, x-test-mode is ignored and JWT authentication is always required.
-  // This prevents abuse or security issues in production.
-  // Production app requests MUST include a valid Authorization: Bearer <JWT> header.
 
-  // Check for explicit test mode header (only allowed in non-production environments)
   const isTestMode =
     req.headers.get("x-test-mode") === "true" &&
     Deno.env.get("ENVIRONMENT") !== "production";
 
-  // Extract and validate Authorization header (skip for test mode)
+ 
   if (!isTestMode) {
     const authHeader = req.headers.get("authorization");
 
@@ -70,11 +62,11 @@ serve(async (req) => {
   }
 
   try {
-    // Parse request body
+  
     const body = await req.json();
     const { errand_id } = body;
 
-    // DIAGNOSTIC LOG 2: After parsing request body
+
     console.log("[ASSIGN-ERRAND] ========== PROCESSING ERRAND ==========");
     console.log("[ASSIGN-ERRAND] ENTERED FUNCTION for errand_id:", errand_id);
     console.log("[ASSIGN-ERRAND] Request body parsed:", { errandId: errand_id });
@@ -84,7 +76,7 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ error: "Missing errand_id" }), 400);
     }
 
-    // Fetch the errand (READ-ONLY)
+    // STEP1: Fetch the errand 
     const { data: errand, error } = await supabase
       .from("errand")
       .select("*")
@@ -106,11 +98,9 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
 
-    // Define presence thresholds (must match runner-side logic exactly)
     const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
 
-    // Fetch eligible runners (READ-ONLY)
-    // Eligibility: role = BuddyRunner, is_available = true, last_seen_at >= 75s, location_updated_at >= 75s OR NULL
+    // Step 2: Fetch eligible runners 
     let runnersQuery = supabase
       .from("users")
       .select("id, latitude, longitude, last_seen_at, location_updated_at, is_available, average_rating")
@@ -119,7 +109,7 @@ serve(async (req) => {
       .gte("last_seen_at", seventyFiveSecondsAgo)
       .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`);
 
-    // Exclude timeout runners if present (READ-ONLY filtering)
+    // Exclude timeout runners if present 
     if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids) && errand.timeout_runner_ids.length > 0) {
       for (const timeoutRunnerId of errand.timeout_runner_ids) {
         runnersQuery = runnersQuery.neq("id", timeoutRunnerId);
@@ -198,7 +188,7 @@ serve(async (req) => {
       );
     }
 
-    // A5: Fetch caller location for distance calculation
+    // STep 3: Fetch caller location for distance calculation
     const { data: callerData, error: callerError } = await supabase
       .from("users")
       .select("latitude, longitude")
@@ -220,9 +210,9 @@ serve(async (req) => {
 
     // Distance calculation now uses shared module (calculateDistanceKm imported)
 
-    // A5: Apply distance hard filter (≤ 500m)
+    // Step 3A: Apply distance hard filter (≤ 500m)
     const filteredRunners = runners.filter((runner) => {
-      // Exclude runners with null/undefined/NaN coordinates
+     
       if (!runner.latitude || !runner.longitude) {
         return false;
       }
@@ -238,7 +228,7 @@ serve(async (req) => {
       const distanceKm = calculateDistanceKm(callerLat, callerLon, lat, lon);
       const distanceMeters = distanceKm * 1000;
 
-      // Hard filter: exclude if distance > 500m (strict > comparison, 500m is included)
+      // Hard filter: exclude if distance > 500m 
       return distanceMeters <= 500;
     });
 

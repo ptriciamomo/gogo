@@ -23,7 +23,7 @@
 --
 -- ============================================================================
 
-CREATE OR REPLACE FUNCTION process_timed_out_tasks()
+CREATE OR REPLACE FUNCTION public.process_timed_out_tasks()
 RETURNS JSON AS $$
 DECLARE
   result JSON;
@@ -34,6 +34,10 @@ DECLARE
   commissions_reassigned INTEGER := 0;
   commissions_cancelled INTEGER := 0;
   errors TEXT[] := ARRAY[]::TEXT[];
+  errands_reassigned_ids bigint[] := ARRAY[]::bigint[];
+  errands_cancelled_ids bigint[] := ARRAY[]::bigint[];
+  commissions_reassigned_ids bigint[] := ARRAY[]::bigint[];
+  commissions_cancelled_ids bigint[] := ARRAY[]::bigint[];
   
   -- Errand processing variables
   errand_rec RECORD;
@@ -124,6 +128,7 @@ BEGIN
         UPDATE errand
         SET 
           status = 'cancelled',
+          cancelled_at = NOW(),
           notified_runner_id = NULL,
           notified_at = NULL,
           notified_expires_at = NULL,
@@ -142,6 +147,7 @@ BEGIN
         
         RAISE NOTICE '[TIMEOUT] MUTATION errand % CANCELLED (rows_updated=1)', errand_rec.id;
         errands_cancelled := errands_cancelled + 1;
+        errands_cancelled_ids := array_append(errands_cancelled_ids, errand_rec.id);
         
         PERFORM pg_notify(
           'caller_notify_' || errand_rec.buddycaller_id,
@@ -192,6 +198,7 @@ BEGIN
           UPDATE errand
           SET 
             status = 'cancelled',
+            cancelled_at = NOW(),
             notified_runner_id = NULL,
             notified_at = NULL,
             notified_expires_at = NULL,
@@ -210,6 +217,7 @@ BEGIN
           
           RAISE NOTICE '[TIMEOUT] MUTATION errand % CANCELLED (all remaining runners timed out, rows_updated=1)', errand_rec.id;
           errands_cancelled := errands_cancelled + 1;
+          errands_cancelled_ids := array_append(errands_cancelled_ids, errand_rec.id);
           
           PERFORM pg_notify(
             'caller_notify_' || errand_rec.buddycaller_id,
@@ -250,6 +258,7 @@ BEGIN
           RAISE NOTICE '[TIMEOUT] MUTATION errand % REASSIGNED to runner % (rows_updated=1)', 
             errand_rec.id, errand_next_runner_id;
           errands_reassigned := errands_reassigned + 1;
+          errands_reassigned_ids := array_append(errands_reassigned_ids, errand_rec.id);
           
           PERFORM pg_notify(
             'errand_notify_' || errand_next_runner_id,
@@ -337,6 +346,7 @@ BEGIN
         UPDATE commission
         SET 
           status = 'cancelled',
+          cancelled_at = NOW(),
           notified_runner_id = NULL,
           notified_at = NULL,
           notified_expires_at = NULL,
@@ -355,6 +365,7 @@ BEGIN
         
         RAISE NOTICE '[TIMEOUT] MUTATION commission % CANCELLED (rows_updated=1)', commission_rec.id;
         commissions_cancelled := commissions_cancelled + 1;
+        commissions_cancelled_ids := array_append(commissions_cancelled_ids, commission_rec.id);
         
         PERFORM pg_notify(
           'caller_notify_' || commission_rec.buddycaller_id,
@@ -380,6 +391,7 @@ BEGIN
           UPDATE commission
           SET 
             status = 'cancelled',
+            cancelled_at = NOW(),
             notified_runner_id = NULL,
             notified_at = NULL,
             notified_expires_at = NULL,
@@ -398,6 +410,7 @@ BEGIN
           
           RAISE NOTICE '[TIMEOUT] MUTATION commission % CANCELLED (next runner NULL, rows_updated=1)', commission_rec.id;
           commissions_cancelled := commissions_cancelled + 1;
+          commissions_cancelled_ids := array_append(commissions_cancelled_ids, commission_rec.id);
           
           PERFORM pg_notify(
             'caller_notify_' || commission_rec.buddycaller_id,
@@ -436,6 +449,7 @@ BEGIN
           RAISE NOTICE '[TIMEOUT] MUTATION commission % REASSIGNED to runner % (rows_updated=1)', 
             commission_rec.id, commission_next_runner_id;
           commissions_reassigned := commissions_reassigned + 1;
+          commissions_reassigned_ids := array_append(commissions_reassigned_ids, commission_rec.id);
           
           PERFORM pg_notify(
             'commission_notify_' || commission_next_runner_id,
@@ -465,12 +479,16 @@ BEGIN
       'errands', json_build_object(
         'total', errands_processed,
         'reassigned', errands_reassigned,
-        'cancelled', errands_cancelled
+        'cancelled', errands_cancelled,
+        'reassigned_ids', errands_reassigned_ids,
+        'cancelled_ids', errands_cancelled_ids
       ),
       'commissions', json_build_object(
         'total', commissions_processed,
         'reassigned', commissions_reassigned,
-        'cancelled', commissions_cancelled
+        'cancelled', commissions_cancelled,
+        'reassigned_ids', commissions_reassigned_ids,
+        'cancelled_ids', commissions_cancelled_ids
       )
     ),
     'errors', errors,

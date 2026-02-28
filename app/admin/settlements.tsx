@@ -18,6 +18,140 @@ import {
 } from "react-native";
 import { supabase } from "../../lib/supabase";
 
+/* ================= HELPER FUNCTIONS ================= */
+// Food and drink items for Food Delivery category
+const FOOD_ITEMS = {
+    "Canteen": [
+        { name: "Toppings", price: "₱55" },
+        { name: "Biscuits", price: "₱10" },
+        { name: "Pansit Canton", price: "₱30" },
+        { name: "Waffles", price: "₱35" },
+        { name: "Pastel", price: "₱20" },
+        { name: "Rice Bowl", price: "₱60 " },
+    ],
+    "Drinks": [
+        { name: "Real Leaf", price: "₱30" },
+        { name: "Water (500ml)", price: "₱25" },
+        { name: "Minute Maid", price: "₱30" },
+        { name: "Kopiko Lucky Day", price: "₱30" },
+    ]
+} as const;
+
+const SCHOOL_MATERIALS = [
+    { name: "Yellowpad", price: "₱10" },
+    { name: "Ballpen", price: "₱10" },
+] as const;
+
+// Helper function to parse price from FOOD_ITEMS or School Materials
+function parseItemPrice(itemName: string): number {
+    // Food Delivery items
+    for (const category of Object.values(FOOD_ITEMS)) {
+        const item = category.find(i => i.name === itemName);
+        if (item) {
+            const match = item.price.match(/[\d.]+/);
+            if (match) return parseFloat(match[0]);
+        }
+    }
+    // School Materials
+    const schoolItem = SCHOOL_MATERIALS.find((i) => i.name === itemName);
+    if (schoolItem) {
+        const match = schoolItem.price.match(/[\d.]+/);
+        if (match) return parseFloat(match[0]);
+    }
+    return 0;
+}
+
+// Calculate actual System Fee for Errand
+function calculateErrandSystemFee(errand: any): number {
+    try {
+        const items = Array.isArray(errand.items) ? errand.items : [];
+        const category = errand.category || "";
+        
+        // Calculate subtotal from items
+        let subtotal = 0;
+        items.forEach((item: any) => {
+            if (item.name && item.qty) {
+                // Use item.price if available (e.g., Printing items), otherwise use parseItemPrice
+                let itemPrice = 0;
+                if (item.price !== undefined && item.price !== null) {
+                    itemPrice = parseFloat(String(item.price)) || 0;
+                } else {
+                    itemPrice = parseItemPrice(item.name);
+                }
+                const quantity = parseFloat(String(item.qty)) || 0;
+                subtotal += itemPrice * quantity;
+            }
+        });
+        
+        // Calculate total quantity
+        const totalQuantity = items.reduce((sum: number, item: any) => {
+            if (item.name && item.name.trim() !== "") {
+                const qty = parseFloat(String(item.qty)) || 0;
+                return sum + qty;
+            }
+            return sum;
+        }, 0);
+        
+        // Calculate delivery fee based on category
+        let baseFlatFee = 0;
+        let addOnPerExtra = 0;
+        
+        if (category === "Deliver Items") {
+            baseFlatFee = 20;
+            addOnPerExtra = 5;
+        } else if (category === "Food Delivery") {
+            baseFlatFee = 15;
+            addOnPerExtra = 5;
+        } else if (category === "School Materials") {
+            baseFlatFee = 10;
+            addOnPerExtra = 5;
+        } else if (category === "Printing") {
+            baseFlatFee = 5;
+            addOnPerExtra = 2;
+        }
+        
+        const extraItems = Math.max(totalQuantity - 1, 0);
+        const deliveryFee = baseFlatFee + (addOnPerExtra * extraItems);
+        
+        // Calculate System Fee: ₱5 + 12% × (Subtotal + Delivery Fee)
+        const serviceFeeBase = 5;
+        const baseAmount = subtotal + deliveryFee;
+        const vatAmount = baseAmount * 0.12;
+        const systemFee = serviceFeeBase + vatAmount;
+        
+        return systemFee;
+    } catch (error) {
+        console.warn('Error calculating errand system fee:', error);
+        return 0;
+    }
+}
+
+// Calculate actual System Fee for Commission
+function calculateCommissionSystemFee(invoiceTotal: number): number {
+    try {
+        // Reverse calculate subtotal from total
+        // Total = Subtotal + System Fee
+        // System Fee = 5 + (Subtotal × 0.12)
+        // Total = Subtotal + 5 + (Subtotal × 0.12) = Subtotal × 1.12 + 5
+        // Subtotal = (Total - 5) / 1.12
+        const subtotal = invoiceTotal > 5 ? (invoiceTotal - 5) / 1.12 : 0;
+        
+        if (subtotal <= 0) {
+            return 0;
+        }
+        
+        // Calculate System Fee: ₱5 + 12% × Subtotal
+        const baseFee = 5;
+        const vatAmount = subtotal * 0.12;
+        const systemFee = baseFee + vatAmount;
+        
+        return systemFee;
+    } catch (error) {
+        console.warn('Error calculating commission system fee:', error);
+        return 0;
+    }
+}
+
 /* ================= COLORS ================= */
 const colors = {
     maroon: "#8B0000",
@@ -240,7 +374,7 @@ export default function AdminSettlements() {
                 // Fetch all completed errands (no limit - needed for settlement computation)
                 const { data: errands, error: errandsError } = await supabase
                     .from('errand')
-                    .select('id, runner_id, created_at, status, amount_price')
+                    .select('id, runner_id, created_at, status, amount_price, items, category')
                     .in('runner_id', runnerIds)
                     .eq('status', 'completed')
                     .order('created_at', { ascending: false });
@@ -607,7 +741,8 @@ export default function AdminSettlements() {
                             if (!settlement.commission_ids.includes(commissionId)) {
                                 settlement.total_earnings += invoiceAmount;
                                 settlement.total_transactions += 1;
-                                settlement.system_fees += 10;
+                                const actualSystemFee = calculateCommissionSystemFee(invoiceAmount);
+                                settlement.system_fees += actualSystemFee;
                                 settlement.commission_ids.push(commissionId);
                                 trackedCommissionIds.add(commissionId); // Mark as tracked
                             }
@@ -630,7 +765,8 @@ export default function AdminSettlements() {
                             const settlement = settlementsMap.get(periodInfo.key)!;
                         settlement.total_earnings += invoiceAmount;
                         settlement.total_transactions += 1;
-                        settlement.system_fees += 10;
+                        const actualSystemFee = calculateCommissionSystemFee(invoiceAmount);
+                        settlement.system_fees += actualSystemFee;
                             
                             // Track commission ID (already have it from above)
                             if (!settlement.commission_ids.includes(commissionId)) {
@@ -805,7 +941,8 @@ export default function AdminSettlements() {
                             if (!settlement.errand_ids.includes(errandId)) {
                                 settlement.total_earnings += price;
                                 settlement.total_transactions += 1;
-                                settlement.system_fees += 10;
+                                const actualSystemFee = calculateErrandSystemFee(errand);
+                                settlement.system_fees += actualSystemFee;
                                 settlement.errand_ids.push(errandId);
                                 trackedErrandIds.add(errandId); // Mark as tracked
                             }
@@ -828,7 +965,8 @@ export default function AdminSettlements() {
                             const settlement = settlementsMap.get(periodInfo.key)!;
                         settlement.total_earnings += price;
                         settlement.total_transactions += 1;
-                        settlement.system_fees += 10;
+                        const actualSystemFee = calculateErrandSystemFee(errand);
+                        settlement.system_fees += actualSystemFee;
                             
                             // Track errand ID (already have it from above)
                             if (!settlement.errand_ids.includes(errandId)) {

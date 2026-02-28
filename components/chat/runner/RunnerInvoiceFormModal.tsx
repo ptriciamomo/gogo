@@ -16,6 +16,8 @@ interface RunnerInvoiceFormModalProps {
   onDescriptionChange: (text: string) => void;
   onCancel: () => void;
   onSubmit: () => void;
+  commissionId?: string | number | null;
+  commissionTitle?: string | null;
 }
 
 export function RunnerInvoiceFormModal({
@@ -27,15 +29,20 @@ export function RunnerInvoiceFormModal({
   onDescriptionChange,
   onCancel,
   onSubmit,
+  commissionId,
+  commissionTitle,
 }: RunnerInvoiceFormModalProps) {
   if (!visible) return null;
 
   // Calculate breakdown values
   const calculateBreakdown = () => {
     const subtotal = invoiceData.amount ? parseFloat(invoiceData.amount || '0') : 0;
-    const vatDeduction = subtotal * 0.12;
-    const serviceFee = subtotal * 0.10;
-    const totalServiceFee = vatDeduction + serviceFee;
+    let totalServiceFee = 0;
+    if (subtotal > 0) {
+      const baseFee = 5;
+      const vatAmount = subtotal * 0.12;
+      totalServiceFee = baseFee + vatAmount;
+    }
     const total = subtotal + totalServiceFee;
     return {
       subtotal: subtotal.toFixed(2),
@@ -72,6 +79,22 @@ export function RunnerInvoiceFormModal({
             activeOpacity={1}
             onPress={() => Keyboard.dismiss()}
           >
+            {/* Commission ID and Title */}
+            {commissionId && (
+              <View style={styles.invoiceFormField as ViewStyle}>
+                <View style={styles.invoiceBreakdownRow as ViewStyle}>
+                  <Text style={styles.invoiceBreakdownLabel as TextStyle}>Commission ID:</Text>
+                  <Text style={styles.invoiceBreakdownValue as TextStyle}>{commissionId}</Text>
+                </View>
+                {commissionTitle && (
+                  <View style={styles.invoiceBreakdownRow as ViewStyle}>
+                    <Text style={styles.invoiceBreakdownLabel as TextStyle}>Commission Title:</Text>
+                    <Text style={styles.invoiceBreakdownValue as TextStyle}>{commissionTitle}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             <TouchableOpacity
               style={styles.invoiceFormField as ViewStyle}
               activeOpacity={1}
@@ -122,7 +145,7 @@ export function RunnerInvoiceFormModal({
                 </Text>
               </View>
               <View style={styles.invoiceBreakdownRow as ViewStyle}>
-                <Text style={styles.invoiceBreakdownLabel as TextStyle}>Service Fee</Text>
+                <Text style={styles.invoiceBreakdownLabel as TextStyle}>System Fee (incl. VAT)</Text>
                 <Text style={styles.invoiceBreakdownValue as TextStyle}>
                   ₱{breakdown.serviceFee}
                 </Text>

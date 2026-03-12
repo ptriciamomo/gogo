@@ -1,7 +1,7 @@
 // app/accoun_confirm.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useMemo, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import {
     Alert,
     Image,
@@ -61,6 +61,65 @@ export default function AccountConfirm() {
         updateField,
     } = useRegistration();
 
+    // Class Schedule (from Supabase tables: students, student_subjects) - mobile only
+    const [scheduleSemester, setScheduleSemester] = useState<string | null>(null);
+    const [scheduleYearLevel, setScheduleYearLevel] = useState<string | null>(null);
+    const [scheduleSubjects, setScheduleSubjects] = useState<Array<{
+        subject_code?: string;
+        subject_title?: string;
+        description?: string;
+        day?: string;
+        term?: string;
+        time?: string;
+    }>>([]);
+
+    useEffect(() => {
+        if (!studentId) return;
+
+        console.log("AccountConfirm studentId:", studentId);
+        console.log("Fetching class schedule for studentId:", studentId);
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const { data: studentRow, error: studentErr } = await supabase
+                    .from('students')
+                    .select('semester, year_level')
+                    .eq('student_id', studentId)
+                    .maybeSingle();
+
+                if (!cancelled) {
+                    console.log("Students query result:", studentRow);
+                    console.log("Semester fetched:", studentRow?.semester);
+                    console.log("Year level fetched:", studentRow?.year_level);
+                    if (!studentErr && studentRow) {
+                        setScheduleSemester((studentRow as any).semester ?? null);
+                        setScheduleYearLevel((studentRow as any).year_level ?? null);
+                    }
+                }
+
+                const { data: subjectRows, error: subjectsErr } = await supabase
+                    .from('student_subjects')
+                    .select('subject_code, subject_title, description, day, term, time')
+                    .eq('student_id', studentId);
+
+                if (!cancelled) {
+                    console.log("Subjects query result:", subjectRows);
+                    console.log("Number of subjects:", subjectRows?.length);
+                    if (!subjectsErr && Array.isArray(subjectRows)) {
+                        setScheduleSubjects(subjectRows as any);
+                    }
+                }
+            } catch {
+                // Intentionally no UI changes/alerts; keep existing page behavior.
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [studentId]);
+
     // Which email to show/use
     const emailToShow = email || String(emailParam || '');
 
@@ -75,6 +134,16 @@ export default function AccountConfirm() {
         course: '',
         phone: '',
         role: '',
+        semester: '',
+        yearLevel: '',
+        subjects: [] as Array<{
+            subject_code?: string;
+            subject_title?: string;
+            description?: string;
+            day?: string;
+            term?: string;
+            time?: string;
+        }>,
     });
     const [openDropdown, setOpenDropdown] = useState<'role' | 'course' | null>(null);
 
@@ -125,12 +194,15 @@ export default function AccountConfirm() {
             course: course,
             phone: phone,
             role: role,
+            semester: scheduleSemester || '',
+            yearLevel: scheduleYearLevel || '',
+            subjects: scheduleSubjects.length > 0 ? [...scheduleSubjects] : [],
         });
         setOpenDropdown(null); // Reset dropdown state
         setShowEditModal(true);
     };
 
-    const onSaveEdit = () => {
+    const onSaveEdit = async () => {
         // Update the store with edited data
         updateField('firstName', editData.firstName);
         updateField('middleName', editData.middleName);
@@ -139,6 +211,55 @@ export default function AccountConfirm() {
         updateField('course', editData.course);
         updateField('phone', editData.phone);
         updateField('role', editData.role);
+
+        // Update schedule data in Supabase (web only)
+        if (isWeb && studentId) {
+            try {
+                // Update students table
+                await supabase
+                    .from('students')
+                    .update({
+                        semester: editData.semester || null,
+                        year_level: editData.yearLevel || null,
+                    })
+                    .eq('student_id', studentId);
+
+                // Delete existing subjects
+                await supabase
+                    .from('student_subjects')
+                    .delete()
+                    .eq('student_id', studentId);
+
+                // Insert new subjects
+                if (editData.subjects.length > 0) {
+                    const subjectsToInsert = editData.subjects
+                        .filter(s => s.subject_code || s.subject_title || s.description || s.day || s.term || s.time)
+                        .map(s => ({
+                            student_id: studentId,
+                            subject_code: s.subject_code || null,
+                            subject_title: s.subject_title || null,
+                            description: s.description || null,
+                            day: s.day || null,
+                            term: s.term || null,
+                            time: s.time || null,
+                        }));
+
+                    if (subjectsToInsert.length > 0) {
+                        await supabase
+                            .from('student_subjects')
+                            .insert(subjectsToInsert);
+                    }
+                }
+
+                // Update local state to reflect changes
+                setScheduleSemester(editData.semester || null);
+                setScheduleYearLevel(editData.yearLevel || null);
+                setScheduleSubjects(editData.subjects);
+            } catch (error) {
+                console.error('Error saving schedule data:', error);
+            }
+        }
+
         setOpenDropdown(null); // Reset dropdown state
         setShowEditModal(false);
     };
@@ -194,6 +315,39 @@ export default function AccountConfirm() {
 
     const handleCourseChange = useCallback((value: string) => {
         setEditData(prev => ({ ...prev, course: value }));
+    }, []);
+
+    const handleSemesterChange = useCallback((text: string) => {
+        setEditData(prev => ({ ...prev, semester: text }));
+    }, []);
+
+    const handleYearLevelChange = useCallback((text: string) => {
+        setEditData(prev => ({ ...prev, yearLevel: text }));
+    }, []);
+
+    const handleSubjectFieldChange = useCallback((index: number, field: string, value: string) => {
+        setEditData(prev => {
+            const newSubjects = [...prev.subjects];
+            if (!newSubjects[index]) {
+                newSubjects[index] = {};
+            }
+            newSubjects[index] = { ...newSubjects[index], [field]: value };
+            return { ...prev, subjects: newSubjects };
+        });
+    }, []);
+
+    const handleAddSubject = useCallback(() => {
+        setEditData(prev => ({
+            ...prev,
+            subjects: [...prev.subjects, {}],
+        }));
+    }, []);
+
+    const handleRemoveSubject = useCallback((index: number) => {
+        setEditData(prev => ({
+            ...prev,
+            subjects: prev.subjects.filter((_, i) => i !== index),
+        }));
     }, []);
 
     const goHomeForRole = (r?: string) => {
@@ -766,7 +920,7 @@ export default function AccountConfirm() {
 
     // ---------- layouts ----------
     const WebLayout = () => (
-        <SafeAreaView style={[styles.page, styles.center]}>
+        <SafeAreaView style={[styles.page, styles.center, styles.pageWebScrollable]}>
             <View style={[styles.cardWeb, { width: containerWidth }]}>
                 <View style={styles.headerRowWeb}>
                     <TouchableOpacity onPress={() => router.back()}>
@@ -806,6 +960,49 @@ export default function AccountConfirm() {
                 </View>
 
                 <Field label="Email Address" value={emailToShow} compact />
+
+                {/* Class Schedule (from Form1 OCR) */}
+                <View style={styles.scheduleSectionWeb}>
+                    <Text style={styles.scheduleTitleWeb}>Class Schedule:</Text>
+                    <Text style={styles.scheduleMetaWeb}>Semester: {scheduleSemester || '—'}</Text>
+                    <Text style={styles.scheduleMetaWeb}>Year Level: {scheduleYearLevel || '—'}</Text>
+
+                    <ScrollView horizontal showsHorizontalScrollIndicator>
+                        <View style={styles.scheduleTableWeb}>
+                            <View style={styles.scheduleHeaderRowWeb}>
+                                <Text style={[styles.scheduleHeaderCellWeb, styles.colCodeWeb]}>Subject Code</Text>
+                                <Text style={[styles.scheduleHeaderCellWeb, styles.colTitleWeb]}>Subject Title</Text>
+                                <Text style={[styles.scheduleHeaderCellWeb, styles.colDescWeb]}>Description</Text>
+                                <Text style={[styles.scheduleHeaderCellWeb, styles.colDayWeb]}>Day</Text>
+                                <Text style={[styles.scheduleHeaderCellWeb, styles.colTermWeb]}>Term</Text>
+                                <Text style={[styles.scheduleHeaderCellWeb, styles.colTimeWeb]}>Time</Text>
+                            </View>
+
+                            {scheduleSubjects.map((s, idx) => (
+                                <View key={`${s.subject_code ?? 'sub'}-${idx}`} style={styles.scheduleRowWeb}>
+                                    <Text style={[styles.scheduleCellWeb, styles.colCodeWeb]} numberOfLines={1}>
+                                        {s.subject_code || '—'}
+                                    </Text>
+                                    <Text style={[styles.scheduleCellWeb, styles.colTitleWeb]} numberOfLines={1}>
+                                        {s.subject_title || '—'}
+                                    </Text>
+                                    <Text style={[styles.scheduleCellWeb, styles.colDescWeb]} numberOfLines={1}>
+                                        {s.description || '—'}
+                                    </Text>
+                                    <Text style={[styles.scheduleCellWeb, styles.colDayWeb]} numberOfLines={1}>
+                                        {s.day || '—'}
+                                    </Text>
+                                    <Text style={[styles.scheduleCellWeb, styles.colTermWeb]} numberOfLines={1}>
+                                        {s.term || '—'}
+                                    </Text>
+                                    <Text style={[styles.scheduleCellWeb, styles.colTimeWeb]} numberOfLines={1}>
+                                        {s.time || '—'}
+                                    </Text>
+                                </View>
+                            ))}
+                        </View>
+                    </ScrollView>
+                </View>
 
                 <TouchableOpacity
                     style={[styles.registerWeb, submitting && styles.registerDisabled]}
@@ -849,57 +1046,109 @@ export default function AccountConfirm() {
 
     const MobileLayout = () => (
         <SafeAreaView style={styles.page}>
-            <View style={styles.mobContainer}>
-                <View style={styles.headerRowMob}>
-                    <TouchableOpacity onPress={() => router.back()}>
-                        <Ionicons name="arrow-back" size={24} color={MAROON} />
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 40 }}
+            >
+                <View style={styles.mobContainer}>
+                    <View style={styles.headerRowMob}>
+                        <TouchableOpacity onPress={() => router.back()}>
+                            <Ionicons name="arrow-back" size={24} color={MAROON} />
+                        </TouchableOpacity>
+                        <Text style={styles.headerMob}>Account Confirmation</Text>
+                    </View>
+
+                    <Image
+                        source={require('../assets/images/logo.png')}
+                        style={styles.logoMob}
+                        resizeMode="contain"
+                    />
+                    <Text style={styles.subtitleMob}>Student Information</Text>
+
+                    <View style={styles.editRow}>
+                        <TouchableOpacity style={styles.editBtn} onPress={onEdit} activeOpacity={0.9}>
+                            <Text style={styles.editTxt}>Edit</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    <Field label="First Name" value={firstName} />
+                    <Field label="Middle Name" value={middleName} />
+                    <Field label="Last Name" value={lastName} />
+                    <Field label="Student Errand Role" value={role} />
+                    <Field label="Student ID Number" value={studentId} />
+                    <Field label="Course" value={course} />
+                    <Field label="Phone Number" value={phone} />
+
+                    <Text style={[styles.label, { marginTop: 6 }]}>ID Picture:</Text>
+                    <View style={styles.idBoxMob}>
+                        {idImageUri ? (
+                            <Image source={{ uri: idImageUri }} style={styles.idImgMob} />
+                        ) : (
+                            <View style={styles.idPlaceholderMob} />
+                        )}
+                    </View>
+
+                    <Field label="Email Address" value={emailToShow} />
+
+                    {/* Class Schedule (from Form1 OCR) */}
+                    <View style={styles.scheduleSectionMob}>
+                        <Text style={styles.scheduleTitleMob}>Class Schedule:</Text>
+                        <Text style={styles.scheduleMetaMob}>Semester: {scheduleSemester || '—'}</Text>
+                        <Text style={styles.scheduleMetaMob}>Year Level: {scheduleYearLevel || '—'}</Text>
+
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={true}
+                            style={styles.scheduleScrollViewMob}
+                        >
+                            <View style={styles.scheduleTableMob}>
+                                <View style={styles.scheduleHeaderRowMob}>
+                                    <Text style={[styles.scheduleHeaderCellMob, styles.colCode]}>Subject Code</Text>
+                                    <Text style={[styles.scheduleHeaderCellMob, styles.colTitle]}>Subject Title</Text>
+                                    <Text style={[styles.scheduleHeaderCellMob, styles.colDesc]}>Description</Text>
+                                    <Text style={[styles.scheduleHeaderCellMob, styles.colDay]}>Day</Text>
+                                    <Text style={[styles.scheduleHeaderCellMob, styles.colTerm]}>Term</Text>
+                                    <Text style={[styles.scheduleHeaderCellMob, styles.colTime]}>Time</Text>
+                                </View>
+
+                                {scheduleSubjects.map((s, idx) => (
+                                    <View key={`${s.subject_code ?? 'sub'}-${idx}`} style={styles.scheduleRowMob}>
+                                        <Text style={[styles.scheduleCellMob, styles.colCode]} numberOfLines={1}>
+                                            {s.subject_code || '—'}
+                                        </Text>
+                                        <Text style={[styles.scheduleCellMob, styles.colTitle]} numberOfLines={1}>
+                                            {s.subject_title || '—'}
+                                        </Text>
+                                        <Text style={[styles.scheduleCellMob, styles.colDesc]} numberOfLines={1}>
+                                            {s.description || '—'}
+                                        </Text>
+                                        <Text style={[styles.scheduleCellMob, styles.colDay]} numberOfLines={1}>
+                                            {s.day || '—'}
+                                        </Text>
+                                        <Text style={[styles.scheduleCellMob, styles.colTerm]} numberOfLines={1}>
+                                            {s.term || '—'}
+                                        </Text>
+                                        <Text style={[styles.scheduleCellMob, styles.colTime]} numberOfLines={1}>
+                                            {s.time || '—'}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                        </ScrollView>
+                    </View>
+
+                    <TouchableOpacity
+                        style={[styles.registerMob, submitting && styles.registerDisabled]}
+                        onPress={onRegister}
+                        disabled={submitting}
+                        activeOpacity={0.95}
+                    >
+                        <Text style={styles.registerMobTxt}>
+                            {submitting ? 'Saving…' : 'Register'}
+                        </Text>
                     </TouchableOpacity>
-                    <Text style={styles.headerMob}>Account Confirmation</Text>
                 </View>
-
-                <Image
-                    source={require('../assets/images/logo.png')}
-                    style={styles.logoMob}
-                    resizeMode="contain"
-                />
-                <Text style={styles.subtitleMob}>Student Information</Text>
-
-                <View style={styles.editRow}>
-                    <TouchableOpacity style={styles.editBtn} onPress={onEdit} activeOpacity={0.9}>
-                        <Text style={styles.editTxt}>Edit</Text>
-                    </TouchableOpacity>
-                </View>
-
-                <Field label="First Name" value={firstName} />
-                <Field label="Middle Name" value={middleName} />
-                <Field label="Last Name" value={lastName} />
-                <Field label="Student Errand Role" value={role} />
-                <Field label="Student ID Number" value={studentId} />
-                <Field label="Course" value={course} />
-                <Field label="Phone Number" value={phone} />
-
-                <Text style={[styles.label, { marginTop: 6 }]}>ID Picture:</Text>
-                <View style={styles.idBoxMob}>
-                    {idImageUri ? (
-                        <Image source={{ uri: idImageUri }} style={styles.idImgMob} />
-                    ) : (
-                        <View style={styles.idPlaceholderMob} />
-                    )}
-                </View>
-
-                <Field label="Email Address" value={emailToShow} />
-
-                <TouchableOpacity
-                    style={[styles.registerMob, submitting && styles.registerDisabled]}
-                    onPress={onRegister}
-                    disabled={submitting}
-                    activeOpacity={0.95}
-                >
-                    <Text style={styles.registerMobTxt}>
-                        {submitting ? 'Saving…' : 'Register'}
-                    </Text>
-                </TouchableOpacity>
-            </View>
+            </ScrollView>
         </SafeAreaView>
     );
 
@@ -1039,6 +1288,133 @@ export default function AccountConfirm() {
                                                 maxLength={11}
                                                 blurOnSubmit={false}
                                             />
+                                        </View>
+
+                                        {/* Class Schedule Section */}
+                                        <View style={[styles.formField, styles.formFieldWeb]}>
+                                            <Text style={styles.formLabel}>Class Schedule</Text>
+                                        </View>
+
+                                        <View style={[styles.formField, styles.formFieldWeb]}>
+                                            <Text style={styles.formLabel}>Semester:</Text>
+                                            <TextInput
+                                                style={[styles.formInput, styles.formInputWeb]}
+                                                value={editData.semester}
+                                                onChangeText={handleSemesterChange}
+                                                placeholder="Enter semester"
+                                                autoCapitalize="words"
+                                                autoCorrect={false}
+                                                keyboardType="default"
+                                                blurOnSubmit={false}
+                                            />
+                                        </View>
+
+                                        <View style={[styles.formField, styles.formFieldWeb]}>
+                                            <Text style={styles.formLabel}>Year Level:</Text>
+                                            <TextInput
+                                                style={[styles.formInput, styles.formInputWeb]}
+                                                value={editData.yearLevel}
+                                                onChangeText={handleYearLevelChange}
+                                                placeholder="Enter year level"
+                                                autoCapitalize="words"
+                                                autoCorrect={false}
+                                                keyboardType="default"
+                                                blurOnSubmit={false}
+                                            />
+                                        </View>
+
+                                        <View style={[styles.formField, styles.formFieldWeb]}>
+                                            <Text style={styles.formLabel}>Subjects:</Text>
+                                            <ScrollView
+                                                horizontal
+                                                showsHorizontalScrollIndicator={true}
+                                                style={styles.editScheduleScrollViewWeb}
+                                            >
+                                                <View style={styles.editScheduleTableWeb}>
+                                                    <View style={styles.editScheduleHeaderRowWeb}>
+                                                        <Text style={[styles.editScheduleHeaderCellWeb, styles.editColCodeWeb]}>Subject Code</Text>
+                                                        <Text style={[styles.editScheduleHeaderCellWeb, styles.editColTitleWeb]}>Subject Title</Text>
+                                                        <Text style={[styles.editScheduleHeaderCellWeb, styles.editColDescWeb]}>Description</Text>
+                                                        <Text style={[styles.editScheduleHeaderCellWeb, styles.editColDayWeb]}>Day</Text>
+                                                        <Text style={[styles.editScheduleHeaderCellWeb, styles.editColTermWeb]}>Term</Text>
+                                                        <Text style={[styles.editScheduleHeaderCellWeb, styles.editColTimeWeb]}>Time</Text>
+                                                    </View>
+
+                                                    {editData.subjects.map((subject, idx) => (
+                                                        <View key={`edit-subject-web-${idx}`} style={styles.editScheduleRowWeb}>
+                                                            <TextInput
+                                                                style={[styles.editScheduleInputWeb, styles.editColCodeWeb]}
+                                                                value={subject.subject_code || ''}
+                                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'subject_code', text)}
+                                                                placeholder="Code"
+                                                                autoCapitalize="characters"
+                                                                autoCorrect={false}
+                                                                blurOnSubmit={false}
+                                                            />
+                                                            <TextInput
+                                                                style={[styles.editScheduleInputWeb, styles.editColTitleWeb]}
+                                                                value={subject.subject_title || ''}
+                                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'subject_title', text)}
+                                                                placeholder="Title"
+                                                                autoCapitalize="words"
+                                                                autoCorrect={false}
+                                                                blurOnSubmit={false}
+                                                            />
+                                                            <TextInput
+                                                                style={[styles.editScheduleInputWeb, styles.editColDescWeb]}
+                                                                value={subject.description || ''}
+                                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'description', text)}
+                                                                placeholder="Description"
+                                                                autoCapitalize="words"
+                                                                autoCorrect={false}
+                                                                blurOnSubmit={false}
+                                                            />
+                                                            <TextInput
+                                                                style={[styles.editScheduleInputWeb, styles.editColDayWeb]}
+                                                                value={subject.day || ''}
+                                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'day', text)}
+                                                                placeholder="Day"
+                                                                autoCapitalize="characters"
+                                                                autoCorrect={false}
+                                                                blurOnSubmit={false}
+                                                            />
+                                                            <TextInput
+                                                                style={[styles.editScheduleInputWeb, styles.editColTermWeb]}
+                                                                value={subject.term || ''}
+                                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'term', text)}
+                                                                placeholder="Term"
+                                                                autoCapitalize="words"
+                                                                autoCorrect={false}
+                                                                blurOnSubmit={false}
+                                                            />
+                                                            <TextInput
+                                                                style={[styles.editScheduleInputWeb, styles.editColTimeWeb]}
+                                                                value={subject.time || ''}
+                                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'time', text)}
+                                                                placeholder="Time"
+                                                                autoCapitalize="none"
+                                                                autoCorrect={false}
+                                                                blurOnSubmit={false}
+                                                            />
+                                                            <TouchableOpacity
+                                                                style={styles.removeSubjectButtonWeb}
+                                                                onPress={() => handleRemoveSubject(idx)}
+                                                                activeOpacity={0.8}
+                                                            >
+                                                                <Ionicons name="close-circle" size={18} color={MAROON} />
+                                                            </TouchableOpacity>
+                                                        </View>
+                                                    ))}
+                                                </View>
+                                            </ScrollView>
+                                            <TouchableOpacity
+                                                style={styles.addSubjectButtonWeb}
+                                                onPress={handleAddSubject}
+                                                activeOpacity={0.8}
+                                            >
+                                                <Ionicons name="add" size={18} color={MAROON} />
+                                                <Text style={styles.addSubjectButtonTextWeb}>Add Subject</Text>
+                                            </TouchableOpacity>
                                         </View>
                                     </ScrollView>
 
@@ -1182,6 +1558,133 @@ export default function AccountConfirm() {
                                 blurOnSubmit={false}
                             />
                         </View>
+
+                        {/* Class Schedule Section */}
+                        <View style={styles.formField}>
+                            <Text style={styles.formLabel}>Class Schedule</Text>
+                        </View>
+
+                        <View style={styles.formField}>
+                            <Text style={styles.formLabel}>Semester:</Text>
+                            <TextInput
+                                style={styles.formInput}
+                                value={editData.semester}
+                                onChangeText={handleSemesterChange}
+                                placeholder="Enter semester"
+                                autoCapitalize="words"
+                                autoCorrect={false}
+                                keyboardType="default"
+                                blurOnSubmit={false}
+                            />
+                        </View>
+
+                        <View style={styles.formField}>
+                            <Text style={styles.formLabel}>Year Level:</Text>
+                            <TextInput
+                                style={styles.formInput}
+                                value={editData.yearLevel}
+                                onChangeText={handleYearLevelChange}
+                                placeholder="Enter year level"
+                                autoCapitalize="words"
+                                autoCorrect={false}
+                                keyboardType="default"
+                                blurOnSubmit={false}
+                            />
+                        </View>
+
+                        <View style={styles.formField}>
+                            <Text style={styles.formLabel}>Subjects:</Text>
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={true}
+                                style={styles.editScheduleScrollView}
+                            >
+                                <View style={styles.editScheduleTable}>
+                                    <View style={styles.editScheduleHeaderRow}>
+                                        <Text style={[styles.editScheduleHeaderCell, styles.editColCode]}>Subject Code</Text>
+                                        <Text style={[styles.editScheduleHeaderCell, styles.editColTitle]}>Subject Title</Text>
+                                        <Text style={[styles.editScheduleHeaderCell, styles.editColDesc]}>Description</Text>
+                                        <Text style={[styles.editScheduleHeaderCell, styles.editColDay]}>Day</Text>
+                                        <Text style={[styles.editScheduleHeaderCell, styles.editColTerm]}>Term</Text>
+                                        <Text style={[styles.editScheduleHeaderCell, styles.editColTime]}>Time</Text>
+                                    </View>
+
+                                    {editData.subjects.map((subject, idx) => (
+                                        <View key={`edit-subject-${idx}`} style={styles.editScheduleRow}>
+                                            <TextInput
+                                                style={[styles.editScheduleInput, styles.editColCode]}
+                                                value={subject.subject_code || ''}
+                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'subject_code', text)}
+                                                placeholder="Code"
+                                                autoCapitalize="characters"
+                                                autoCorrect={false}
+                                                blurOnSubmit={false}
+                                            />
+                                            <TextInput
+                                                style={[styles.editScheduleInput, styles.editColTitle]}
+                                                value={subject.subject_title || ''}
+                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'subject_title', text)}
+                                                placeholder="Title"
+                                                autoCapitalize="words"
+                                                autoCorrect={false}
+                                                blurOnSubmit={false}
+                                            />
+                                            <TextInput
+                                                style={[styles.editScheduleInput, styles.editColDesc]}
+                                                value={subject.description || ''}
+                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'description', text)}
+                                                placeholder="Description"
+                                                autoCapitalize="words"
+                                                autoCorrect={false}
+                                                blurOnSubmit={false}
+                                            />
+                                            <TextInput
+                                                style={[styles.editScheduleInput, styles.editColDay]}
+                                                value={subject.day || ''}
+                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'day', text)}
+                                                placeholder="Day"
+                                                autoCapitalize="characters"
+                                                autoCorrect={false}
+                                                blurOnSubmit={false}
+                                            />
+                                            <TextInput
+                                                style={[styles.editScheduleInput, styles.editColTerm]}
+                                                value={subject.term || ''}
+                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'term', text)}
+                                                placeholder="Term"
+                                                autoCapitalize="words"
+                                                autoCorrect={false}
+                                                blurOnSubmit={false}
+                                            />
+                                            <TextInput
+                                                style={[styles.editScheduleInput, styles.editColTime]}
+                                                value={subject.time || ''}
+                                                onChangeText={(text) => handleSubjectFieldChange(idx, 'time', text)}
+                                                placeholder="Time"
+                                                autoCapitalize="none"
+                                                autoCorrect={false}
+                                                blurOnSubmit={false}
+                                            />
+                                            <TouchableOpacity
+                                                style={styles.removeSubjectButton}
+                                                onPress={() => handleRemoveSubject(idx)}
+                                                activeOpacity={0.8}
+                                            >
+                                                <Ionicons name="close-circle" size={18} color={MAROON} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    ))}
+                                </View>
+                            </ScrollView>
+                            <TouchableOpacity
+                                style={styles.addSubjectButton}
+                                onPress={handleAddSubject}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name="add" size={18} color={MAROON} />
+                                <Text style={styles.addSubjectButtonText}>Add Subject</Text>
+                            </TouchableOpacity>
+                        </View>
                     </ScrollView>
 
                     <View style={styles.modalFooter}>
@@ -1207,6 +1710,13 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         padding: 24,
     },
+    // Web: allow vertical scrolling when content exceeds viewport (no layout/size changes)
+    pageWebScrollable: Platform.OS === 'web'
+        ? ({
+            height: '100vh',
+            overflowY: 'auto',
+        } as any)
+        : ({} as any),
     center: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -1644,6 +2154,230 @@ const styles = StyleSheet.create({
     },
     registerWebTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
     registerDisabled: { opacity: 0.6 },
+
+    // -------- Class Schedule (Web) --------
+    scheduleSectionWeb: { marginTop: 10, marginBottom: 16 },
+    scheduleTitleWeb: { color: MAROON, fontWeight: '700', fontSize: 13, marginBottom: 6 },
+    scheduleMetaWeb: { color: '#3a3a3a', fontSize: 12, marginBottom: 4 },
+    scheduleTableWeb: {
+        marginTop: 8,
+        borderWidth: 1,
+        borderColor: '#E7B9B9',
+        borderRadius: 8,
+        overflow: 'hidden',
+        backgroundColor: '#fff',
+    },
+    scheduleHeaderRowWeb: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        backgroundColor: '#f7ecec',
+    },
+    scheduleHeaderCellWeb: { color: MAROON, fontWeight: '700', fontSize: 11, paddingHorizontal: 8 },
+    scheduleRowWeb: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#F0D6D6',
+    },
+    scheduleCellWeb: { color: '#3a3a3a', fontSize: 11, paddingHorizontal: 8 },
+    // column widths for web
+    colCodeWeb: { width: 80 },
+    colTitleWeb: { width: 90 },
+    colDescWeb: { flex: 1, minWidth: 120 },
+    colDayWeb: { width: 50, textAlign: 'center' as any },
+    colTermWeb: { width: 80 },
+    colTimeWeb: { width: 100 },
+
+    // -------- Class Schedule (Mobile only) --------
+    scheduleSectionMob: { marginTop: 10 },
+    scheduleTitleMob: { color: MAROON, fontWeight: '700', fontSize: 12, marginBottom: 6 },
+    scheduleMetaMob: { color: '#3a3a3a', fontSize: 12, marginBottom: 4 },
+    scheduleScrollViewMob: {
+        marginTop: 8,
+    },
+    scheduleTableMob: {
+        borderWidth: 1,
+        borderColor: '#E7B9B9',
+        borderRadius: 8,
+        overflow: 'hidden',
+        backgroundColor: '#fff',
+    },
+    scheduleHeaderRowMob: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        backgroundColor: '#f7ecec',
+    },
+    scheduleHeaderCellMob: { 
+        color: MAROON, 
+        fontWeight: '700', 
+        fontSize: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    scheduleRowMob: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        borderTopWidth: 1,
+        borderTopColor: '#F0D6D6',
+    },
+    scheduleCellMob: { 
+        color: '#3a3a3a', 
+        fontSize: 10,
+        paddingHorizontal: 10,
+    },
+    // column widths tuned for mobile readability
+    colCode: { width: 62 },
+    colTitle: { width: 70 },
+    colDesc: { flex: 1, minWidth: 80 },
+    colDay: { width: 32, textAlign: 'center' as any },
+    colTerm: { width: 56 },
+    colTime: { width: 72 },
+
+    // -------- Edit Schedule (Mobile only) --------
+    editScheduleScrollView: {
+        marginTop: 8,
+    },
+    editScheduleTable: {
+        borderWidth: 1,
+        borderColor: MAROON,
+        borderRadius: 8,
+        overflow: 'hidden',
+        backgroundColor: '#fff',
+    },
+    editScheduleHeaderRow: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        backgroundColor: '#f7ecec',
+    },
+    editScheduleHeaderCell: {
+        color: MAROON,
+        fontWeight: '700',
+        fontSize: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    editScheduleRow: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        paddingHorizontal: 4,
+        borderTopWidth: 1,
+        borderTopColor: '#F0D6D6',
+        alignItems: 'center',
+    },
+    editScheduleInput: {
+        borderWidth: 1,
+        borderColor: MAROON,
+        borderRadius: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        fontSize: 10,
+        color: '#3a3a3a',
+        backgroundColor: '#fff',
+        minHeight: 32,
+        marginHorizontal: 2,
+    },
+    editColCode: { width: 70 },
+    editColTitle: { width: 80 },
+    editColDesc: { flex: 1, minWidth: 90 },
+    editColDay: { width: 50 },
+    editColTerm: { width: 70 },
+    editColTime: { width: 90 },
+    removeSubjectButton: {
+        padding: 4,
+        marginLeft: 4,
+    },
+    addSubjectButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderWidth: 1,
+        borderColor: MAROON,
+        borderRadius: 6,
+        backgroundColor: '#fff',
+    },
+    addSubjectButtonText: {
+        color: MAROON,
+        fontSize: 12,
+        fontWeight: '600',
+        marginLeft: 6,
+    },
+
+    // -------- Edit Schedule (Web) --------
+    editScheduleScrollViewWeb: {
+        marginTop: 8,
+    },
+    editScheduleTableWeb: {
+        borderWidth: 1,
+        borderColor: MAROON,
+        borderRadius: 8,
+        overflow: 'hidden',
+        backgroundColor: '#fff',
+    },
+    editScheduleHeaderRowWeb: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        backgroundColor: '#f7ecec',
+    },
+    editScheduleHeaderCellWeb: {
+        color: MAROON,
+        fontWeight: '700',
+        fontSize: 11,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+    },
+    editScheduleRowWeb: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        paddingHorizontal: 4,
+        borderTopWidth: 1,
+        borderTopColor: '#F0D6D6',
+        alignItems: 'center',
+    },
+    editScheduleInputWeb: {
+        borderWidth: 1,
+        borderColor: MAROON,
+        borderRadius: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        fontSize: 11,
+        color: '#3a3a3a',
+        backgroundColor: '#fff',
+        minHeight: 32,
+        marginHorizontal: 2,
+    },
+    editColCodeWeb: { width: 80 },
+    editColTitleWeb: { width: 100 },
+    editColDescWeb: { flex: 1, minWidth: 120 },
+    editColDayWeb: { width: 60 },
+    editColTermWeb: { width: 90 },
+    editColTimeWeb: { width: 100 },
+    removeSubjectButtonWeb: {
+        padding: 4,
+        marginLeft: 4,
+    },
+    addSubjectButtonWeb: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderWidth: 1,
+        borderColor: MAROON,
+        borderRadius: 6,
+        backgroundColor: '#fff',
+    },
+    addSubjectButtonTextWeb: {
+        color: MAROON,
+        fontSize: 12,
+        fontWeight: '600',
+        marginLeft: 6,
+    },
 
     // Success Modal Styles
     successModalOverlay: {

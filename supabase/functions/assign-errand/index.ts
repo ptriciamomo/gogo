@@ -76,7 +76,7 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ error: "Missing errand_id" }), 400);
     }
 
-    // STEP1: Fetch the errand 
+    // Step 1: Fetch the errand 
     const { data: errand, error } = await supabase
       .from("errand")
       .select("*")
@@ -98,9 +98,9 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
 
+     // Step 2: Fetch eligible runners 
     const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
-
-    // Step 2: Fetch eligible runners 
+ 
     let runnersQuery = supabase
       .from("users")
       .select("id, latitude, longitude, last_seen_at, location_updated_at, is_available, average_rating")
@@ -116,9 +116,10 @@ serve(async (req) => {
       }
     }
 
+    // Execute query to fetch eligible runners
     const { data: runners, error: runnersError } = await runnersQuery;
 
-    // Handle runner fetch errors
+    
     if (runnersError) {
       return corsResponse(JSON.stringify({ error: "Failed to fetch eligible runners" }), 500);
     }
@@ -208,9 +209,8 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ status: "no_runners_within_distance" }), 200);
     }
 
-    // Distance calculation now uses shared module (calculateDistanceKm imported)
 
-    // Step 3A: Apply distance hard filter (≤ 500m)
+    // Filter runners by distance (≤ 500m)
     const filteredRunners = runners.filter((runner) => {
      
       if (!runner.latitude || !runner.longitude) {
@@ -236,7 +236,7 @@ serve(async (req) => {
     if (!filteredRunners || filteredRunners.length === 0) {
       console.warn(`[ASSIGN-ERRAND] No runners within 500m for errand ${errand.id}. Caller coords: (${callerLat}, ${callerLon}) - cancelling immediately`);
       
-      // Immediately cancel the errand since no runners are within distance
+     
       console.log(`[ASSIGN-ERRAND] ========== PATH 2: NO RUNNERS WITHIN DISTANCE ==========`);
       console.log(`[ASSIGN-ERRAND] PRE-UPDATE: About to cancel errand ${errand.id} (no runners within 500m)`);
       console.log(`[ASSIGN-ERRAND] Current errand state:`, {
@@ -282,7 +282,7 @@ serve(async (req) => {
         );
       }
       
-      // DEBUG: Return diagnostic info when no runners within distance
+      
       const debugRunnerCoords = runners.map((r: any) => ({
         id: r.id,
         lat: r.latitude,
@@ -310,14 +310,13 @@ serve(async (req) => {
 
     console.log(`[ASSIGN-ERRAND] ${filteredRunners.length} runners within 500m for errand ${errand.id}`);
 
-    // Normalize errand categories for ranking (empty array allowed)
+    // Step 4: Normalize errand categories for ranking 
     const errandCategories =
       errand.category && errand.category.trim().length > 0
         ? [errand.category.trim().toLowerCase()]
         : [];
 
-    // QUEUE-BASED RANKING: Rank runners ONCE and store queue
-    // This prevents re-ranking on timeout, eliminating UI glitching
+    // QUEUE-BASED RANKING: Rank runners 
     console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id}`);
     const rankedRunners = await rankRunners(
       filteredRunners as RunnerForRanking[],
@@ -337,7 +336,7 @@ serve(async (req) => {
 
     console.log(`[ASSIGN-ERRAND] Ranked ${rankedRunners.length} runners for errand ${errand.id}`);
 
-    // DIAGNOSTIC LOG 3: After fetching eligible runners and BEFORE selecting topRunner
+    
     console.log("[ASSIGN-ERRAND] Eligible runners fetched:", {
       count: rankedRunners?.length || 0,
       runnerIds: rankedRunners?.map(r => r.id),
@@ -347,7 +346,7 @@ serve(async (req) => {
     if (rankedRunners.length === 0) {
       console.warn(`[ASSIGN-ERRAND] Ranking returned 0 runners for errand ${errand.id} - cancelling immediately`);
       
-      // Immediately cancel the errand since no runners are available
+      
       console.log(`[ASSIGN-ERRAND] ========== PATH 3: RANKING RETURNED 0 RUNNERS ==========`);
       console.log(`[ASSIGN-ERRAND] PRE-UPDATE: About to cancel errand ${errand.id} (ranking returned 0 runners)`);
       console.log(`[ASSIGN-ERRAND] Current errand state:`, {
@@ -402,47 +401,38 @@ serve(async (req) => {
       );
     }
 
-    // Extract runner IDs in ranked order for queue storage
+    // Step 5: Extract runner IDs in ranked order for queue storage
     const rankedRunnerIds = rankedRunners.map(r => r.id);
     console.log(`[ASSIGN-ERRAND] Ranked runner IDs for errand ${errand.id}:`, rankedRunnerIds);
 
     // Get top runner (index 0)
     const topRunner = rankedRunners[0];
 
-    // DIAGNOSTIC LOG 4: After determining topRunner
+    
     console.log("[ASSIGN-ERRAND] Top runner selected:", {
       runnerId: topRunner?.id || null,
       score: topRunner?.finalScore || null,
     });
 
-    // A7.2: Real Assignment
-    // Persists the top-ranked runner to the errand record.
-    // This converts the A7.1 dry-run result into an actual assignment.
-
     // Generate assignment timestamp and expiration (60 seconds from now)
     const assignedAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
 
-    // QUEUE-BASED ASSIGNMENT: Store queue and assign index 0
-    // Prepare timeout_runner_ids (kept for backward compatibility, not used for selection)
+    
     let updatedTimeoutRunnerIds: string[] = [];
     if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids)) {
       updatedTimeoutRunnerIds = errand.timeout_runner_ids;
     }
-
-    // Perform DB update (only if errand is still unassigned and pending)
-    // Store ranked_runner_ids queue and set current_queue_index = 0
     
-    // DIAGNOSTIC: Fetch fresh database state immediately before UPDATE
     const { data: freshErrand, error: freshError } = await supabase
       .from("errand")
       .select("id, status, notified_runner_id")
       .eq("id", errand.id)
       .single();
     
-    // DIAGNOSTIC: Log all values that will be used in UPDATE conditions
+
     console.log(`[ASSIGN-ERRAND] DIAGNOSTIC: Pre-UPDATE state check for errand ${errand.id}:`, {
-      // Values from initial fetch (Step 1)
+  
       initial_fetch: {
         errand_id: errand.id,
         errand_status: errand.status,
@@ -452,7 +442,7 @@ serve(async (req) => {
         errand_notified_runner_id: errand.notified_runner_id,
         errand_notified_runner_id_typeof: typeof errand.notified_runner_id,
       },
-      // Values from fresh database query (current state)
+    
       fresh_database: {
         fresh_id: freshErrand?.id,
         fresh_status: freshErrand?.status,
@@ -463,13 +453,13 @@ serve(async (req) => {
         fresh_notified_runner_id_typeof: typeof freshErrand?.notified_runner_id,
         fresh_query_error: freshError,
       },
-      // UPDATE filter conditions that will be applied
+    
       update_conditions: {
         condition_1_eq_id: errand.id,
         condition_2_is_notified_runner_id_null: null,
         condition_3_eq_status_pending: "pending",
       },
-      // Comparison: Will conditions match?
+    
       condition_match_analysis: {
         id_matches: freshErrand?.id === errand.id,
         notified_runner_id_is_null: freshErrand?.notified_runner_id === null,
@@ -487,12 +477,12 @@ serve(async (req) => {
       errand_current_notified_runner_id: errand.notified_runner_id,
     });
 
-    // DIAGNOSTIC LOG 5: Right before database UPDATE
     console.log("[ASSIGN-ERRAND] Attempting errand assignment:", {
       errandId: errand.id,
       runnerId: topRunner?.id,
     });
 
+    // Store queue and assign first runner
     const { data: updateData, error: updateError } = await supabase
       .from("errand")
       .update({
@@ -501,7 +491,7 @@ serve(async (req) => {
         notified_expires_at: expiresAt,  // Set expiration 60 seconds from now
         ranked_runner_ids: rankedRunnerIds,  // Store complete queue
         current_queue_index: 0,  // Start at index 0
-        timeout_runner_ids: updatedTimeoutRunnerIds,  // Backward compatibility only
+        timeout_runner_ids: updatedTimeoutRunnerIds,  
         is_notified: true,
       })
       .eq("id", errand.id)
@@ -544,10 +534,10 @@ serve(async (req) => {
 
     console.log(`[ASSIGN-ERRAND] Successfully updated errand ${errand.id}. Updated data:`, updateData[0]);
 
-    // DIAGNOSTIC LOG 7: Right before broadcasting
+   
     console.log("[ASSIGN-ERRAND] Broadcasting assignment to runner");
 
-    // Broadcast notification to assigned runner's private channel
+    // Step 6: Broadcast notification to assigned runner's 
     const channelName = `errand_notify_${topRunner.id}`;
     console.log(`🔔 [EDGE FUNCTION] Broadcasting to channel: ${channelName}`);
     console.log(`🔔 [EDGE FUNCTION] Event name: errand_notification`);

@@ -150,7 +150,13 @@ export default function StudentIdUploadScreen() {
 
         // Store the image URI in registration state for later upload after authentication
         setFromId(selectedFile);
-        router.push('/register_two');
+        
+        // Navigate to Form 1 page based on platform
+        if (Platform.OS === 'web') {
+            router.push('/form1');
+        } else {
+            router.push('/form1.mobile');
+        }
     };
 
     // ================== WEB / DESKTOP UI ==================

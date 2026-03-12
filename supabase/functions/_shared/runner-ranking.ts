@@ -1,7 +1,5 @@
 // Shared Runner Ranking Module
-// Single source of truth for runner ranking logic
-// Used by: assign-errand, assign-and-notify-commission
-// NOT used by: reassign-timed-out-tasks (queue-based, no re-ranking)
+
 
 // Haversine distance calculation (km)
 export function calculateDistanceKm(
@@ -24,13 +22,13 @@ export function calculateDistanceKm(
   return R * c;
 }
 
-// TF-IDF Utilities
+// Step 1: Calculate Term Frequency (Task)
 function calculateTF(term: string, document: string[]): number {
   if (document.length === 0) return 0;
   const termCount = document.filter(word => word === term).length;
   return termCount / document.length;
 }
-
+// Step 2: TF Calculation (Runner)
 function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
   if (totalTasks === 0) return 0;
   const tasksWithCategory = taskCategories.filter(taskCats => 
@@ -39,13 +37,15 @@ function calculateTFWithTaskCount(term: string, taskCategories: string[][], tota
   return tasksWithCategory / totalTasks;
 }
 
+// Step 3 & 4: Calculate Document Frequency & Inverse Document Frequency
 function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
   const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
   if (documentsContainingTerm === 0) return 0;
-  if (documentsContainingTerm === allDocuments.length) return 0.1;
-  return Math.log(allDocuments.length / documentsContainingTerm);
+  if (documentsContainingTerm === allDocuments.length) return 0.1; 
+  return Math.log(allDocuments.length / documentsContainingTerm); // Step 4: IDF
 }
-
+//  Step 6: Construct TF-IDF Vector for Query Document 
+// Build query vector
 function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
   const uniqueTerms = Array.from(new Set(document));
   const tfidfMap = new Map<string, number>();
@@ -56,7 +56,8 @@ function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[]
   });
   return tfidfMap;
 }
-
+// Step 7: Construct TF-IDF Vector for Runner Document
+// Build runner vector (prefers task-based TF)
 function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
   const allTerms = new Set<string>();
   taskCategories.forEach(taskCats => {
@@ -70,7 +71,7 @@ function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTask
   });
   return tfidfMap;
 }
-
+// Step 8: Calculate Cosine Similarity
 function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
   const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
   let dotProduct = 0;
@@ -87,7 +88,7 @@ function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, num
   if (denominator === 0) return 0;
   return dotProduct / denominator;
 }
-
+// Step 9: // Main TF-IDF calculation function
 function calculateTFIDFCosineSimilarity(
   taskCategories: string[],
   runnerHistory: string[],
@@ -97,13 +98,16 @@ function calculateTFIDFCosineSimilarity(
   if (taskCategories.length === 0 || runnerHistory.length === 0) {
     return 0;
   }
+  // Collect Task Category
   const queryDoc = taskCategories.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
   const runnerDoc = runnerHistory.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
   if (queryDoc.length === 0 || runnerDoc.length === 0) {
     return 0;
   }
+  // Step 5: Build Document Corpus
   const allDocuments = [queryDoc, runnerDoc];
   const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
+  // Step 7: Choose vector calculation method
   let runnerVector: Map<string, number>;
   if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
     runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
@@ -160,7 +164,8 @@ export async function rankRunners(
 
     // Rating score (35% weight)
     const ratingScore = (runner.average_rating || 0) / 5;
-
+ 
+    // Step 10: TF-IDF score used in ranking
     // TF-IDF score (25% weight)
     let tfidfScore = 0;
     if (taskCategories.length > 0) {
@@ -182,7 +187,7 @@ export async function rankRunners(
       }
     }
 
-    // Final weighted score
+    // Step 10: Final weighted score
     const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
 
     rankedRunners.push({

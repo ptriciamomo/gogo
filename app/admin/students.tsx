@@ -1667,6 +1667,14 @@ function Sidebar({
                     />
                     <Separator />
                     <SideItem
+                        label="Student Schedule"
+                        icon="calendar-outline"
+                        open={open}
+                        active={activeRoute === 'student-schedule'}
+                        onPress={() => router.push("/admin/student-schedule")}
+                    />
+                    <Separator />
+                    <SideItem
                         label="Settlements"
                         icon="cash-outline"
                         open={open}

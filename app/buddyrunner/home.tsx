@@ -19,6 +19,7 @@ import { supabase } from "../../lib/supabase";
 import LocationService from "../../components/LocationService";
 import LocationPromptModal from "../../components/LocationPromptModal";
 import LocationPromptModalWeb from "../../components/LocationPromptModalWeb";
+import SubmitScheduleModal from "../../components/SubmitScheduleModal";
 import { useNotificationBadge } from "./_layout";
 
 /* ================= COLORS ================= */
@@ -988,6 +989,113 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     console.log(`[TFIDF] ===== TF-IDF CALCULATION END =====`);
     
     return finalScore;
+}
+
+/* ===================== DATA: SCHEDULE VALIDATION ===================== */
+function useScheduleRequired(refreshKey?: number) {
+    const [needsSchedule, setNeedsSchedule] = React.useState(true);
+    const [loading, setLoading] = React.useState(true);
+
+    React.useEffect(() => {
+        const checkSchedule = async () => {
+            try {
+                setLoading(true);
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) {
+                    setNeedsSchedule(true);
+                    setLoading(false);
+                    return;
+                }
+
+                // Get current academic semester
+                const utcNow = new Date();
+                const phNow = new Date(utcNow.getTime() + 8 * 60 * 60 * 1000);
+                const today = phNow.toISOString().split("T")[0];
+
+                const { data: calendar } = await supabase
+                    .from("academic_calendar")
+                    .select("semester")
+                    .lte("start_date", today)
+                    .gte("end_date", today)
+                    .limit(1)
+                    .maybeSingle();
+
+                const currentSemester = calendar?.semester;
+                if (!currentSemester) {
+                    // No active semester - don't show banner
+                    setNeedsSchedule(false);
+                    setLoading(false);
+                    return;
+                }
+
+                // Get runner's student ID
+                const { data: userData } = await supabase
+                    .from("users")
+                    .select("student_id_number")
+                    .eq("id", user.id)
+                    .maybeSingle();
+
+                if (!userData?.student_id_number) {
+                    // No student ID - show banner
+                    setNeedsSchedule(true);
+                    setLoading(false);
+                    return;
+                }
+
+                // Check if runner has any schedules
+                const { data: schedules } = await supabase
+                    .from("student_subjects")
+                    .select("id")
+                    .eq("student_id", userData.student_id_number)
+                    .limit(1);
+
+                if (!schedules || schedules.length === 0) {
+                    // No schedules - show banner
+                    setNeedsSchedule(true);
+                    setLoading(false);
+                    return;
+                }
+
+                // Check if student's semester matches current semester
+                const { data: studentData } = await supabase
+                    .from("students")
+                    .select("semester")
+                    .eq("student_id", userData.student_id_number)
+                    .maybeSingle();
+
+                const studentSemester = studentData?.semester || "";
+
+                // Normalize semester strings for comparison
+                const normalizeSemester = (sem: string) => {
+                    const s = sem.toLowerCase();
+                    if (s.includes("first") || s.includes("1")) return 1;
+                    if (s.includes("second") || s.includes("2")) return 2;
+                    if (s.includes("third") || s.includes("3")) return 3;
+                    return null;
+                };
+
+                const studentSemNumber = normalizeSemester(studentSemester);
+                const currentSemNumber = normalizeSemester(currentSemester);
+
+                // Show banner if semester doesn't match or can't be determined
+                if (!studentSemNumber || studentSemNumber !== currentSemNumber) {
+                    setNeedsSchedule(true);
+                } else {
+                    setNeedsSchedule(false);
+                }
+            } catch (error) {
+                console.error("Error checking schedule:", error);
+                // On error, default to showing banner
+                setNeedsSchedule(true);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        checkSchedule();
+    }, [refreshKey]);
+
+    return { needsSchedule, loading };
 }
 
 /* ===================== DATA: AVAILABLE ERRANDS ===================== */
@@ -2053,18 +2161,21 @@ const success = StyleSheet.create({
 function GeofenceErrorModal({
     visible,
     onClose,
+    title,
+    message,
 }: {
     visible: boolean;
     onClose: () => void;
+    title?: string;
+    message?: string;
 }) {
     return (
         <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
             <View style={geofenceError.backdrop}>
                 <View style={geofenceError.card}>
-                    <Text style={geofenceError.title}>Unavailable Outside UM Matina</Text>
+                    <Text style={geofenceError.title}>{title || "Unavailable Outside UM Matina"}</Text>
                     <Text style={geofenceError.msg}>
-                        You are currently outside the University of Mindanao – Matina campus.
-                        To go online and accept errands or commissions, please return inside the campus area and try again.
+                        {message || "You are currently outside the University of Mindanao – Matina campus. To go online and accept errands or commissions, please return inside the campus area and try again."}
                     </Text>
                     <TouchableOpacity onPress={onClose} style={geofenceError.okBtn} activeOpacity={0.9}>
                         <Text style={geofenceError.okText}>OK</Text>
@@ -2074,6 +2185,75 @@ function GeofenceErrorModal({
         </Modal>
     );
 }
+/* ===================== SCHEDULE BANNER COMPONENT ===================== */
+function ScheduleBanner({ onOpenModal }: { onOpenModal: () => void }) {
+    return (
+        <View style={scheduleBanner.container}>
+            <View style={scheduleBanner.content}>
+                <View style={scheduleBanner.textContainer}>
+                    <Text style={scheduleBanner.title}>Schedule Required</Text>
+                    <Text style={scheduleBanner.description}>
+                        To continue using the runner app, please submit your current class schedule.
+                    </Text>
+                </View>
+                <TouchableOpacity
+                    style={scheduleBanner.button}
+                    onPress={onOpenModal}
+                    activeOpacity={0.9}
+                >
+                    <Text style={scheduleBanner.buttonText}>Submit Schedule</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+    );
+}
+
+const scheduleBanner = StyleSheet.create({
+    container: {
+        backgroundColor: "#FFF7E6",
+        borderLeftWidth: 4,
+        borderLeftColor: "#F59E0B",
+        borderRadius: 8,
+        padding: 16,
+        marginBottom: 20,
+        marginTop: 20,
+    },
+    content: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 12,
+    },
+    textContainer: {
+        flex: 1,
+        minWidth: 200,
+    },
+    title: {
+        fontSize: 16,
+        fontWeight: "700",
+        color: colors.text,
+        marginBottom: 4,
+    },
+    description: {
+        fontSize: 14,
+        color: colors.text,
+        opacity: 0.8,
+        lineHeight: 20,
+    },
+    button: {
+        backgroundColor: colors.maroon,
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 10,
+    },
+    buttonText: {
+        color: "#fff",
+        fontSize: 14,
+        fontWeight: "600",
+    },
+});
+
 const geofenceError = StyleSheet.create({
     backdrop: {
         flex: 1,
@@ -2184,9 +2364,14 @@ function HomeWeb() {
     
     // Geofence error modal state
     const [geofenceErrorVisible, setGeofenceErrorVisible] = useState(false);
+    const [validationErrorReason, setValidationErrorReason] = useState<string>("You cannot go Active right now.");
+    const [validationErrorTitle, setValidationErrorTitle] = useState<string>("Unavailable Outside UM Matina");
     
     // Waiting for location modal state
     const [waitingForLocationVisible, setWaitingForLocationVisible] = useState(false);
+    
+    // Schedule submission modal state
+    const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
 
     // Function to toggle availability and save to database
     const toggleAvailability = async (newStatus: boolean) => {
@@ -2290,7 +2475,19 @@ function HomeWeb() {
                     }
 
                     if (!validationResult?.allowed) {
-                        // Geofence violation - status remains OFF, show modal
+                        // Validation failed - status remains OFF, show modal with reason
+                        const reason = validationResult?.reason || "You cannot go Active right now.";
+                        
+                        setValidationErrorReason(reason);
+                        
+                        if (reason.toLowerCase().includes("scheduled class")) {
+                            setValidationErrorTitle("Schedule Conflict");
+                        } else if (reason.toLowerCase().includes("no active academic semester")) {
+                            setValidationErrorTitle("No Active Academic Semester");
+                        } else {
+                            setValidationErrorTitle("Unavailable Outside UM Matina");
+                        }
+                        
                         setGeofenceErrorVisible(true);
                         return; // Early return - UI and database remain OFF
                     }
@@ -2385,6 +2582,8 @@ function HomeWeb() {
     } = useAvailableCommissions({ availableMode });
     const { count: todayCompletedCount, loading: todayCompletedLoading } = useTodayCompletedCommissions();
     const { count: todayCompletedErrandsCount, loading: todayCompletedErrandsLoading } = useTodayCompletedErrands();
+    const [scheduleCheckKey, setScheduleCheckKey] = React.useState(0);
+    const { needsSchedule, loading: scheduleCheckLoading } = useScheduleRequired(scheduleCheckKey);
 
     // Load current availability status from database on component mount
     React.useEffect(() => {
@@ -2984,10 +3183,20 @@ function HomeWeb() {
             <GeofenceErrorModal
                 visible={geofenceErrorVisible}
                 onClose={() => setGeofenceErrorVisible(false)}
+                title={validationErrorTitle}
+                message={validationErrorReason}
             />
             <WaitingForLocationModal
                 visible={waitingForLocationVisible}
                 onClose={() => setWaitingForLocationVisible(false)}
+            />
+            <SubmitScheduleModal
+                visible={scheduleModalVisible}
+                onClose={() => setScheduleModalVisible(false)}
+                onSuccess={() => {
+                    // Refresh schedule check after successful submission
+                    setScheduleCheckKey(prev => prev + 1);
+                }}
             />
             <LocationPromptModalWeb
                 visible={locationPromptVisible}
@@ -3129,6 +3338,9 @@ function HomeWeb() {
                                         completedCount={todayCompletedErrandsCount}
                                         reviewCount={errandsReviewCount}
                                     />
+                                    {!scheduleCheckLoading && needsSchedule && (
+                                        <ScheduleBanner onOpenModal={() => setScheduleModalVisible(true)} />
+                                    )}
                                     <Text style={web.sectionTitle}>Available List of Errands</Text>
 
                                     {availableMode && !availabilityLoading ? (
@@ -3180,6 +3392,9 @@ function HomeWeb() {
                                         completedCount={todayCompletedCount}
                                         reviewCount={commissionsReviewCount}
                                     />
+                                    {!scheduleCheckLoading && needsSchedule && (
+                                        <ScheduleBanner onOpenModal={() => setScheduleModalVisible(true)} />
+                                    )}
                                     {availableMode && !availabilityLoading ? (
                                         <>
                                     <Text style={web.sectionTitle}>Available List of Commission</Text>
@@ -3838,9 +4053,14 @@ function HomeMobile() {
     
     // Geofence error modal state
     const [geofenceErrorVisible, setGeofenceErrorVisible] = useState(false);
+    const [validationErrorReason, setValidationErrorReason] = useState<string>("You cannot go Active right now.");
+    const [validationErrorTitle, setValidationErrorTitle] = useState<string>("Unavailable Outside UM Matina");
     
     // Waiting for location modal state
     const [waitingForLocationVisible, setWaitingForLocationVisible] = useState(false);
+    
+    // Schedule submission modal state
+    const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
 
     // Get window dimensions for mobile browser detection
     const { width } = useWindowDimensions();
@@ -4045,7 +4265,19 @@ function HomeMobile() {
                     }
 
                     if (!validationResult?.allowed) {
-                        // Geofence violation - status remains OFF, show modal
+                        // Validation failed - status remains OFF, show modal with reason
+                        const reason = validationResult?.reason || "You cannot go Active right now.";
+                        
+                        setValidationErrorReason(reason);
+                        
+                        if (reason.toLowerCase().includes("scheduled class")) {
+                            setValidationErrorTitle("Schedule Conflict");
+                        } else if (reason.toLowerCase().includes("no active academic semester")) {
+                            setValidationErrorTitle("No Active Academic Semester");
+                        } else {
+                            setValidationErrorTitle("Unavailable Outside UM Matina");
+                        }
+                        
                         setGeofenceErrorVisible(true);
                         return; // Early return - UI and database remain OFF
                     }
@@ -4140,6 +4372,8 @@ function HomeMobile() {
     } = useAvailableCommissions({ availableMode });
     const { count: todayCompletedCount } = useTodayCompletedCommissions();
     const { count: todayCompletedErrandsCount } = useTodayCompletedErrands();
+    const [scheduleCheckKey, setScheduleCheckKey] = React.useState(0);
+    const { needsSchedule, loading: scheduleCheckLoading } = useScheduleRequired(scheduleCheckKey);
 
     // Load current availability status from database on component mount
     React.useEffect(() => {
@@ -4848,11 +5082,22 @@ function HomeMobile() {
             <GeofenceErrorModal
                 visible={geofenceErrorVisible}
                 onClose={() => setGeofenceErrorVisible(false)}
+                title={validationErrorTitle}
+                message={validationErrorReason}
             />
             {/* Waiting for Location Modal */}
             <WaitingForLocationModal
                 visible={waitingForLocationVisible}
                 onClose={() => setWaitingForLocationVisible(false)}
+            />
+            {/* Schedule Submission Modal */}
+            <SubmitScheduleModal
+                visible={scheduleModalVisible}
+                onClose={() => setScheduleModalVisible(false)}
+                onSuccess={() => {
+                    // Refresh schedule check after successful submission
+                    setScheduleCheckKey(prev => prev + 1);
+                }}
             />
 
             {/* Location Prompt Modal */}
@@ -5010,6 +5255,9 @@ function HomeMobile() {
                             onAcceptedPress={onAcceptedPressMobile}
                             reviewCount={commissionsReviewCount}
                         />
+                        {!scheduleCheckLoading && needsSchedule && (
+                            <ScheduleBanner onOpenModal={() => setScheduleModalVisible(true)} />
+                        )}
                         {availableMode && !availabilityLoading ? (
                             <>
                         <Text style={m.sectionHeader}>Available Commissions</Text>
@@ -5072,6 +5320,9 @@ function HomeMobile() {
                             onAcceptedPress={onAcceptedPressMobile}
                             reviewCount={errandsReviewCount}
                         />
+                        {!scheduleCheckLoading && needsSchedule && (
+                            <ScheduleBanner onOpenModal={() => setScheduleModalVisible(true)} />
+                        )}
                         <Text style={m.sectionHeader}>Available List of Errands</Text>
 
                         {availableMode && !availabilityLoading ? (

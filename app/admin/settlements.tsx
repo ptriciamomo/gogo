@@ -241,8 +241,6 @@ export default function AdminSettlements() {
     const router = useRouter();
     const { loading, fullName } = useAuthProfile();
     const { width: screenWidth } = useWindowDimensions();
-    const [sidebarOpen, setSidebarOpen] = useState(true);
-    const [confirmLogout, setConfirmLogout] = useState(false);
     const [settlements, setSettlements] = useState<Settlement[]>([]);
     const [processingSettlementId, setProcessingSettlementId] = useState<string | null>(null);
     const [loadingSettlements, setLoadingSettlements] = useState(true);
@@ -267,12 +265,6 @@ export default function AdminSettlements() {
         }
     }, []);
 
-    React.useEffect(() => {
-        // Auto-collapse sidebar on small screens
-        if (isSmall) {
-            setSidebarOpen(false);
-        }
-    }, [isSmall]);
 
     React.useEffect(() => {
         const fetchSettlements = async () => {
@@ -1545,30 +1537,6 @@ export default function AdminSettlements() {
         };
     }, [filteredSettlements, currentPage, PAGE_SIZE]);
 
-    const handleLogout = async () => {
-        setConfirmLogout(false);
-        
-        // Clear any cached data immediately (web only)
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            localStorage.clear();
-            sessionStorage.clear();
-        }
-        
-        // Sign out in the background (don't wait for it)
-        supabase.auth.signOut().catch((error) => {
-            console.error('Error during signOut:', error);
-        });
-        
-        // Force immediate redirect using window.location for hard navigation
-        // This bypasses React Router and any auth state listeners
-        // Do this immediately, don't wait for signOut to complete
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            // Use window.location.replace for immediate navigation without history entry
-            window.location.replace('/login');
-        } else {
-            router.replace('/login');
-        }
-    };
 
     const formatDate = (dateString: string) => {
         return new Date(dateString).toLocaleDateString();
@@ -2098,26 +2066,7 @@ export default function AdminSettlements() {
     }
 
     return (
-        <SafeAreaView style={styles.container}>
-            <View style={{ flex: 1, flexDirection: 'row', backgroundColor: '#fff' }}>
-                {/* Sidebar Overlay on small screens */}
-                {(isSmall && sidebarOpen) && (
-                    <View 
-                        style={[styles.sidebarOverlay, { width: screenWidth }]}
-                        onTouchEnd={() => setSidebarOpen(false)}
-                    />
-                )}
-                
-                <Sidebar
-                    open={sidebarOpen}
-                    onToggle={() => setSidebarOpen((v) => !v)}
-                    onLogout={() => setConfirmLogout(true)}
-                    userName={fullName}
-                    activeRoute="settlements"
-                    isSmall={isSmall}
-                />
-                
-                <View style={styles.mainArea}>
+        <View style={{ flex: 1 }}>
                     <View style={styles.topBar}>
                         <Text style={[styles.welcome, isSmall && styles.welcomeSmall]}>Settlements Management</Text>
                     </View>
@@ -2271,32 +2220,7 @@ export default function AdminSettlements() {
                             )}
                         </View>
                     </ScrollView>
-                </View>
-            </View>
-
-            {confirmLogout && (
-                <View style={styles.modalOverlay}>
-                    <View style={[styles.modalCard, isSmall && styles.modalCardSmall]}>
-                        <Text style={styles.modalTitle}>Log Out?</Text>
-                        <Text style={styles.modalMessage}>Are you sure you want to log out?</Text>
-                        <View style={styles.modalButtons}>
-                            <TouchableOpacity
-                                style={[styles.modalButton, styles.modalButtonCancel]}
-                                onPress={() => setConfirmLogout(false)}
-                            >
-                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.modalButton, styles.modalButtonConfirm]}
-                                onPress={handleLogout}
-                            >
-                                <Text style={styles.modalButtonConfirmText}>Log Out</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            )}
-        </SafeAreaView>
+        </View>
     );
 }
 
@@ -2379,324 +2303,9 @@ function SettlementRow({ settlement, index, onMarkAsPaid, processingSettlementId
     );
 }
 
-function Sidebar({
-    open,
-    onToggle,
-    onLogout,
-    userName,
-    activeRoute,
-    isSmall,
-}: {
-    open: boolean;
-    onToggle: () => void;
-    onLogout: () => void;
-    userName: string;
-    activeRoute?: string;
-    isSmall: boolean;
-}) {
-    const router = useRouter();
-    return (
-        <View style={[
-            styles.sidebar, 
-            { 
-                width: open ? (isSmall ? 260 : 260) : 74,
-                ...(isSmall && open ? {
-                    position: 'absolute' as any,
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    zIndex: 1000,
-                    elevation: 10,
-                } : {}),
-            }
-        ]}>
-            <View style={styles.sidebarHeader}>
-                <View
-                    style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: open ? 10 : 0,
-                        justifyContent: open ? "flex-start" : "center",
-                        paddingHorizontal: open ? 16 : 6,
-                        paddingVertical: 16,
-                    }}
-                >
-                    <TouchableOpacity onPress={onToggle} style={[styles.sideMenuBtn, !open && { marginRight: 0 }]}>
-                        <Ionicons name="menu-outline" size={20} color="#fff" />
-                    </TouchableOpacity>
-                    {open && (
-                        <>
-                            <Image source={require("../../assets/images/logo.png")} style={{ width: 22, height: 22, resizeMode: "contain" }} />
-                            <Text style={styles.brand}>GoBuddy Admin</Text>
-                        </>
-                    )}
-                </View>
-            </View>
-
-            <View style={{ flex: 1, justifyContent: "space-between", backgroundColor: "#fff" }}>
-                <View style={{ paddingTop: 8 }}>
-                    <SideItem
-                        label="Dashboard"
-                        icon="home-outline"
-                        open={open}
-                        active={activeRoute === 'home'}
-                        onPress={() => router.push("/admin/home")}
-                    />
-                    <Separator />
-                    <SideItem
-                        label="List of Students"
-                        icon="people-outline"
-                        open={open}
-                        active={activeRoute === 'students'}
-                        onPress={() => router.push("/admin/students")}
-                    />
-                    <Separator />
-                    <SideItem
-                        label="Student Schedule"
-                        icon="calendar-outline"
-                        open={open}
-                        active={activeRoute === 'student-schedule'}
-                        onPress={() => router.push("/admin/student-schedule")}
-                    />
-                    <Separator />
-                    <SideItem
-                        label="Settlements"
-                        icon="cash-outline"
-                        open={open}
-                        active={activeRoute === 'settlements'}
-                        onPress={() => router.push("/admin/settlements")}
-                    />
-                    <Separator />
-                    <SideItem
-                        label="Student ID Approval"
-                        icon="id-card-outline"
-                        open={open}
-                        active={activeRoute === 'id_images'}
-                        onPress={() => router.push("/admin/id_images")}
-                    />
-                    <Separator />
-                    <SideItem
-                        label="Errands Transactions"
-                        icon="briefcase-outline"
-                        open={open}
-                        active={activeRoute === 'errands'}
-                        onPress={() => router.push("/admin/errands")}
-                    />
-                    <Separator />
-                    <SideItem
-                        label="Commission Transactions"
-                        icon="document-text-outline"
-                        open={open}
-                        active={activeRoute === 'commissions'}
-                        onPress={() => router.push("/admin/commissions")}
-                    />
-                    <Separator />
-                    <SideItem
-                        label="Category List"
-                        icon="list-outline"
-                        open={open}
-                        active={activeRoute === 'categories'}
-                        onPress={() => router.push("/admin/categories")}
-                    />
-                    <Separator />
-                </View>
-
-                <View style={styles.sidebarFooter}>
-                    <View style={styles.userCard}>
-                        <View style={styles.userAvatar}>
-                            <Ionicons name="person" size={18} color="#fff" />
-                        </View>
-                        {open && (
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.userName}>{userName || "Admin"}</Text>
-                                <Text style={styles.userRole}>Administrator</Text>
-                            </View>
-                        )}
-                    </View>
-
-                    <TouchableOpacity onPress={onLogout} activeOpacity={0.8} style={styles.logoutBtn}>
-                        <Ionicons name="log-out-outline" size={18} color="#fff" />
-                        {open && <Text style={styles.logoutText}>Logout</Text>}
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </View>
-    );
-}
-
-function Separator() {
-    return <View style={styles.separator} />;
-}
-
-function SideItem({
-    label,
-    icon,
-    open,
-    active,
-    onPress,
-}: {
-    label: string;
-    icon: any;
-    open: boolean;
-    active?: boolean;
-    onPress?: () => void;
-}) {
-    return (
-        <TouchableOpacity
-            activeOpacity={0.9}
-            onPress={onPress}
-            style={[styles.sideItem, active && styles.sideItemActive, !open && styles.sideItemCollapsed]}
-        >
-            <Ionicons name={icon} size={18} color={active ? colors.maroon : colors.text} />
-            {open && (
-                <Text style={[styles.sideItemText, active && styles.sideItemTextActive]}>{label}</Text>
-            )}
-        </TouchableOpacity>
-    );
-}
 
 const styles = StyleSheet.create({
     container: {
-        flex: 1,
-        backgroundColor: "#fff",
-    },
-    sidebarOverlay: {
-        position: 'absolute' as any,
-        top: 0,
-        left: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.3)',
-        zIndex: 999,
-    },
-    sidebar: {
-        borderRightColor: colors.border,
-        borderRightWidth: 1,
-        backgroundColor: "#fff",
-    },
-    sidebarHeader: {
-        backgroundColor: "#a01a1a",
-        ...(Platform.OS === 'web' ? {
-            background: `linear-gradient(135deg, #a01a1a 0%, #8B0000 100%)`,
-        } : {}),
-        borderBottomWidth: 1,
-        borderBottomColor: 'rgba(255,255,255,0.1)',
-    },
-    brand: {
-        color: "#fff",
-        fontWeight: "800",
-        fontSize: 16,
-    },
-    sideMenuBtn: {
-        height: 36,
-        width: 36,
-        borderRadius: 8,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: 'rgba(255,255,255,0.15)',
-        marginRight: 8,
-    },
-    sideItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        marginHorizontal: 8,
-        marginVertical: 2,
-        borderRadius: 10,
-        backgroundColor: "#fff",
-    },
-    sideItemActive: {
-        backgroundColor: "#f2e9e9",
-    },
-    sideItemCollapsed: {
-        justifyContent: "center",
-        paddingHorizontal: 0,
-        gap: 0,
-        height: 56,
-        marginHorizontal: 8,
-    },
-    sideItemText: {
-        color: colors.text,
-        fontSize: 14,
-        fontWeight: "600",
-        flex: 1,
-    },
-    sideItemTextActive: {
-        color: colors.maroon,
-        fontWeight: "700",
-    },
-    separator: {
-        height: 1,
-        backgroundColor: colors.border,
-        marginVertical: 4,
-        marginHorizontal: 12,
-    },
-    sidebarFooter: {
-        padding: 12,
-        gap: 10,
-    },
-    userCard: {
-        backgroundColor: "#a01a1a",
-        ...(Platform.OS === 'web' ? {
-            background: `linear-gradient(135deg, #a01a1a 0%, #8B0000 100%)`,
-        } : {}),
-        borderRadius: 12,
-        padding: 12,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-    },
-    userAvatar: {
-        width: 40,
-        height: 40,
-        borderRadius: 999,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 2,
-        borderColor: 'rgba(255,255,255,0.3)',
-    },
-    userName: {
-        color: "#fff",
-        fontSize: 13,
-        fontWeight: "800",
-    },
-    userRole: {
-        color: "#fff",
-        fontSize: 11,
-        opacity: 0.9,
-    },
-    logoutBtn: {
-        borderWidth: 0,
-        borderRadius: 12,
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 10,
-        backgroundColor: '#e72a2a',
-        ...(Platform.OS === 'web' ? {
-            background: `linear-gradient(135deg, #e72a2a 0%, #dc2626 100%)`,
-        } : {}),
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 4,
-        elevation: 3,
-    },
-    logoutText: {
-        color: "#fff",
-        fontWeight: "700",
-        fontSize: 13,
-    },
-    mainArea: {
         flex: 1,
         backgroundColor: "#fff",
     },

@@ -18,7 +18,7 @@ import {
     View,
     useWindowDimensions,
 } from 'react-native';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../lib/supabase';
 import { useRegistration } from '../stores/registration';
 import { uploadImageToStorage } from '../utils/supabaseHelpers';
 
@@ -59,6 +59,7 @@ export default function AccountConfirm() {
         idImageUri,
         clearAll,
         updateField,
+        ocrStudentId,
     } = useRegistration();
 
     // Class Schedule (from Supabase tables: students, student_subjects) - mobile only
@@ -126,6 +127,7 @@ export default function AccountConfirm() {
     const [submitting, setSubmitting] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [showOwnershipErrorModal, setShowOwnershipErrorModal] = useState(false);
     const [editData, setEditData] = useState({
         firstName: '',
         middleName: '',
@@ -369,6 +371,54 @@ export default function AccountConfirm() {
         }
     };
 
+    const handleOwnershipErrorOK = async () => {
+        try {
+            const { data: authData, error: authError } = await supabase.auth.getUser();
+            if (authError) {
+                console.error('Error fetching authenticated user for deletion:', authError);
+            }
+
+            const uid = authData?.user?.id;
+
+            if (uid) {
+                try {
+                    const { data: sessionData } = await supabase.auth.getSession();
+                    const accessToken = sessionData?.session?.access_token;
+
+                    const response = await fetch(
+                        `${supabaseUrl}/functions/v1/delete-invalid-user`,
+                        {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                Authorization: `Bearer ${accessToken}`,
+                            },
+                            body: JSON.stringify({ uid }),
+                        }
+                    );
+
+                    if (!response.ok) {
+                        console.error("delete-invalid-user edge function failed with status:", response.status);
+                    }
+                } catch (edgeError) {
+                    console.error('Error calling delete-invalid-user edge function:', edgeError);
+                }
+            } else {
+                console.warn('No authenticated user ID found; skipping delete-invalid-user call.');
+            }
+        } catch (err) {
+            console.error('Error during ownership error handling:', err);
+        }
+
+        setShowOwnershipErrorModal(false);
+        try {
+            clearAll();
+        } catch (clearErr) {
+            console.error('Error clearing registration state:', clearErr);
+        }
+        router.replace('/');
+    };
+
     const onRegister = async () => {
         if (submitting) return;
 
@@ -379,15 +429,13 @@ export default function AccountConfirm() {
 
         try {
             setSubmitting(true);
-            console.log('=== REGISTRATION STARTED ===');
 
             // must be signed in already (after /verify)
-            console.log('Step 1: Checking authentication...');
             const authPromise = supabase.auth.getUser();
-            const authTimeout = new Promise((_, reject) => 
+            const authTimeout = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Auth check timeout')), 10000)
             );
-            
+
             const { data: auth, error: authErr } = await Promise.race([authPromise, authTimeout]) as any;
             if (authErr) throw authErr;
 
@@ -396,7 +444,49 @@ export default function AccountConfirm() {
                 Alert.alert('Not signed in', 'Please verify your email first.');
                 return;
             }
-            console.log('Step 1: Authentication verified, user ID:', uid);
+
+            // Step 1b: Verify that the uploaded schedule belongs to the authenticated email
+            try {
+                const { data: userData } = await supabase.auth.getUser();
+                const authEmail = userData?.user?.email?.trim().toLowerCase();
+
+                if (authEmail && ocrStudentId) {
+                    const { data: studentData, error: studentError } = await supabase
+                        .from('students')
+                        .select('student_id, email')
+                        .eq('student_id', ocrStudentId)
+                        .single();
+
+                    if (!studentError && studentData) {
+                        const ocrEmail = studentData.email?.trim().toLowerCase();
+
+                        if (ocrEmail && authEmail && ocrEmail !== authEmail) {
+                            try {
+                                if (studentData?.student_id) {
+                                    await supabase
+                                        .from('student_subjects')
+                                        .delete()
+                                        .eq('student_id', studentData.student_id);
+
+                                    await supabase
+                                        .from('students')
+                                        .delete()
+                                        .eq('student_id', studentData.student_id);
+                                }
+                            } catch (cleanupError) {
+                                console.error('Error cleaning up mismatched schedule data:', cleanupError);
+                            }
+
+                            setShowOwnershipErrorModal(true);
+                            setSubmitting(false);
+                            return;
+                        }
+                    }
+                }
+            } catch (ownershipError) {
+                console.error('Error during schedule ownership verification:', ownershipError);
+                // Do not block registration on ownership check errors; continue with existing flow
+            }
 
                 // --- Check for existing user and id_image_path FIRST (before any upload attempts) ---
                 console.log('Step 2: Checking for existing user and id_image_path...');
@@ -1041,6 +1131,35 @@ export default function AccountConfirm() {
                     </View>
                 </Modal>
             )}
+
+            {/* Ownership Error Modal */}
+            {showOwnershipErrorModal && (
+                <Modal
+                    visible={showOwnershipErrorModal}
+                    transparent={true}
+                    animationType="fade"
+                    onRequestClose={() => setShowOwnershipErrorModal(false)}
+                >
+                    <View style={styles.ownershipModalOverlay}>
+                        <View style={styles.ownershipModalContent}>
+                            <Text style={styles.ownershipModalTitle}>Schedule Ownership Error</Text>
+                            <Text style={styles.ownershipModalMessage}>
+                                The uploaded class schedule does not belong to the registered email.
+                            </Text>
+                            <Text style={styles.ownershipModalMessage}>
+                                Please restart the registration process and upload your own schedule from the UM Student Portal.
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.ownershipModalButton}
+                                onPress={handleOwnershipErrorOK}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.ownershipModalButtonText}>OK</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+            )}
         </SafeAreaView>
     );
 
@@ -1147,6 +1266,35 @@ export default function AccountConfirm() {
                             {submitting ? 'Saving…' : 'Register'}
                         </Text>
                     </TouchableOpacity>
+
+                    {/* Ownership Error Modal for mobile */}
+                    {showOwnershipErrorModal && (
+                        <Modal
+                            visible={showOwnershipErrorModal}
+                            transparent={true}
+                            animationType="fade"
+                            onRequestClose={() => setShowOwnershipErrorModal(false)}
+                        >
+                            <View style={styles.ownershipModalOverlay}>
+                                <View style={styles.ownershipModalContent}>
+                                    <Text style={styles.ownershipModalTitle}>Schedule Ownership Error</Text>
+                                    <Text style={styles.ownershipModalMessage}>
+                                        The uploaded class schedule does not belong to the registered email.
+                                    </Text>
+                                    <Text style={styles.ownershipModalMessage}>
+                                        Please restart the registration process and upload your own schedule from the UM Student Portal.
+                                    </Text>
+                                    <TouchableOpacity
+                                        style={styles.ownershipModalButton}
+                                        onPress={handleOwnershipErrorOK}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={styles.ownershipModalButtonText}>OK</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </Modal>
+                    )}
                 </View>
             </ScrollView>
         </SafeAreaView>
@@ -2419,6 +2567,50 @@ const styles = StyleSheet.create({
     successModalButtonText: {
         color: '#fff',
         fontSize: 16,
+        fontWeight: '700',
+    },
+
+    // Ownership Error Modal Styles
+    ownershipModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    ownershipModalContent: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        padding: 24,
+        width: 400,
+        maxWidth: '90%',
+        alignItems: 'center',
+    },
+    ownershipModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: MAROON,
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    ownershipModalMessage: {
+        fontSize: 14,
+        color: '#666',
+        textAlign: 'center',
+        marginBottom: 8,
+        lineHeight: 20,
+    },
+    ownershipModalButton: {
+        marginTop: 12,
+        backgroundColor: MAROON,
+        borderRadius: 8,
+        paddingVertical: 12,
+        paddingHorizontal: 36,
+        alignItems: 'center',
+        width: '100%',
+    },
+    ownershipModalButtonText: {
+        color: '#fff',
+        fontSize: 15,
         fontWeight: '700',
     },
 });

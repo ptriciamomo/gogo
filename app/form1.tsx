@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase, supabaseUrl, supabaseAnonKey } from '../lib/supabase';
+import { useRegistration } from '../stores/registration';
 
 const MAROON = '#8B0000';
 
@@ -26,6 +27,8 @@ export default function Form1UploadScreen() {
 
     const [selectedFile, setSelectedFile] = useState<{ uri: string; fileName: string } | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [showInvalidScheduleModal, setShowInvalidScheduleModal] = useState(false);
+    const setFromForm1 = useRegistration((s) => s.setFromForm1);
 
     // Web card width (≈30–42% of viewport, clamped 360–560px)
     const containerWidth = useMemo(() => {
@@ -44,6 +47,14 @@ export default function Form1UploadScreen() {
 
             if (!result.canceled && result.assets[0]) {
                 const asset = result.assets[0];
+                
+                // File size validation (5MB maximum)
+                const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+                if (asset.fileSize && asset.fileSize > MAX_FILE_SIZE) {
+                    Alert.alert("File too large", "File size must be less than 5MB. Please upload a smaller image.");
+                    return;
+                }
+                
                 setSelectedFile({
                     uri: asset.uri,
                     fileName: asset.fileName || `form1-${Date.now()}.jpg`,
@@ -79,8 +90,6 @@ export default function Form1UploadScreen() {
     };
 
     const handleNext = async () => {
-        console.log("Next button clicked");
-
         if (!selectedFile) {
             Alert.alert('Please upload Form 1 first.');
             return;
@@ -95,35 +104,13 @@ export default function Form1UploadScreen() {
             const fileName = `${Date.now()}-${selectedFile.fileName}`;
             const bucketName = 'form1-verification';
 
-            console.log("===== SUPABASE CONFIG DEBUG =====");
-            console.log("supabaseUrl:", supabaseUrl);
-            console.log("supabaseAnonKey:", supabaseAnonKey);
-            console.log("EXPO_PUBLIC_SUPABASE_URL:", process.env.EXPO_PUBLIC_SUPABASE_URL);
-            console.log("EXPO_PUBLIC_SUPABASE_ANON_KEY:", process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
-            console.log("=================================");
-
             let uploadError;
 
             if (Platform.OS === 'web') {
-                console.log("WEB UPLOAD BLOCK ENTERED");
-
                 const response = await fetch(selectedFile.uri);
                 const blob = await response.blob();
 
-                console.log("===== UPLOAD PAYLOAD DEBUG =====");
-                console.log("fileName:", fileName);
-                console.log("fileName type:", typeof fileName);
-                console.log("fileName length:", fileName.length);
-                console.log("blob size:", blob.size);
-                console.log("blob type:", blob.type);
-                console.log("=================================");
-
                 const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-                console.log("===== AUTH SESSION DEBUG =====");
-                console.log("session:", JSON.stringify(session, null, 2));
-                console.log("sessionError:", sessionError);
-                console.log("===============================");
-
                 try {
                     const result = await supabase
                         .storage
@@ -132,20 +119,8 @@ export default function Form1UploadScreen() {
                             upsert: true,
                         });
 
-                    console.log("===== UPLOAD RESULT DEBUG =====");
-                    console.log("Full result:", JSON.stringify(result, null, 2));
-                    console.log("result.error:", result.error);
-                    if (result.error) {
-                        console.log("error.message:", result.error.message);
-                        console.log("error.status:", result.error.status);
-                        console.log("error.name:", result.error.name);
-                        console.log("error.__isAuthError:", (result.error as any).__isAuthError);
-                    }
-                    console.log("===============================");
-
                     uploadError = result.error;
                 } catch (err) {
-                    console.log("Upload threw exception:", err);
                     uploadError = err as any;
                 }
             }
@@ -178,11 +153,65 @@ export default function Form1UploadScreen() {
                 return;
             }
 
-            console.log('OCR Response:', ocrData);
-            console.log("OCR finished");
+            // === Academic Calendar Validation (Web) ===
+            try {
+                // Get current Philippine date (YYYY-MM-DD)
+                const today = new Date().toLocaleDateString("en-CA", {
+                    timeZone: "Asia/Manila",
+                });
+
+                const { data: calendarData, error: calendarError } = await supabase
+                    .from("academic_calendar")
+                    .select("semester, school_year, start_date, end_date")
+                    .lte("start_date", today)
+                    .gte("end_date", today)
+                    .single();
+
+                if (calendarError || !calendarData) {
+                    Alert.alert(
+                        "Verification Error",
+                        "Unable to verify the academic calendar. Please try again later."
+                    );
+                    setIsLoading(false);
+                    return;
+                }
+
+                const semesterMap: Record<string, string> = {
+                    "1st Semester": "First Semester",
+                    "2nd Semester": "Second Semester",
+                };
+
+                const calendarSemesterNormalized =
+                    semesterMap[calendarData.semester as keyof typeof semesterMap] || calendarData.semester;
+
+                const yearParts = (calendarData.school_year || "").split("-");
+                const calendarYearShort =
+                    yearParts.length === 2 ? `${yearParts[0]}-${yearParts[1].slice(2)}` : calendarData.school_year;
+
+                const semesterMatch =
+                    typeof ocrData.semester === "string" &&
+                    ocrData.semester.includes(calendarSemesterNormalized);
+
+                const yearMatch =
+                    typeof ocrData.semester === "string" &&
+                    ocrData.semester.includes(calendarYearShort);
+
+                if (!semesterMatch || !yearMatch) {
+                    setShowInvalidScheduleModal(true);
+                    setIsLoading(false);
+                    return;
+                }
+            } catch (calendarValidationError) {
+                console.error("Academic calendar validation error:", calendarValidationError);
+                Alert.alert(
+                    "Verification Error",
+                    "An error occurred while verifying the academic calendar. Please try again later."
+                );
+                setIsLoading(false);
+                return;
+            }
 
             // Call Insert Function (Project A)
-            console.log("Sending insert request...");
             const insertResponse = await fetch(
                 'https://ednraiixtmzymowfwarh.supabase.co/functions/v1/insert-form1-data',
                 {
@@ -204,13 +233,7 @@ export default function Form1UploadScreen() {
                 }
             );
 
-            console.log("Insert response received");
-            console.log("Insert response status:", insertResponse.status);
-            console.log("Insert response ok:", insertResponse.ok);
-
-            // Force the response to resolve
             await insertResponse.text();
-            console.log("Insert request finished");
 
             if (!insertResponse.ok) {
                 Alert.alert('Failed to save student data.');
@@ -218,8 +241,10 @@ export default function Form1UploadScreen() {
                 return;
             }
 
+            // Store OCR studentId for later ownership verification
+            setFromForm1({ ocrStudentId: ocrData.studentId });
+
             // OCR and insert successful - automatically redirect to register_two
-            console.log("Redirecting to register_two");
             shouldRedirect = true;
             setIsLoading(false);
 
@@ -283,6 +308,27 @@ export default function Form1UploadScreen() {
                     </TouchableOpacity>
                 </View>
             </View>
+
+            {showInvalidScheduleModal && (
+                <View style={styles.invalidModalOverlay}>
+                    <View style={styles.invalidModalCard}>
+                        <Text style={styles.invalidModalTitle}>Invalid Schedule</Text>
+                        <Text style={styles.invalidModalText}>
+                            The uploaded class schedule does not match the current academic term.
+                        </Text>
+                        <Text style={styles.invalidModalText}>
+                            Please upload your latest schedule from the UM Student Portal.
+                        </Text>
+                        <TouchableOpacity
+                            style={styles.invalidModalButton}
+                            onPress={() => setShowInvalidScheduleModal(false)}
+                            activeOpacity={0.9}
+                        >
+                            <Text style={styles.invalidModalButtonText}>OK</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
@@ -361,4 +407,62 @@ const styles = StyleSheet.create({
     },
     nextBtnWebText: { color: '#fff', fontWeight: '600', fontSize: 15 },
     nextBtnWebDisabled: { opacity: 0.6 },
+
+    invalidModalOverlay: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 16,
+    },
+    invalidModalCard: {
+        width: '100%',
+        maxWidth: 420,
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        paddingVertical: 18,
+        paddingHorizontal: 20,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#E7B9B9',
+        ...(Platform.OS === 'web'
+            ? { boxShadow: '0px 4px 16px rgba(0,0,0,0.18)' }
+            : {
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 8,
+                  elevation: 8,
+              }),
+    },
+    invalidModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: MAROON,
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    invalidModalText: {
+        fontSize: 14,
+        color: '#333',
+        textAlign: 'center',
+        marginBottom: 6,
+        lineHeight: 20,
+    },
+    invalidModalButton: {
+        marginTop: 14,
+        backgroundColor: MAROON,
+        paddingVertical: 10,
+        paddingHorizontal: 26,
+        borderRadius: 8,
+    },
+    invalidModalButtonText: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 14,
+    },
 });

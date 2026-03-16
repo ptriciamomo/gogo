@@ -611,11 +611,11 @@ export default function AdminStudents() {
 
     return (
         <View style={{ flex: 1 }}>
-                    <View style={styles.topBar}>
-                        <Text style={styles.welcome}>List of Students</Text>
-                    </View>
+            <View style={styles.topBar}>
+                <Text style={styles.welcome}>List of Students</Text>
+            </View>
 
-                    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
+            <ScrollView style={{ flex: 1, backgroundColor: '#fff' }}>
                         <View style={styles.content}>
                             <View style={styles.searchRow}>
                                 <TouchableOpacity

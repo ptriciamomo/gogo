@@ -2220,7 +2220,7 @@ export default function AdminSettlements() {
                             )}
                         </View>
                     </ScrollView>
-        </View>
+                </View>
     );
 }
 

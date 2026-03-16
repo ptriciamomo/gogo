@@ -140,101 +140,101 @@ export default function AdminHome() {
 
     return (
         <View style={{ flex: 1 }}>
-            <View style={styles.topBar}>
-                <Text style={[styles.welcome, isSmall && styles.welcomeSmall]}>
-                    Welcome back, {firstName}!
-                </Text>
-            </View>
-
-            <ScrollView style={{ flex: 1, backgroundColor: '#fafafa' }}>
-                {Platform.OS === 'web' && (
-                    <style>{`
-                        .stat-card:hover {
-                            transform: translateY(-4px);
-                            box-shadow: 0 8px 24px rgba(0,0,0,0.2) !important;
-                        }
-                        .quick-action-card:hover {
-                            transform: translateY(-2px);
-                            box-shadow: 0 4px 16px rgba(0,0,0,0.15) !important;
-                        }
-                    `}</style>
-                )}
-                <View style={[styles.content, isSmall && styles.contentSmall]}>
-                    <Text style={[styles.pageTitle, isSmall && styles.pageTitleSmall]}>
-                        Admin Dashboard
-                    </Text>
-                    
-                    {statsLoading ? (
-                        <View style={{ padding: 40, alignItems: 'center' }}>
-                            <ActivityIndicator size="large" color={colors.maroon} />
-                        </View>
-                    ) : (
-                        <View style={[styles.statsRow, isSmall && styles.statsRowSmall]}>
-                            <StatsCard
-                                value={stats.totalStudents}
-                                label="Total Students"
-                                icon="people-outline"
-                                isSmall={isSmall}
-                            />
-                            <StatsCard
-                                value={stats.totalErrands}
-                                label="Total Errands"
-                                icon="briefcase-outline"
-                                isSmall={isSmall}
-                            />
-                            <StatsCard
-                                value={stats.totalCommissions}
-                                label="Total Commissions"
-                                icon="document-text-outline"
-                                isSmall={isSmall}
-                            />
-                        </View>
-                    )}
-
-                    <View style={styles.section}>
-                        <Text style={[styles.sectionTitle, isSmall && styles.sectionTitleSmall]}>
-                            Quick Actions
+                    <View style={styles.topBar}>
+                        <Text style={[styles.welcome, isSmall && styles.welcomeSmall]}>
+                            Welcome back, {firstName}!
                         </Text>
-                        <View style={[styles.quickActions, isSmall && styles.quickActionsSmall]}>
-                            <QuickActionCard
-                                title="List of Students"
-                                description="View all student profiles"
-                                icon="people"
-                                onPress={() => router.push('/admin/students')}
-                                isSmall={isSmall}
-                            />
-                            <QuickActionCard
-                                title="Settlements"
-                                description="View student settlements and payments"
-                                icon="cash"
-                                onPress={() => router.push('/admin/settlements')}
-                                isSmall={isSmall}
-                            />
-                            <QuickActionCard
-                                title="Errands Transactions"
-                                description="View all errand transactions"
-                                icon="briefcase"
-                                onPress={() => router.push('/admin/errands')}
-                                isSmall={isSmall}
-                            />
-                            <QuickActionCard
-                                title="Commission Transactions"
-                                description="View all commission transactions"
-                                icon="document-text"
-                                onPress={() => router.push('/admin/commissions')}
-                                isSmall={isSmall}
-                            />
-                            <QuickActionCard
-                                title="Student ID Approval"
-                                description="Review and approve student ID images"
-                                icon="id-card"
-                                onPress={() => router.push('/admin/id_images')}
-                                isSmall={isSmall}
-                            />
-                        </View>
                     </View>
-                </View>
-            </ScrollView>
+
+                    <ScrollView style={{ flex: 1, backgroundColor: '#fafafa' }}>
+                        {Platform.OS === 'web' && (
+                            <style>{`
+                                .stat-card:hover {
+                                    transform: translateY(-4px);
+                                    box-shadow: 0 8px 24px rgba(0,0,0,0.2) !important;
+                                }
+                                .quick-action-card:hover {
+                                    transform: translateY(-2px);
+                                    box-shadow: 0 4px 16px rgba(0,0,0,0.15) !important;
+                                }
+                            `}</style>
+                        )}
+                        <View style={[styles.content, isSmall && styles.contentSmall]}>
+                            <Text style={[styles.pageTitle, isSmall && styles.pageTitleSmall]}>
+                                Admin Dashboard
+                            </Text>
+                            
+                            {statsLoading ? (
+                                <View style={{ padding: 40, alignItems: 'center' }}>
+                                    <ActivityIndicator size="large" color={colors.maroon} />
+                                </View>
+                            ) : (
+                                <View style={[styles.statsRow, isSmall && styles.statsRowSmall]}>
+                                    <StatsCard
+                                        value={stats.totalStudents}
+                                        label="Total Students"
+                                        icon="people-outline"
+                                        isSmall={isSmall}
+                                    />
+                                    <StatsCard
+                                        value={stats.totalErrands}
+                                        label="Total Errands"
+                                        icon="briefcase-outline"
+                                        isSmall={isSmall}
+                                    />
+                                    <StatsCard
+                                        value={stats.totalCommissions}
+                                        label="Total Commissions"
+                                        icon="document-text-outline"
+                                        isSmall={isSmall}
+                                    />
+                                </View>
+                            )}
+
+                            <View style={styles.section}>
+                                <Text style={[styles.sectionTitle, isSmall && styles.sectionTitleSmall]}>
+                                    Quick Actions
+                                </Text>
+                                <View style={[styles.quickActions, isSmall && styles.quickActionsSmall]}>
+                                    <QuickActionCard
+                                        title="List of Students"
+                                        description="View all student profiles"
+                                        icon="people"
+                                        onPress={() => router.push('/admin/students')}
+                                        isSmall={isSmall}
+                                    />
+                                    <QuickActionCard
+                                        title="Settlements"
+                                        description="View student settlements and payments"
+                                        icon="cash"
+                                        onPress={() => router.push('/admin/settlements')}
+                                        isSmall={isSmall}
+                                    />
+                                    <QuickActionCard
+                                        title="Errands Transactions"
+                                        description="View all errand transactions"
+                                        icon="briefcase"
+                                        onPress={() => router.push('/admin/errands')}
+                                        isSmall={isSmall}
+                                    />
+                                    <QuickActionCard
+                                        title="Commission Transactions"
+                                        description="View all commission transactions"
+                                        icon="document-text"
+                                        onPress={() => router.push('/admin/commissions')}
+                                        isSmall={isSmall}
+                                    />
+                                    <QuickActionCard
+                                        title="Student ID Approval"
+                                        description="Review and approve student ID images"
+                                        icon="id-card"
+                                        onPress={() => router.push('/admin/id_images')}
+                                        isSmall={isSmall}
+                                    />
+                                </View>
+                            </View>
+                        </View>
+                    </ScrollView>
         </View>
     );
 }

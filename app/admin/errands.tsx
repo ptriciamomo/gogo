@@ -1543,7 +1543,7 @@ const styles = StyleSheet.create({
              backgroundColor: '#FFFFFF',
              background: '#FFFFFF',
          } : {}),
-     },
+    },
     calendarDropdownItem: {
         paddingVertical: 10,
         paddingHorizontal: 16,

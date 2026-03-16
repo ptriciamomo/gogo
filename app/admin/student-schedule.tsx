@@ -553,7 +553,7 @@ export default function AdminStudentSchedule() {
                             </View>
                         </View>
                     </ScrollView>
-        </View>
+                </View>
     );
 }
 

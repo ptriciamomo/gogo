@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { supabase } from '../lib/supabase';
+import { useRegistration } from '../stores/registration';
 
 const MAROON = '#8B0000';
 
@@ -27,6 +28,8 @@ export default function Form1UploadScreenMobile() {
 
     const [selectedFile, setSelectedFile] = useState<{ uri: string; fileName: string } | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [showInvalidScheduleModal, setShowInvalidScheduleModal] = useState(false);
+    const setFromForm1 = useRegistration((s) => s.setFromForm1);
 
     // Mobile: narrow the form so inputs don't hug edges
     const mobileWrapStyle = useMemo(() => {
@@ -52,6 +55,14 @@ export default function Form1UploadScreenMobile() {
 
             if (!result.canceled && result.assets[0]) {
                 const asset = result.assets[0];
+                
+                // File size validation (5MB maximum)
+                const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+                if (asset.fileSize && asset.fileSize > MAX_FILE_SIZE) {
+                    Alert.alert("File too large", "File size must be less than 5MB. Please upload a smaller image.");
+                    return;
+                }
+                
                 setSelectedFile({
                     uri: asset.uri,
                     fileName: asset.fileName || `form1-${Date.now()}.jpg`,
@@ -148,6 +159,74 @@ export default function Form1UploadScreenMobile() {
 
             console.log('OCR Response:', ocrData);
 
+            // === Academic Calendar Validation (Mobile) ===
+            try {
+                // Get current Philippine date (YYYY-MM-DD)
+                const today = new Date().toLocaleDateString("en-CA", {
+                    timeZone: "Asia/Manila",
+                });
+
+                const { data: calendarData, error: calendarError } = await supabase
+                    .from("academic_calendar")
+                    .select("semester, school_year, start_date, end_date")
+                    .lte("start_date", today)
+                    .gte("end_date", today)
+                    .single();
+
+                if (calendarError || !calendarData) {
+                    Alert.alert(
+                        "Verification Error",
+                        "Unable to verify the academic calendar. Please try again later."
+                    );
+                    setIsLoading(false);
+                    return;
+                }
+
+                const semesterMap: Record<string, string> = {
+                    "1st Semester": "First Semester",
+                    "2nd Semester": "Second Semester",
+                };
+
+                const calendarSemesterNormalized =
+                    semesterMap[calendarData.semester as keyof typeof semesterMap] || calendarData.semester;
+
+                const yearParts = (calendarData.school_year || "").split("-");
+                const calendarYearShort =
+                    yearParts.length === 2 ? `${yearParts[0]}-${yearParts[1].slice(2)}` : calendarData.school_year;
+
+                console.log("=== Academic Calendar Validation Debug ===");
+                console.log("OCR semester raw:", ocrData.semester);
+                console.log("Calendar semester (normalized):", calendarSemesterNormalized);
+                console.log("Calendar school_year:", calendarData?.school_year);
+                console.log("Calendar year short:", calendarYearShort);
+
+                const semesterMatch =
+                    typeof ocrData.semester === "string" &&
+                    ocrData.semester.includes(calendarSemesterNormalized);
+
+                const yearMatch =
+                    typeof ocrData.semester === "string" &&
+                    ocrData.semester.includes(calendarYearShort);
+
+                console.log("semesterMatch result:", semesterMatch);
+                console.log("yearMatch result:", yearMatch);
+
+                if (!semesterMatch || !yearMatch) {
+                    console.log("Invalid schedule detected - validation failed");
+                    setShowInvalidScheduleModal(true);
+                    setIsLoading(false);
+                    return;
+                }
+            } catch (calendarValidationError) {
+                console.error("Academic calendar validation error:", calendarValidationError);
+                Alert.alert(
+                    "Verification Error",
+                    "An error occurred while verifying the academic calendar. Please try again later."
+                );
+                setIsLoading(false);
+                return;
+            }
+
             // Call Insert Function (Project A)
             const PROJECT_A_URL = Constants.expoConfig?.extra?.projectAUrl;
             const insertResponse = await fetch(
@@ -178,6 +257,9 @@ export default function Form1UploadScreenMobile() {
                 setIsLoading(false);
                 return;
             }
+
+            // Store OCR studentId for later ownership verification
+            setFromForm1({ ocrStudentId: ocrData.studentId });
 
             // Automatically redirect to register_two after successful OCR
             router.push('/register_two');
@@ -262,6 +344,27 @@ export default function Form1UploadScreenMobile() {
                     </View>
                 </View>
             </ScrollView>
+
+            {showInvalidScheduleModal && (
+                <View style={styles.invalidModalOverlay}>
+                    <View style={styles.invalidModalCard}>
+                        <Text style={styles.invalidModalTitle}>Invalid Schedule</Text>
+                        <Text style={styles.invalidModalText}>
+                            The uploaded class schedule does not match the current academic term.
+                        </Text>
+                        <Text style={styles.invalidModalText}>
+                            Please upload your latest schedule from the UM Student Portal.
+                        </Text>
+                        <TouchableOpacity
+                            style={styles.invalidModalButton}
+                            onPress={() => setShowInvalidScheduleModal(false)}
+                            activeOpacity={0.9}
+                        >
+                            <Text style={styles.invalidModalButtonText}>OK</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
@@ -339,4 +442,58 @@ const styles = StyleSheet.create({
     },
     nextBtnMobText: { color: '#fff', fontWeight: '600', fontSize: 14 },
     nextBtnMobDisabled: { opacity: 0.6 },
+
+    invalidModalOverlay: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 16,
+    },
+    invalidModalCard: {
+        width: '100%',
+        maxWidth: 420,
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        paddingVertical: 18,
+        paddingHorizontal: 20,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#E7B9B9',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 8,
+    },
+    invalidModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: MAROON,
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    invalidModalText: {
+        fontSize: 14,
+        color: '#333',
+        textAlign: 'center',
+        marginBottom: 6,
+        lineHeight: 20,
+    },
+    invalidModalButton: {
+        marginTop: 14,
+        backgroundColor: MAROON,
+        paddingVertical: 10,
+        paddingHorizontal: 26,
+        borderRadius: 8,
+    },
+    invalidModalButtonText: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 14,
+    },
 });

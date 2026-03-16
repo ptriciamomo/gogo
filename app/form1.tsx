@@ -247,10 +247,7 @@ export default function Form1UploadScreen() {
             // OCR and insert successful - automatically redirect to register_two
             shouldRedirect = true;
             setIsLoading(false);
-
-            setTimeout(() => {
-                router.push('/register_two');
-            }, 0);
+            router.push('/register_two');
             return;
         } catch (error) {
             console.error('Error:', error);

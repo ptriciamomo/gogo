@@ -13,10 +13,12 @@ interface RegistrationState {
     email: string;
     password: string;
     confirmPassword: string;
+    ocrStudentId?: string;
 
     setFromRegister: (data: Partial<RegistrationState>) => void;
     setFromId: (uri: string | null) => void;
     setFromRegisterTwo: (data: Partial<RegistrationState>) => void;
+    setFromForm1: (data: { ocrStudentId?: string }) => void;
     updateField: (field: keyof RegistrationState, value: string) => void;
     clearAll: () => void;
 }
@@ -33,10 +35,16 @@ export const useRegistration = create<RegistrationState>((set) => ({
     email: '',
     password: '',
     confirmPassword: '',
+    ocrStudentId: '',
 
     setFromRegister: (data) => set(data),
     setFromId: (uri) => set({ idImageUri: uri }),
     setFromRegisterTwo: (data) => set(data),
+    setFromForm1: (data) =>
+        set((state) => ({
+            ...state,
+            ocrStudentId: data.ocrStudentId ?? state.ocrStudentId,
+        })),
     updateField: (field, value) => set({ [field]: value }),
     clearAll: () =>
         set({
@@ -51,5 +59,6 @@ export const useRegistration = create<RegistrationState>((set) => ({
             email: '',
             password: '',
             confirmPassword: '',
+            ocrStudentId: '',
         }),
 }));

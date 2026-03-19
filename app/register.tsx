@@ -630,11 +630,11 @@ export default function RegisterScreen() {
         // ⬇️ Safe margins are here and DO NOT SCROLL
         <SafeAreaView
             edges={Platform.OS === 'web' ? [] : ['top', 'bottom']}
-            style={styles.safeArea}
+            style={[styles.safeArea, isWeb ? styles.safeAreaWeb : null]}
         >
             <StatusBar barStyle="dark-content" />
             <KeyboardAvoidingView
-                style={styles.keyboardAvoid}
+                style={[styles.keyboardAvoid, isWeb ? styles.keyboardAvoidWeb : null]}
                 behavior="padding"
                 keyboardVerticalOffset={0}
             >
@@ -713,7 +713,19 @@ export default function RegisterScreen() {
 
 const styles = StyleSheet.create({
     safeArea: { flex: 1, backgroundColor: '#fff' },
+    // Web-only: subtle warm tinted background for depth
+    safeAreaWeb: {
+        ...(Platform.OS === 'web' ? {
+            background: 'linear-gradient(180deg, #fff7f7 0%, #f5f5f5 100%)',
+            backgroundColor: '#fdf2f2',
+        } as any : {}),
+    },
     keyboardAvoid: { flex: 1 },
+    keyboardAvoidWeb: {
+        ...(Platform.OS === 'web' ? {
+            minHeight: '100vh',
+        } as any : {}),
+    },
 
     scrollContent: { flexGrow: 1, alignItems: 'center', paddingVertical: rp(12) },
     scrollWeb: { justifyContent: 'center', paddingHorizontal: rp(6), paddingBottom: rp(40) },
@@ -722,17 +734,20 @@ const styles = StyleSheet.create({
 
     // Web card
     webCard: {
-        backgroundColor: '#fff',
-        borderTopLeftRadius: rb(12),
-        borderTopRightRadius: rb(12),
-        borderBottomLeftRadius: rb(FIELD_RADIUS),
-        borderBottomRightRadius: rb(FIELD_RADIUS),
+        backgroundColor: '#ffffff',
+        borderTopLeftRadius: rb(16),
+        borderTopRightRadius: rb(16),
+        borderBottomLeftRadius: rb(16),
+        borderBottomRightRadius: rb(16),
         borderWidth: 1,
-        borderColor: MAROON,
-        padding: rp(20),
+        borderColor: '#f1f1f1',
+        padding: rp(28),
         marginHorizontal: rp(6),
         width: '100%',
         maxWidth: '100%',
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 12px 35px rgba(0,0,0,0.08), 0 10px 40px rgba(185,28,28,0.05)',
+        } as any : {}),
     },
 
     // Two-column layout for web
@@ -770,7 +785,7 @@ const styles = StyleSheet.create({
     mobileWrap: { width: '100%' },
 
     headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: rp(6) },
-    header: { fontSize: rf(15), fontWeight: '700', color: MAROON, marginLeft: rp(6) },
+    header: { fontSize: rf(18), fontWeight: '800', color: MAROON, marginLeft: rp(6), marginBottom: rp(6) },
 
     // logos
     logo: { alignSelf: 'center', marginVertical: rp(12) },
@@ -788,25 +803,36 @@ const styles = StyleSheet.create({
     infoText: { color: '#0b5394', fontSize: rf(12), fontWeight: '600' },
 
     // labels
-    label: { fontWeight: '700', color: MAROON, marginTop: rp(6), marginBottom: rp(4), fontSize: 13 },
+    label: { fontWeight: '700', color: '#4a4a4a', marginTop: rp(8), marginBottom: rp(6), fontSize: 12 },
 
     // inputs
     input: {
         borderWidth: 1,
-        borderColor: MAROON,
-        borderRadius: rb(FIELD_RADIUS),
-        paddingHorizontal: 10,
+        borderColor: '#dddddd',
+        borderRadius: rb(10),
+        paddingHorizontal: 12,
         fontSize: 13,
         color: '#000',
-        marginBottom: rp(8),
+        marginBottom: rp(16),
         width: '100%',
-        backgroundColor: '#fff',
+        backgroundColor: '#fafafa',
+        ...(Platform.OS === 'web' ? {
+            outlineStyle: 'none',
+            transition: 'box-shadow 120ms ease, border-color 120ms ease',
+        } as any : {}),
+    },
+    // hint style to indicate intended focus glow on web-compatible platforms
+    inputFocusWeb: {
+        ...(Platform.OS === 'web' ? {
+            borderColor: MAROON,
+            boxShadow: '0 0 0 3px rgba(185,28,28,0.10)',
+        } as any : {}),
     },
 
     // Custom select
     selectBlock: { 
         width: '100%', 
-        marginBottom: rp(8),
+        marginBottom: rp(16),
         ...(Platform.OS === 'web' ? {
             position: 'relative' as any,
             zIndex: 1, // Ensure proper stacking context
@@ -814,13 +840,16 @@ const styles = StyleSheet.create({
     },
     selectWrapper: {
         borderWidth: 1,
-        borderColor: MAROON,
-        borderRadius: rb(FIELD_RADIUS),
-        backgroundColor: '#fff',
-        paddingHorizontal: 10,
+        borderColor: '#dddddd',
+        borderRadius: rb(10),
+        backgroundColor: '#fafafa',
+        paddingHorizontal: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        ...(Platform.OS === 'web' ? {
+            transition: 'border-color 120ms ease',
+        } as any : {}),
     },
     selectText: { fontSize: 13, color: '#000', flex: 1, paddingRight: rp(12) },
     selectIcon: { marginLeft: rp(8) },
@@ -829,13 +858,16 @@ const styles = StyleSheet.create({
     menuInline: {
         alignSelf: 'stretch',
         borderWidth: 1,
-        borderColor: MAROON,
+        borderColor: '#dddddd',
         borderTopWidth: 0,
-        borderBottomLeftRadius: rb(FIELD_RADIUS),
-        borderBottomRightRadius: rb(FIELD_RADIUS),
+        borderBottomLeftRadius: rb(10),
+        borderBottomRightRadius: rb(10),
         backgroundColor: 'rgb(255, 255, 255)', // Use rgb for guaranteed opacity
         overflow: 'hidden',
         maxHeight: rh(25), // Limit dropdown height to make it scrollable
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 8px 20px rgba(0,0,0,0.10)',
+        } as any : {}),
     },
     menuInlineWeb: {
         position: 'absolute',
@@ -906,8 +938,8 @@ const styles = StyleSheet.create({
     menuItemTextSelected: { color: MAROON, fontWeight: '700' },
 
     webFieldHeight: { 
-        minHeight: 38, 
-        paddingVertical: 8,
+        minHeight: 40, 
+        paddingVertical: 10,
     },
     mobileFieldHeight: { height: 50, paddingVertical: 0 },
 
@@ -915,10 +947,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: MAROON,
-        borderRadius: FIELD_RADIUS,
-        marginBottom: rp(8),
-        backgroundColor: '#fff',
+        borderColor: '#dddddd',
+        borderRadius: 10,
+        marginBottom: rp(16),
+        backgroundColor: '#fafafa',
         width: '100%',
     },
     countryCodeContainer: {
@@ -927,16 +959,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: 8,
         height: '100%',
         borderRightWidth: 1,
-        borderRightColor: MAROON,
-        backgroundColor: '#f8f8f8',
-        borderTopLeftRadius: FIELD_RADIUS,
-        borderBottomLeftRadius: FIELD_RADIUS,
+        borderRightColor: '#dddddd',
+        backgroundColor: '#f3f3f3',
+        borderTopLeftRadius: 10,
+        borderBottomLeftRadius: 10,
     },
     flag: { fontSize: 18, marginRight: 6 },
     countryCode: { fontSize: 12, color: MAROON, fontWeight: '700' },
     phoneInput: { 
         flex: 1, 
-        paddingHorizontal: 10, 
+        paddingHorizontal: 12, 
         fontSize: 13, 
         color: '#000',
         height: '100%',
@@ -946,19 +978,19 @@ const styles = StyleSheet.create({
     registerBtn: {
         backgroundColor: MAROON,
         paddingVertical: 14,
-        borderRadius: rb(FIELD_RADIUS),
+        borderRadius: rb(12),
         alignItems: 'center',
         marginTop: rp(10),
         width: '100%',
     },
     registerBtnWeb: {
         backgroundColor: MAROON,
-        height: 44,
-        borderRadius: rb(FIELD_RADIUS),
+        height: 48,
+        borderRadius: rb(12),
         alignItems: 'center',
         justifyContent: 'center',
-        width: '60%',
-        maxWidth: 400,
+        width: '100%',
+        maxWidth: '100%',
         ...(Platform.OS === 'web' ? {
             position: 'relative' as any,
             zIndex: -1, // Negative z-index to ensure dropdown covers it

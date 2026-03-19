@@ -689,7 +689,10 @@ const styles = StyleSheet.create({
     // ===== Web =====
     pageWeb: {
         flex: 1,
-        backgroundColor: '#fff',
+        backgroundColor: '#fdf2f2',
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(180deg, #fff7f7 0%, #f3f4f6 100%)',
+        } as any : {}),
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 16,
@@ -698,11 +701,14 @@ const styles = StyleSheet.create({
         width: '100%',
     } as any,
     cardWeb: {
-        borderRadius: 10,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#E7B9B9',
+        borderColor: '#f1f1f1',
         backgroundColor: '#fff',
         // width, padding, etc. are set dynamically in component
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 12px 35px rgba(0,0,0,0.08), 0 10px 40px rgba(185,28,28,0.05)',
+        } as any : {}),
     },
     headerRowWeb: {
         flexDirection: 'row',
@@ -710,17 +716,22 @@ const styles = StyleSheet.create({
         gap: 8,
         marginBottom: 6,
     },
-    headerWeb: { fontWeight: '600', color: MAROON, marginLeft: 6 },
+    headerWeb: { fontWeight: '800', color: MAROON, marginLeft: 6 },
     webContent: { width: '100%', alignSelf: 'center' },
     logoWeb: { alignSelf: 'center', marginVertical: 12 },
-    labelWeb: { color: MAROON, fontWeight: '600', marginBottom: 6 },
+    labelWeb: { color: '#4a4a4a', fontWeight: '700', marginBottom: 6 },
     inputWeb: {
         borderWidth: 1,
-        borderColor: MAROON,
-        borderRadius: 8,
-        paddingHorizontal: 10,
+        borderColor: '#dddddd',
+        borderRadius: 10,
+        paddingHorizontal: 12,
         color: '#000',
         width: '100%',
+        backgroundColor: '#fafafa',
+        ...(Platform.OS === 'web' ? {
+            outlineStyle: 'none',
+            transition: 'box-shadow 120ms ease, border-color 120ms ease',
+        } as any : {}),
     },
     passwordWrapWeb: { position: 'relative', marginBottom: 8 },
     eyeIconWeb: { position: 'absolute', right: 12 },
@@ -736,19 +747,25 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     rememberTextWeb: { 
-        color: '#444',
+        color: '#555',
         fontWeight: '500',
     },
     forgotTextWeb: { 
         color: MAROON,
-        fontWeight: '500',
+        fontWeight: '600',
+        textDecorationLine: 'underline',
+        ...(Platform.OS === 'web' ? { cursor: 'pointer' } as any : {}),
     },
     nextBtnWeb: {
         backgroundColor: MAROON,
-        borderRadius: 8,
+        borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
         width: '100%',
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(90deg, #b91c1c, #7f1d1d)',
+            boxShadow: '0 10px 20px rgba(127,29,29,0.25)',
+        } as any : {}),
     },
     nextBtnWebText: { color: '#fff', fontWeight: '600' },
 

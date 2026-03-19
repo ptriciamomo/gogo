@@ -1855,8 +1855,11 @@ export default function AccountConfirm() {
 const styles = StyleSheet.create({
     page: {
         flex: 1,
-        backgroundColor: '#fff',
+        backgroundColor: '#fdf2f2',
         padding: 24,
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(180deg, #fff7f7 0%, #f3f4f6 100%)',
+        } as any : {}),
     },
     // Web: allow vertical scrolling when content exceeds viewport (no layout/size changes)
     pageWebScrollable: Platform.OS === 'web'
@@ -1892,17 +1895,20 @@ const styles = StyleSheet.create({
         gap: 8,
         marginBottom: 10,
     },
-    headerWeb: { fontSize: 14, fontWeight: '600', color: MAROON },
+    headerWeb: { fontSize: 18, fontWeight: '800', color: MAROON },
 
     // Web card
     cardWeb: {
         width: 700,
-        borderRadius: 10,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#E7B9B9',
+        borderColor: '#f1f1f1',
         backgroundColor: '#fff',
-        paddingVertical: 16,
-        paddingHorizontal: 18,
+        paddingVertical: 24,
+        paddingHorizontal: 24,
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 12px 35px rgba(0,0,0,0.08), 0 10px 40px rgba(185,28,28,0.05)',
+        } as any : {}),
     },
 
     // Logos / subtitles
@@ -1928,9 +1934,9 @@ const styles = StyleSheet.create({
     },
     subtitleWeb: {
         textAlign: 'center',
-        color: "#8B0000",
-        marginBottom: 6,
-        fontSize: 12,
+        color: "#555",
+        marginBottom: 10,
+        fontSize: 13,
         fontWeight: '600',
     },
 
@@ -1938,9 +1944,13 @@ const styles = StyleSheet.create({
     editRow: { alignItems: 'flex-end', marginBottom: 6 },
     editBtn: {
         backgroundColor: "#8B0000",
-        borderRadius: 6,
+        borderRadius: 10,
         paddingHorizontal: 14,
-        paddingVertical: 6,
+        paddingVertical: 8,
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(90deg, #b91c1c, #7f1d1d)',
+            boxShadow: '0 6px 14px rgba(127,29,29,0.20)',
+        } as any : {}),
     },
     editTxt: { color: '#fff', fontWeight: '700', fontSize: 12 },
 
@@ -2243,19 +2253,29 @@ const styles = StyleSheet.create({
 
     // Inline field row
     inlineRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
-    label: { color: MAROON, fontWeight: '700', fontSize: 12 },
+    label: { color: '#555', fontWeight: '700', fontSize: 12 },
     labelWeb: { fontSize: 12 },
-    value: { color: '#3a3a3a', marginLeft: 6, fontSize: 12 },
+    value: { color: '#222', marginLeft: 6, fontSize: 12 },
     valueWeb: { fontSize: 11 },
 
 
     // ID blocks
-    idBoxWeb: { marginTop: 2, marginBottom: 8, alignItems: 'flex-start' },
-    idImgWeb: { width: 280, height: 120, borderRadius: 6, backgroundColor: '#eee' },
+    idBoxWeb: { 
+        marginTop: 6, 
+        marginBottom: 12, 
+        alignItems: 'center',
+        alignSelf: 'stretch',
+        borderWidth: 1,
+        borderColor: '#eee',
+        backgroundColor: '#f9f9f9',
+        borderRadius: 12,
+        paddingVertical: 10,
+    },
+    idImgWeb: { width: 320, height: 140, borderRadius: 10, backgroundColor: '#eee' },
     idPlaceholderWeb: {
-        width: 280,
-        height: 120,
-        borderRadius: 6,
+        width: 320,
+        height: 140,
+        borderRadius: 10,
         backgroundColor: '#e3e3e3',
         marginTop: 6,
     },
@@ -2292,15 +2312,19 @@ const styles = StyleSheet.create({
 
     registerWeb: {
         alignSelf: 'center',
-        width: 260,
+        width: 320,
         backgroundColor: MAROON,
-        borderRadius: 8,
-        paddingVertical: 10,
+        borderRadius: 12,
+        paddingVertical: 12,
         alignItems: 'center',
         marginTop: 10,
         marginBottom: 15,
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(90deg, #b91c1c, #7f1d1d)',
+            boxShadow: '0 10px 20px rgba(127,29,29,0.25)',
+        } as any : {}),
     },
-    registerWebTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
+    registerWebTxt: { color: '#fff', fontWeight: '700', fontSize: 14 },
     registerDisabled: { opacity: 0.6 },
 
     // -------- Class Schedule (Web) --------
@@ -2310,16 +2334,19 @@ const styles = StyleSheet.create({
     scheduleTableWeb: {
         marginTop: 8,
         borderWidth: 1,
-        borderColor: '#E7B9B9',
-        borderRadius: 8,
+        borderColor: '#eeeeee',
+        borderRadius: 10,
         overflow: 'hidden',
         backgroundColor: '#fff',
+        ...(Platform.OS === 'web' ? {
+            boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+        } as any : {}),
     },
     scheduleHeaderRowWeb: {
         flexDirection: 'row',
         paddingVertical: 8,
         paddingHorizontal: 10,
-        backgroundColor: '#f7ecec',
+        backgroundColor: '#faf6f6',
     },
     scheduleHeaderCellWeb: { color: MAROON, fontWeight: '700', fontSize: 11, paddingHorizontal: 8 },
     scheduleRowWeb: {
@@ -2327,9 +2354,9 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         paddingHorizontal: 10,
         borderTopWidth: 1,
-        borderTopColor: '#F0D6D6',
+        borderTopColor: '#eee',
     },
-    scheduleCellWeb: { color: '#3a3a3a', fontSize: 11, paddingHorizontal: 8 },
+    scheduleCellWeb: { color: '#222', fontSize: 11, paddingHorizontal: 8 },
     // column widths for web
     colCodeWeb: { width: 80 },
     colTitleWeb: { width: 90 },

@@ -363,7 +363,14 @@ export default function TermsAndConditions({
 const MAROON = '#8B0000';
 
 const styles = StyleSheet.create({
-    page: { flex: 1, backgroundColor: '#fff', alignItems: 'center' },
+    page: { 
+        flex: 1, 
+        backgroundColor: '#fdf2f2', 
+        alignItems: 'center',
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(180deg, #fff7f7 0%, #f3f4f6 100%)',
+        } as any : {}),
+    },
 
     // WEB centered vertically
     pageWeb: { justifyContent: 'center', paddingVertical: 0 },
@@ -376,10 +383,12 @@ const styles = StyleSheet.create({
 
     // ===== Web card =====
     webCard: {
-        borderRadius: 12,
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#E9D5D5',
+        borderColor: '#f1f1f1',
         backgroundColor: '#fff',
+        paddingVertical: 28,
+        ...(Platform.OS === 'web' ? { boxShadow: '0 12px 35px rgba(0,0,0,0.08), 0 10px 40px rgba(185,28,28,0.05)' } as any : {}),
     },
     webTitleRow: {
         flexDirection: 'row',
@@ -388,26 +397,29 @@ const styles = StyleSheet.create({
         gap: 10,
         marginBottom: 8,
     },
-    title: { fontSize: 18, fontWeight: '800', color: MAROON },
+    title: { fontSize: 20, fontWeight: '800', color: MAROON, marginBottom: 4 },
     webBody: {
         borderWidth: 1,
-        borderColor: '#E9D5D5',
-        borderRadius: 8,
-        marginTop: 8,
+        borderColor: '#eeeeee',
+        borderRadius: 12,
+        marginTop: 12,
+        backgroundColor: '#fafafa',
+        paddingHorizontal: 16,
+        paddingVertical: 16,
     },
     bodyContent: { paddingBottom: 6 },
-    webBtnRow: { flexDirection: 'row', justifyContent: 'space-evenly', marginTop: 14 },
+    webBtnRow: { flexDirection: 'row', justifyContent: 'space-evenly', marginTop: 18 },
     sectionTitleWeb: {
         fontSize: 16,
         fontWeight: '700',
-        color: '#512B2B',
+        color: '#333',
         marginBottom: 6,
         marginTop: 6,
     },
     paragraphWeb: {
         fontSize: 14,
-        lineHeight: 22,
-        color: '#2B2B2B',
+        lineHeight: 24,
+        color: '#555',
         textAlign: 'justify',
         paddingLeft: 10,
         paddingRight: 12,
@@ -459,15 +471,20 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
     },
     checkboxChecked: { backgroundColor: MAROON },
-    ackTextWeb: { fontSize: 14.5, color: '#333', flex: 1 },
+    ackTextWeb: { fontSize: 14.5, color: '#444', flex: 1 },
     ackTextMobile: { fontSize: 13, color: '#333', flex: 1 },
     linkStrong: { color: MAROON, fontWeight: '700' },
 
     // Web buttons
-    btn: { minWidth: 130, paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginBottom: 20 },
-    btnAgree: { backgroundColor: '#EAF6EA', borderWidth: 1, borderColor: '#B7E0B7' },
-    btnAgreeText: { color: '#2C7A2C', fontWeight: '700' },
-    btnOutline: { backgroundColor: '#fff', borderWidth: 1, borderColor: MAROON },
+    btn: { minWidth: 130, paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
+    btnAgree: { 
+        backgroundColor: '#EAF6EA', 
+        borderWidth: 1, 
+        borderColor: '#B7E0B7',
+        ...(Platform.OS === 'web' ? { boxShadow: '0 6px 14px rgba(16,185,129,0.15)' } as any : {}),
+    },
+    btnAgreeText: { color: '#166534', fontWeight: '700' },
+    btnOutline: { backgroundColor: '#fff', borderWidth: 1, borderColor: MAROON, borderRadius: 12 },
     btnOutlineText: { color: MAROON, fontWeight: '700' },
 
     // Disabled

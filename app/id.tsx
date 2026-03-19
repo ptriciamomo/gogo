@@ -436,7 +436,11 @@ export default function StudentIdUploadScreen() {
                             )}
                         </TouchableOpacity>
 
-                        <Text style={styles.orWeb}>or</Text>
+                        <View style={styles.dividerRowWeb}>
+                            <View style={styles.dividerLineWeb} />
+                            <Text style={styles.orWeb}>or</Text>
+                            <View style={styles.dividerLineWeb} />
+                        </View>
 
                         <TouchableOpacity style={styles.camBtnWeb} onPress={handleCameraCapture} activeOpacity={0.9}>
                             <Ionicons name="camera" size={20} color="#fff" />
@@ -549,73 +553,90 @@ const styles = StyleSheet.create({
     // ---- Web / Desktop ----
     pageWeb: {
         flex: 1,
-        backgroundColor: '#fff',
+        backgroundColor: '#fdf2f2',
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(180deg, #fff7f7 0%, #f3f4f6 100%)',
+        } as any : {}),
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 24,
     },
     cardWeb: {
-        backgroundColor: '#fff',
-        borderRadius: 10,
+        backgroundColor: '#ffffff',
+        borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#E7B9B9',
-        paddingHorizontal: 22,
-        paddingTop: 20,
-        paddingBottom: 22,
-        ...(Platform.OS === 'web' ? { boxShadow: '0px 4px 12px rgba(0,0,0,0.06)' } : {}),
+        borderColor: '#f1f1f1',
+        paddingHorizontal: 28,
+        paddingTop: 24,
+        paddingBottom: 28,
+        ...(Platform.OS === 'web' ? { boxShadow: '0 12px 35px rgba(0,0,0,0.08), 0 10px 40px rgba(185,28,28,0.05)' } as any : {}),
     },
     headerRowWeb: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
-    headerWeb: { fontSize: 15, fontWeight: '600', color: MAROON, marginLeft: 8 },
-    webContent: { width: '100%', maxWidth: 480, alignSelf: 'center' },
-    logoWeb: { width: 52, height: 52, alignSelf: 'center', marginTop: 10, marginBottom: 14 },
+    headerWeb: { fontSize: 18, fontWeight: '800', color: MAROON, marginLeft: 8, marginBottom: 4 },
+    webContent: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+    logoWeb: { width: 64, height: 64, alignSelf: 'center', marginTop: 8, marginBottom: 16 },
 
-    instructionsContainerWeb: { alignItems: 'center', marginBottom: 16, paddingHorizontal: 8 },
-    instructionTextWeb: { fontSize: 13, color: MAROON, fontWeight: '500', textAlign: 'center', lineHeight: 18 },
+    instructionsContainerWeb: { alignItems: 'center', marginBottom: 20, paddingHorizontal: 8 },
+    instructionTextWeb: { fontSize: 14, color: '#555', fontWeight: '500', textAlign: 'center', lineHeight: 20 },
 
     labelWeb: {
-        color: MAROON,
-        fontWeight: '600',
-        fontSize: 13,
+        color: '#4a4a4a',
+        fontWeight: '700',
+        fontSize: 12,
         alignSelf: 'flex-start',
         marginTop: 14,
         marginBottom: 8,
     },
     fileInputWeb: {
         width: '100%',
-        borderWidth: 1,
-        height: 120,
-        borderColor: MAROON,
-        borderRadius: 8,
+        borderWidth: 1.5,
+        minHeight: 120,
+        borderColor: '#fca5a5',
+        borderRadius: 12,
         justifyContent: 'center',
         paddingHorizontal: 12,
-        backgroundColor: '#fff',
-        marginBottom: 16,
+        backgroundColor: '#fafafa',
+        marginBottom: 20,
+        ...(Platform.OS === 'web' ? {
+            cursor: 'pointer',
+            transition: 'border-color 120ms ease',
+        } as any : {}),
     },
     placeholderWeb: { color: '#666', fontSize: 14, alignSelf: 'center' },
     fileRowWeb: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     thumbWeb: { width: 34, height: 34, borderRadius: 8 },
     fileNameWeb: { flex: 1, color: '#333', fontSize: 14, fontWeight: '400' },
-    orWeb: { textAlign: 'center', color: '#666', marginVertical: 14, fontSize: 12, fontWeight: '600' },
+    dividerRowWeb: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 14 },
+    dividerLineWeb: { flex: 1, height: 1, backgroundColor: '#e5e5e5' },
+    orWeb: { textAlign: 'center', color: '#666', fontSize: 12, fontWeight: '700' },
     camBtnWeb: {
         width: '100%',
-        height: 44,
+        height: 46,
         backgroundColor: '#FF6B6B',
-        borderRadius: 8,
+        borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
         flexDirection: 'row',
         gap: 8,
         marginBottom: 18,
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(90deg, #ff6b6b, #ff4d4d)',
+            boxShadow: '0 6px 14px rgba(255,107,107,0.25)',
+        } as any : {}),
     },
     camBtnWebText: { color: '#fff', fontWeight: '600', fontSize: 14 },
     nextBtnWeb: {
         width: '100%',
         backgroundColor: MAROON,
-        borderRadius: 8,
-        height: 44,
+        borderRadius: 12,
+        height: 48,
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: 6,
+        ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(90deg, #b91c1c, #7f1d1d)',
+            boxShadow: '0 10px 20px rgba(127,29,29,0.25)',
+        } as any : {}),
     },
     nextBtnWebText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 

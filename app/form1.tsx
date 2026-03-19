@@ -133,6 +133,13 @@ export default function Form1UploadScreen() {
 
             const filePath = fileName;
 
+            console.log("FORM1: CALLING OCR");
+            console.log("FORM1 OCR URL:", `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/azure-ocr`);
+            console.log("FORM1 FILE PATH:", filePath);
+            console.log("FORM1 OCR HEADERS:", {
+                "Content-Type": "application/json"
+            });
+
             // Call OCR Edge Function
             const ocrResponse = await fetch(
                 `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/azure-ocr`,
@@ -145,9 +152,13 @@ export default function Form1UploadScreen() {
                 }
             );
 
+            console.log("FORM1 OCR STATUS:", ocrResponse.status);
             const ocrData = await ocrResponse.json();
 
+            console.log("FORM1 OCR DATA:", ocrData);
+
             if (!ocrResponse.ok || !ocrData?.success) {
+                console.log("FORM1 OCR FAILED — STOPPING FLOW");
                 Alert.alert('OCR failed. Please try again.');
                 setIsLoading(false);
                 return;
@@ -168,6 +179,7 @@ export default function Form1UploadScreen() {
                     .single();
 
                 if (calendarError || !calendarData) {
+                    console.log("FORM1 CALENDAR VALIDATION FAILED");
                     Alert.alert(
                         "Verification Error",
                         "Unable to verify the academic calendar. Please try again later."
@@ -197,12 +209,14 @@ export default function Form1UploadScreen() {
                     ocrData.semester.includes(calendarYearShort);
 
                 if (!semesterMatch || !yearMatch) {
+                    console.log("FORM1 CALENDAR VALIDATION FAILED");
                     setShowInvalidScheduleModal(true);
                     setIsLoading(false);
                     return;
                 }
             } catch (calendarValidationError) {
                 console.error("Academic calendar validation error:", calendarValidationError);
+                console.log("FORM1 CALENDAR VALIDATION FAILED");
                 Alert.alert(
                     "Verification Error",
                     "An error occurred while verifying the academic calendar. Please try again later."
@@ -212,6 +226,16 @@ export default function Form1UploadScreen() {
             }
 
             // Call Insert Function (Project A)
+            const payload = {
+                studentId: ocrData.studentId,
+                name: ocrData.name,
+                email: ocrData.email,
+                semester: ocrData.semester,
+                yearLevel: ocrData.yearLevel,
+                program: ocrData.program,
+                subjects: ocrData.subjects,
+            };
+            console.log("FORM1 INSERT PAYLOAD:", payload);
             const insertResponse = await fetch(
                 'https://ednraiixtmzymowfwarh.supabase.co/functions/v1/insert-form1-data',
                 {
@@ -233,7 +257,9 @@ export default function Form1UploadScreen() {
                 }
             );
 
-            await insertResponse.text();
+            console.log("FORM1 INSERT STATUS:", insertResponse.status);
+            const insertText = await insertResponse.text();
+            console.log("FORM1 INSERT RESPONSE TEXT:", insertText);
 
             if (!insertResponse.ok) {
                 Alert.alert('Failed to save student data.');
@@ -247,7 +273,7 @@ export default function Form1UploadScreen() {
             // OCR and insert successful - automatically redirect to register_two
             shouldRedirect = true;
             setIsLoading(false);
-            router.push('/register_two');
+                router.push('/register_two');
             return;
         } catch (error) {
             console.error('Error:', error);

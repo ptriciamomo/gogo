@@ -101,7 +101,7 @@ export default function TermsAndConditions({
     const handleAgree = () => {
         if (!ack) return;
         onAgree?.();
-        router.replace('/register');
+        router.replace('/id');
     };
 
     const handleDecline = () => {

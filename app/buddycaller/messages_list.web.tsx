@@ -57,7 +57,7 @@ export default function MessagesListScreen() {
   const [readConversations, setReadConversations] = useState<Map<string, string>>(new Map());
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [allowReadMarking, setAllowReadMarking] = useState(false);
-  const [timeoutId, setTimeoutId] = useState<number | null>(null);
+  const [timeoutId, setTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
 
   // Load read conversations from AsyncStorage
   const loadReadConversations = async () => {

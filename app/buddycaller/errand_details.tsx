@@ -212,7 +212,7 @@ export default function ErrandDetails() {
                 itemRows: [],
                 subtotal: 0,
                 deliveryFee: 0,
-                serviceFee: 11.20, // Service fee including VAT
+                serviceFee: 0,
                 total: 0,
             };
         }

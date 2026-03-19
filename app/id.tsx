@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRegistration } from '../stores/registration';
+import { supabase, supabaseAnonKey as SUPABASE_ANON_KEY } from '../lib/supabase';
 
 const MAROON = '#8B0000';
 
@@ -47,6 +48,7 @@ export default function StudentIdUploadScreen() {
 
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
     const [fileName, setFileName] = useState<string>('');
+    const [isLoading, setIsLoading] = useState(false);
 
     // ---------- helpers ----------
     const guessExt = (uri?: string) => {
@@ -59,6 +61,58 @@ export default function StudentIdUploadScreen() {
     const rand4 = () => Math.floor(1000 + Math.random() * 9000);
     const autoName = (uri: string, source: 'library' | 'camera') =>
         source === 'library' ? `img.${guessExt(uri)}` : `img${rand4()}.${guessExt(uri)}`;
+
+    const uploadToSupabase = async (uri: string) => {
+        console.log("UPLOAD URI TYPE:", uri);
+
+        const response = await fetch(uri);
+
+        // Mobile (file:// URIs) can be more reliable when uploading as raw bytes (ArrayBuffer)
+        if (Platform.OS !== 'web') {
+            const arrayBuffer = await response.arrayBuffer();
+            console.log("ARRAYBUFFER CREATED:", arrayBuffer);
+
+            const fileName = `ids/${Date.now()}.jpg`;
+
+            const { data, error } = await supabase.storage
+                .from('student-ids')
+                .upload(fileName, arrayBuffer, {
+                    contentType: 'image/jpeg',
+                    upsert: true,
+                });
+
+            console.log("UPLOAD ERROR FULL:", error);
+
+            if (error) {
+                console.error("UPLOAD ERROR:", error.message);
+                throw error;
+            }
+
+            return fileName;
+        }
+
+        const blob = await response.blob();
+        console.log("BLOB CREATED:", blob);
+
+        const fileName = `ids/${Date.now()}.jpg`;
+
+        const { data, error } = await supabase.storage
+            .from('student-ids')
+            .upload(fileName, blob, {
+                contentType: blob.type || 'image/jpeg',
+                upsert: true,
+            });
+
+        // 🔥 Log BOTH response and full error
+        console.log("UPLOAD ERROR FULL:", error);
+
+        if (error) {
+            console.error("UPLOAD ERROR:", error.message);
+            throw error;
+        }
+
+        return fileName;
+    };
 
     // Works across Expo SDK variants
     const getMediaTypesOption = (): any => {
@@ -100,7 +154,7 @@ export default function StudentIdUploadScreen() {
 
             const result = await ImagePicker.launchImageLibraryAsync({
                 ...getMediaTypesOption(),
-                allowsEditing: true,
+                allowsEditing: Platform.OS === 'web' ? true : false,
                 aspect: [4, 3],
                 quality: 0.8,
             });
@@ -122,7 +176,7 @@ export default function StudentIdUploadScreen() {
         try {
             const result = await ImagePicker.launchCameraAsync({
                 ...getMediaTypesOption(),
-                allowsEditing: true,
+                allowsEditing: Platform.OS === 'web' ? true : false,
                 aspect: [4, 3],
                 quality: 0.8,
             });
@@ -142,20 +196,206 @@ export default function StudentIdUploadScreen() {
         setFileName('');
     };
 
-    const handleNext = () => {
+    const handleNext = async () => {
+        if (isLoading) return;
         if (!selectedFile) {
             Alert.alert('No File Selected', 'Please upload your Student ID or take a photo.');
             return;
         }
 
-        // Store the image URI in registration state for later upload after authentication
-        setFromId(selectedFile);
-        
-        // Navigate to Form 1 page based on platform
-        if (Platform.OS === 'web') {
-            router.push('/form1');
-        } else {
-            router.push('/form1.mobile');
+        setIsLoading(true);
+        try {
+            const uploadedPath = await uploadToSupabase(selectedFile);
+
+            const { data: publicUrlData } = supabase
+                .storage
+                .from('student-ids')
+                .getPublicUrl(uploadedPath);
+
+            const publicUrl = publicUrlData.publicUrl;
+
+            console.log("PUBLIC URL:", publicUrl);
+
+            const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
+
+            const ocrUrl = `${SUPABASE_URL}/functions/v1/smart-function`;
+
+            console.log("FINAL OCR URL:", ocrUrl);
+            console.log("PUBLIC URL BEFORE OCR:", publicUrl);
+            console.log("OCR REQUEST DEBUG:", {
+                url: `${SUPABASE_URL}/functions/v1/smart-function`,
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ filePath: publicUrl }),
+            });
+
+            const requestBody = JSON.stringify({ filePath: publicUrl });
+            console.log("FINAL REQUEST BODY STRING:", requestBody);
+
+            let response;
+
+            try {
+                response = await fetch(ocrUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        apikey: SUPABASE_ANON_KEY,
+                        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                    },
+                    body: requestBody,
+                });
+                console.log("OCR FETCH CALLED");
+                console.log("OCR RESPONSE STATUS:", response.status);
+
+                console.log("OCR FETCH RESPONSE OBJECT:", response);
+                console.log("OCR STATUS:", response.status);
+
+            } catch (fetchError) {
+                console.error("OCR FETCH CRASH:", fetchError);
+                throw fetchError;
+            }
+
+            if (!response) {
+                throw new Error("No response from OCR fetch");
+            }
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error("OCR FETCH ERROR BODY:", errorText);
+                throw new Error("OCR request failed");
+            }
+
+            let ocrData;
+
+            try {
+                ocrData = await response.json();
+            } catch (parseError) {
+                console.error("OCR JSON PARSE ERROR:", parseError);
+                throw parseError;
+            }
+
+            {
+                const text = ocrData?.text || "";
+
+                const extractedId = text.match(/S?(\d{6})/)?.[1] || "";
+
+                const nameMatch = text.match(/STUDENT\s+([A-Z\s]+?)\s+College/i);
+                const fullName = nameMatch ? nameMatch[1].trim() : "";
+
+                const nameParts = fullName.split(" ");
+                const firstName = nameParts[0] || "";
+                const middleName = nameParts.length > 2
+                    ? nameParts.slice(1, -1).join(" ")
+                    : "";
+                const lastName = nameParts[nameParts.length - 1] || "";
+
+                const courseMatch = text.match(/College of\s+([A-Za-z\s]+)/i);
+                const course = courseMatch ? courseMatch[1].trim() : "";
+
+                console.log("EXTRACTED DATA:", {
+                    extractedId,
+                    firstName,
+                    middleName,
+                    lastName,
+                    course
+                });
+            }
+
+            const text = ocrData?.text || "";
+
+            const extractedId = text.match(/S?(\d{6})/)?.[1] || "";
+
+            const nameMatch = text.match(/STUDENT\s+([A-Z\s]+?)\s+College/i);
+            const fullName = nameMatch ? nameMatch[1].trim() : "";
+
+            const nameParts = fullName.split(" ");
+            const firstName = nameParts[0] || "";
+            const lastName = nameParts[nameParts.length - 1] || "";
+
+            if (false) {
+                const { data, error } = await supabase
+                    .from("users")
+                    .select("*")
+                    .eq("student_id_number", extractedId)
+                    .ilike("first_name", firstName)
+                    .ilike("last_name", lastName)
+                    .maybeSingle();
+
+                if (error || !data) {
+                    Alert.alert("ID not recognized or does not match our records");
+                    return;
+                }
+
+                console.log("USER VERIFIED:", data);
+            }
+
+            {
+                const text = ocrData?.text || "";
+
+                const studentIdMatch = text.match(/S?(\d{6})/);
+                const nameMatch = text.match(/STUDENT\s+([A-Z\s]+?)\s+College/i);
+                const courseMatch = text.match(/College of\s+([A-Za-z\s]+)/i);
+
+                const studentId = studentIdMatch ? studentIdMatch[1] : "";
+                const fullName = nameMatch ? nameMatch[1].trim() : "";
+                const course = courseMatch ? courseMatch[1].trim() : "";
+
+                const nameParts = fullName.split(" ");
+                const firstName = nameParts[0] || "";
+                const lastName = nameParts[nameParts.length - 1] || "";
+                const middleName = nameParts.length > 2
+                    ? nameParts.slice(1, -1).join(" ")
+                    : "";
+
+                const { updateField } = useRegistration.getState();
+                const setStudentId = (v: string) => updateField('studentId', v);
+                const setFirstName = (v: string) => updateField('firstName', v);
+                const setMiddleName = (v: string) => updateField('middleName', v);
+                const setLastName = (v: string) => updateField('lastName', v);
+                const setCourse = (v: string) => updateField('course', v);
+
+                if (studentId) setStudentId(studentId);
+                if (firstName) setFirstName(firstName);
+                if (middleName?.trim()) setMiddleName(middleName);
+                else setMiddleName("NA");
+                if (lastName) setLastName(lastName);
+                if (course) setCourse(course);
+            }
+
+            const {
+                studentId: student_id,
+                firstName: first_name,
+                middleName: middle_name,
+                lastName: last_name,
+                course
+            } = useRegistration.getState();
+
+            if (!response?.ok || !ocrData?.success) {
+                Alert.alert("Could not read your ID. Please try again.");
+                // return;
+            }
+
+            // Student ID (STRICT MATCH)
+            // Name (FLEXIBLE MATCH)
+            const ocrName = String(ocrData.name ?? '').toUpperCase();
+            const firstNameUpper = String(first_name ?? '').toUpperCase();
+            const lastNameUpper = String(last_name ?? '').toUpperCase();
+
+            // Store the image URI in registration state for later upload after authentication
+            setFromId(selectedFile);
+
+            // Navigate to Form 1 page based on platform
+            if (Platform.OS === 'web') {
+                router.push('/register');
+            } else {
+                router.push('/register');
+            }
+        } catch (e) {
+            Alert.alert("Could not read your ID. Please try again.");
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -206,9 +446,10 @@ export default function StudentIdUploadScreen() {
                         <TouchableOpacity 
                             style={styles.nextBtnWeb} 
                             onPress={handleNext} 
+                            disabled={isLoading}
                             activeOpacity={0.9}
                         >
-                            <Text style={styles.nextBtnWebText}>Next</Text>
+                            <Text style={styles.nextBtnWebText}>{isLoading ? "Verifying ID..." : "Next"}</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -290,10 +531,11 @@ export default function StudentIdUploadScreen() {
                         <TouchableOpacity 
                             style={styles.nextBtnMob} 
                             onPress={handleNext} 
+                            disabled={isLoading}
                             activeOpacity={0.9}
                         >
                             <Text allowFontScaling={false} maxFontSizeMultiplier={1} style={styles.nextBtnMobText}>
-                                Next
+                                {isLoading ? "Verifying ID..." : "Next"}
                             </Text>
                         </TouchableOpacity>
                     </View>

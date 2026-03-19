@@ -432,10 +432,10 @@ export default function AccountConfirm() {
 
             // must be signed in already (after /verify)
             const authPromise = supabase.auth.getUser();
-            const authTimeout = new Promise((_, reject) =>
+            const authTimeout = new Promise((_, reject) => 
                 setTimeout(() => reject(new Error('Auth check timeout')), 10000)
             );
-
+            
             const { data: auth, error: authErr } = await Promise.race([authPromise, authTimeout]) as any;
             if (authErr) throw authErr;
 
@@ -1290,7 +1290,7 @@ export default function AccountConfirm() {
                                         activeOpacity={0.8}
                                     >
                                         <Text style={styles.ownershipModalButtonText}>OK</Text>
-                                    </TouchableOpacity>
+                    </TouchableOpacity>
                                 </View>
                             </View>
                         </Modal>

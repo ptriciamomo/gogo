@@ -1,7 +1,7 @@
 // app/register.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     Image,
     KeyboardAvoidingView,
@@ -174,6 +174,13 @@ export default function RegisterScreen() {
     const isWeb = Platform.OS === 'web' || isLG;
 
     const setFromRegister = useRegistration((s) => s.setFromRegister);
+    const {
+        studentId: storeStudentId,
+        firstName: storeFirstName,
+        middleName: storeMiddleName,
+        lastName: storeLastName,
+        course: storeCourse,
+    } = useRegistration();
 
     // web card width (responsive clamp) - made wider for two-column layout
     const containerWidth = useMemo(() => {
@@ -245,7 +252,13 @@ export default function RegisterScreen() {
     const [phone, setPhone] = useState('');
     const [message, setMessage] = useState('');
 
-
+    useEffect(() => {
+        if (storeStudentId) setStudentId(storeStudentId);
+        if (storeFirstName) setFirstName(storeFirstName);
+        if (storeMiddleName) setMiddleName(storeMiddleName);
+        if (storeLastName) setLastName(storeLastName);
+        if (storeCourse) setCourse(storeCourse);
+    }, [storeStudentId, storeFirstName, storeMiddleName, storeLastName, storeCourse]);
 
     // Validation function
     const isFormValid = () => {
@@ -292,18 +305,11 @@ export default function RegisterScreen() {
 
         setMessage('');
 
-        router.push({
-            pathname: '/id',
-            params: {
-                role,
-                first_name,
-                middle_name,
-                last_name,
-                student_id,
-                course,
-                phone,
-            },
-        });
+        if (Platform.OS === 'web') {
+            router.push('/form1');
+        } else {
+            router.push('/form1.mobile');
+        }
     };
 
     const renderFields = () => (

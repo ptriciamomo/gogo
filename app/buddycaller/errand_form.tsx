@@ -1724,7 +1724,11 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                             
                             // Normalize images: convert HEIC/HEIF to JPEG before upload
                             let uploadUri = file.uri;
-                            let uploadMime: string | undefined = 'mimeType' in file ? file.mimeType : (file as ImagePicker.ImagePickerAsset).type;
+                            // Some pickers expose `mimeType` / `type` as `string | null`; normalize `null` to `undefined`.
+                            let uploadMime: string | undefined =
+                                'mimeType' in file
+                                    ? (file.mimeType ?? undefined)
+                                    : ((file as ImagePicker.ImagePickerAsset).type ?? undefined);
                             const isImage = ('type' in file && ((file as ImagePicker.ImagePickerAsset).type?.startsWith('image/') || (uploadMime?.startsWith('image/'))));
                             const isHeic = (uploadMime === 'image/heic' || uploadMime === 'image/heif' || (uploadUri?.toLowerCase().endsWith('.heic')) || (uploadUri?.toLowerCase().endsWith('.heif')));
 

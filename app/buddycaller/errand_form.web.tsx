@@ -17,6 +17,7 @@ import {
     View,
 } from "react-native";
 import { supabase } from "../../lib/supabase";
+import QuantityStepper from "./QuantityStepper";
 
 // Web-only file; mobile variant removed
 
@@ -2388,7 +2389,7 @@ export default function ErrandForm() {
                                         <FoodItemDropdown
                                             value={it.name}
                                             category={category}
-                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice, qty: "1" })}
                                             placeholder="Select food item"
                                         />
                                     </View>
@@ -2397,7 +2398,7 @@ export default function ErrandForm() {
                                         <SchoolMaterialDropdown
                                             value={it.name}
                                             category={category}
-                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice, qty: "1" })}
                                             placeholder="Select material"
                                         />
                                     </View>
@@ -2405,29 +2406,33 @@ export default function ErrandForm() {
                                     <FileUpload
                                         files={printingFiles[it.id] || []}
                                         onFilesChange={(files) => setItemFiles(it.id, files)}
-                                        onFilePicked={(name) => updateItem(it.id, { name })}
+                                        onFilePicked={(name) => updateItem(it.id, { name, qty: "1" })}
                                         onFilePress={(file) => openFilePreview(file)}
                                     />
                                 ) : (
                                     <TextInput
                                         value={it.name}
-                                        onChangeText={(t) => updateItem(it.id, { name: t })}
+                                        onChangeText={(t) => {
+                                            if (!t.trim()) {
+                                                updateItem(it.id, { name: t, qty: "" });
+                                            } else if (!it.name?.trim()) {
+                                                updateItem(it.id, { name: t, qty: "1" });
+                                            } else {
+                                                updateItem(it.id, { name: t });
+                                            }
+                                        }}
                                         placeholder="ex. Banana"
                                         placeholderTextColor="#999"
                                         style={[s.input, { flex: 1 }]}
                                     />
                                 )}
 
-                                <TextInput
+                                <QuantityStepper
                                     value={it.qty}
-                                    onChangeText={(t) => {
-                                        const numericText = t.replace(/[^0-9.]/g, "");
-                                        updateItem(it.id, { qty: numericText });
-                                    }}
-                                    placeholder="ex. 1"
-                                    placeholderTextColor="#999"
-                                    keyboardType="numeric"
-                                    style={[s.input, { width: Platform.OS === 'web' ? 120 : 120, marginLeft: 8 }]}
+                                    onChange={(qty) => updateItem(it.id, { qty })}
+                                    hasItem={!!it.name?.trim()}
+                                    size="web"
+                                    style={{ marginLeft: 8 }}
                                 />
 
                                 <TouchableOpacity style={s.removeItemBtn} onPress={() => removeItem(it.id)}>

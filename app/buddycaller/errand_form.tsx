@@ -27,6 +27,7 @@ import {
     Image,
 } from "react-native";
 import { responsive, rw, rh, rf, rp, rb } from "../../utils/responsive";
+import QuantityStepper from "./QuantityStepper";
 
 const colors = {
     maroon: "#8B2323",
@@ -1356,17 +1357,16 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
         const itemRows: Array<{ name: string; qty: number; price: number; total: number }> = [];
         let subtotal = 0;
 
-        // Calculate item prices for all categories (Food Delivery has prices, Printing uses size/color pricing)
-        // FUTURE: Price calculation will use database prices when available, with parseItemPrice() as fallback
+
         items.forEach((item) => {
             if (item.name && item.qty) {
                 let itemPrice = 0;
                 if (category === "Printing") {
-                    // Use database prices for printing: size price + color price
+                    
                     itemPrice = printingSizePrice + printingColorModePrice;
                 } else {
-                    // PHASE 2: Use item.price from database if available, otherwise fallback to parseItemPrice()
-                    itemPrice = item.price !== undefined ? item.price : parseItemPrice(item.name); // Returns 0 if no price found
+                    
+                    itemPrice = item.price !== undefined ? item.price : parseItemPrice(item.name); 
                 }
                 const quantity = parseFloat(String(item.qty)) || 0;
                 const itemTotal = itemPrice * quantity;
@@ -1381,7 +1381,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             }
         });
 
-        // Calculate total quantity (sum of all item quantities)
+       
         const totalQuantity = items.reduce((sum, item) => {
             if (item.name && item.name.trim() !== "") {
                 const qty = parseFloat(String(item.qty)) || 0;
@@ -1395,14 +1395,14 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
         let addOnPerExtra = 0;
         
         if (category === "Deliver Items") {
-            baseFlatFee = 20; // Base flat fee
-            addOnPerExtra = 5; // ₱5 per extra item
+            baseFlatFee = 20; 
+            addOnPerExtra = 5; 
         } else if (category === "Food Delivery") {
-            baseFlatFee = 15; // Base flat fee
-            addOnPerExtra = 5; // ₱5 per extra item
+            baseFlatFee = 15; 
+            addOnPerExtra = 5; 
         } else if (category === "School Materials") {
-            baseFlatFee = 10; // Base flat fee
-            addOnPerExtra = 5; // ₱5 per extra item
+            baseFlatFee = 10; 
+            addOnPerExtra = 5; 
         } else if (category === "Printing") {
             baseFlatFee = 5; // Base flat fee
             addOnPerExtra = 2; // ₱2 per extra page
@@ -1815,19 +1815,19 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                 payload.delivery_longitude = selectedDeliveryLocation.longitude;
             }
 
-            // Use calculated total (subtotal + delivery fee + service fee) as the canonical amount
+           
             if (priceBreakdown.total > 0) {
                 payload.amount_price = priceBreakdown.total;
             }
 
-            // IMPORTANT: no .select().single() to avoid extra read blocked by RLS
+            
             const { error: insertError, data: insertedData } = await supabase.from("errand").insert([payload]).select();
             if (insertError) throw insertError;
 
             // Call Edge Function to assign top runner and notify
             if (insertedData && insertedData.length > 0 && insertedData[0]?.id) {
                 try {
-                    // Get current session to pass JWT token for authorization
+                    
                     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
                     
                     if (sessionError || !session?.access_token) {
@@ -1838,7 +1838,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                         );
                         return;
                     }
-                    
+                    // Assigning the errand to the top runner 
                     const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-errand', {
                         body: { errand_id: insertedData[0].id },
                         headers: {
@@ -2537,18 +2537,24 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                     <View key={it.id} style={s.webItemsRow}>
                                         <TextInput
                                             value={it.name}
-                                            onChangeText={(t) => updateItem(it.id, { name: t })}
+                                            onChangeText={(t) => {
+                                                if (!t.trim()) {
+                                                    updateItem(it.id, { name: t, qty: "" });
+                                                } else if (!it.name?.trim()) {
+                                                    updateItem(it.id, { name: t, qty: "1" });
+                                                } else {
+                                                    updateItem(it.id, { name: t });
+                                                }
+                                            }}
                                             placeholder="ex. Parcel"
                                             placeholderTextColor="#999"
                                             style={s.webItemInput}
                                         />
-                                        <TextInput
+                                        <QuantityStepper
                                             value={it.qty}
-                                            onChangeText={(t) => updateItem(it.id, { qty: t })}
-                                            placeholder="ex. 1 copy"
-                                            placeholderTextColor="#999"
-                                            style={s.webItemInput}
-                                            keyboardType="numeric"
+                                            onChange={(qty) => updateItem(it.id, { qty })}
+                                            hasItem={!!it.name?.trim()}
+                                            size="web"
                                         />
                                         <TouchableOpacity style={s.webRemoveItemBtn} onPress={() => removeItem(it.id)}>
                                             <Text style={s.webRemoveItemX}>X</Text>
@@ -2766,7 +2772,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                         <FoodItemDropdown
                                             value={it.name}
                                             category={category}
-                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice, qty: "1" })}
                                             placeholder="Select food item"
                                         />
                                     </View>
@@ -2775,7 +2781,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                         <SchoolMaterialDropdown
                                             value={it.name}
                                             category={category}
-                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice })}
+                                            onSelect={(itemName, itemPrice) => updateItem(it.id, { name: itemName, price: itemPrice, qty: "1" })}
                                             placeholder="Select material"
                                         />
                                     </View>
@@ -2783,33 +2789,42 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                     // 🔒 PROTECTED: Printing category uses FileUpload - DO NOT MODIFY
                                     <FileUpload
                                         files={it.files || []}
-                                        onFilesChange={(newFiles) =>
+                                        onFilesChange={(newFiles) => {
+                                            const name =
+                                                (newFiles?.[0] as any)?.name ||
+                                                (newFiles?.[0] as any)?.fileName ||
+                                                it.name;
+                                            const hadItem = !!it.name?.trim();
+                                            const hasItem = !!String(name || "").trim();
                                             updateItem(it.id, {
                                                 files: newFiles,
-                                                name:
-                                                    (newFiles?.[0] as any)?.name ||
-                                                    (newFiles?.[0] as any)?.fileName ||
-                                                    it.name,
-                                            })
-                                        }
+                                                name,
+                                                ...(!hasItem ? { qty: "" } : !hadItem ? { qty: "1" } : {}),
+                                            });
+                                        }}
                                         onFilePress={(file) => openFilePreview(file)}
                                     />
                                 ) : (
                                     <TextInput
                                         value={it.name}
-                                        onChangeText={(t) => updateItem(it.id, { name: t })}
+                                        onChangeText={(t) => {
+                                            if (!t.trim()) {
+                                                updateItem(it.id, { name: t, qty: "" });
+                                            } else if (!it.name?.trim()) {
+                                                updateItem(it.id, { name: t, qty: "1" });
+                                            } else {
+                                                updateItem(it.id, { name: t });
+                                            }
+                                        }}
                                         placeholder="ex. Banana"
                                         placeholderTextColor="#999"
                                         style={[s.itemInput, { flex: 3, marginRight: 8 }]}
                                     />
                                 )}
-                                <TextInput
+                                <QuantityStepper
                                     value={it.qty}
-                                    onChangeText={(t) => updateItem(it.id, { qty: t })}
-                                    placeholder="ex. 1 pack"
-                                    placeholderTextColor="#999"
-                                    style={[s.itemInput, { flex: 1 }]}
-                                    keyboardType="numeric"
+                                    onChange={(qty) => updateItem(it.id, { qty })}
+                                    hasItem={!!it.name?.trim()}
                                 />
                                 <TouchableOpacity style={s.removeItemBtn} onPress={() => removeItem(it.id)}>
                                     <Text style={s.removeItemX}>X</Text>

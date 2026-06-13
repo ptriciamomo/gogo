@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { rankRunners, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking.ts";
+import { rankRunnersWithRatingPriority, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking.ts";
 
 // CORS headers for browser compatibility
 const corsHeaders = {
@@ -76,29 +76,29 @@ serve(async (req) => {
       return corsResponse(JSON.stringify({ error: "Missing errand_id" }), 400);
     }
 
-    // Step 1: Fetch the errand 
+    
     const { data: errand, error } = await supabase
       .from("errand")
       .select("*")
       .eq("id", errand_id)
       .single();
 
-    // Handle database error
+  
     if (error) {
-      // Check if errand not found
+      
       if (error.code === "PGRST116") {
         return corsResponse(JSON.stringify({ error: "Errand not found" }), 404);
       }
-      // Other database errors
+      
       return corsResponse(JSON.stringify({ error: "Failed to fetch errand" }), 500);
     }
 
-    // Check if errand is already assigned
+   
     if (errand.notified_runner_id !== null) {
       return corsResponse(JSON.stringify({ status: "already_assigned" }), 200);
     }
 
-     // Step 2: Fetch eligible runners 
+     // Step2: Fetch eligible runners 
     const seventyFiveSecondsAgo = new Date(Date.now() - 75 * 1000).toISOString();
  
     let runnersQuery = supabase
@@ -109,10 +109,10 @@ serve(async (req) => {
       .gte("last_seen_at", seventyFiveSecondsAgo)
       .or(`location_updated_at.gte.${seventyFiveSecondsAgo},location_updated_at.is.null`);
 
-    // Exclude timeout runners if present 
+    
     if (errand.timeout_runner_ids && Array.isArray(errand.timeout_runner_ids) && errand.timeout_runner_ids.length > 0) {
       for (const timeoutRunnerId of errand.timeout_runner_ids) {
-        runnersQuery = runnersQuery.neq("id", timeoutRunnerId);
+        runnersQuery = runnersQuery.neq("id", timeoutRunnerId); //Remove timeout runners
       }
     }
 
@@ -189,19 +189,19 @@ serve(async (req) => {
       );
     }
 
-    // STep 3: Fetch caller location for distance calculation
+    // STep3: Apply distance filter between BuddyCaller & BuddyRunner
     const { data: callerData, error: callerError } = await supabase
       .from("users")
       .select("latitude, longitude")
       .eq("id", errand.buddycaller_id)
       .single();
 
-    // Handle caller location error or missing location
+    
     if (callerError || !callerData || !callerData.latitude || !callerData.longitude) {
       return corsResponse(JSON.stringify({ status: "no_runners_within_distance" }), 200);
     }
 
-    // Validate caller coordinates
+  
     const callerLat = typeof callerData.latitude === 'number' ? callerData.latitude : parseFloat(String(callerData.latitude || ''));
     const callerLon = typeof callerData.longitude === 'number' ? callerData.longitude : parseFloat(String(callerData.longitude || ''));
 
@@ -232,7 +232,7 @@ serve(async (req) => {
       return distanceMeters <= 500;
     });
 
-    // Handle empty result after distance filtering
+    
     if (!filteredRunners || filteredRunners.length === 0) {
       console.warn(`[ASSIGN-ERRAND] No runners within 500m for errand ${errand.id}. Caller coords: (${callerLat}, ${callerLon}) - cancelling immediately`);
       
@@ -310,21 +310,21 @@ serve(async (req) => {
 
     console.log(`[ASSIGN-ERRAND] ${filteredRunners.length} runners within 500m for errand ${errand.id}`);
 
-    // Step 4: Normalize errand categories for ranking 
+    // Normalize errand categories for ranking 
     const errandCategories =
       errand.category && errand.category.trim().length > 0
         ? [errand.category.trim().toLowerCase()]
         : [];
 
-    // QUEUE-BASED RANKING: Rank runners 
-    console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id}`);
-    const rankedRunners = await rankRunners(
+    
+    console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id} (priority >= 3.5 first)`);
+    const rankedRunners = await rankRunnersWithRatingPriority(
       filteredRunners as RunnerForRanking[],
       errandCategories,
       callerLat,
       callerLon,
       async (runnerId: string) => {
-        // Fetch runner category history for TF-IDF
+        
         const { data: historyData } = await supabase
           .from("errand")
           .select("category")
@@ -401,11 +401,11 @@ serve(async (req) => {
       );
     }
 
-    // Step 5: Extract runner IDs in ranked order for queue storage
+    // Assign first runner in the queue
     const rankedRunnerIds = rankedRunners.map(r => r.id);
     console.log(`[ASSIGN-ERRAND] Ranked runner IDs for errand ${errand.id}:`, rankedRunnerIds);
 
-    // Get top runner (index 0)
+    //Top rank
     const topRunner = rankedRunners[0];
 
     
@@ -482,15 +482,15 @@ serve(async (req) => {
       runnerId: topRunner?.id,
     });
 
-    // Store queue and assign first runner
+    // 
     const { data: updateData, error: updateError } = await supabase
       .from("errand")
       .update({
         notified_runner_id: topRunner.id,
         notified_at: assignedAt,
-        notified_expires_at: expiresAt,  // Set expiration 60 seconds from now
-        ranked_runner_ids: rankedRunnerIds,  // Store complete queue
-        current_queue_index: 0,  // Start at index 0
+        notified_expires_at: expiresAt,  
+        ranked_runner_ids: rankedRunnerIds,  
+        current_queue_index: 0,  
         timeout_runner_ids: updatedTimeoutRunnerIds,  
         is_notified: true,
       })
@@ -498,7 +498,7 @@ serve(async (req) => {
       .is("notified_runner_id", null)
       .select();
     
-    // DIAGNOSTIC LOG 6: Immediately after UPDATE query
+   
     console.log("[ASSIGN-ERRAND] Assignment UPDATE result:", {
       updateError: updateError,
       updatedRows: updateData?.length || 0,

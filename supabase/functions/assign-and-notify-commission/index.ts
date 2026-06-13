@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { rankRunners, RunnerForRanking, calculateDistanceKm } from "../_shared/runner-ranking.ts";
+import { rankRunnersWithRatingPriority, RunnerForRanking, calculateDistanceKm } from "../_shared/runner-ranking.ts";
 
 // CORS headers for browser compatibility
 const corsHeaders = {
@@ -271,9 +271,9 @@ serve(async (req) => {
       ? commissionTypes.map(t => t.trim().toLowerCase()).filter(t => t.length > 0)
       : [];
 
-    // QUEUE-BASED RANKING: Rank runners ONCE and store queue
-    // This prevents re-ranking on timeout, eliminating UI glitching
-    const rankedRunners = await rankRunners(
+    // QUEUE-BASED RANKING: Rank priority-rated runners (>= 3.5) first, then fallback.
+    // Rank runners ONCE and store queue to prevent re-ranking on timeout.
+    const rankedRunners = await rankRunnersWithRatingPriority(
       filteredRunners as RunnerForRanking[],
       normalizedCommissionTypes,
       callerLat,

@@ -1,35 +1,18 @@
 // Deno Edge Function.
 // VS Code TypeScript errors about URL imports and Deno globals are expected.
 // DO NOT refactor to Node style.
-//
-// 📊 LOGS LOCATION:
-// View Edge Function logs in: Supabase Dashboard → Functions → validate-availability → Logs
-//
-// 🧪 TEST SNIPPET (for local testing only):
-// const { data, error } = await supabase.functions.invoke(
-//   "validate-availability",
-//   {
-//     body: {
-//       runner_id: "TEST_RUNNER_ID",
-//       latitude: 7.0901,
-//       longitude: 125.6063,
-//     },
-//   }
-// );
-// console.log("FUNCTION DATA:", data);
-// console.log("FUNCTION ERROR:", error);
-//
-// EXPECTED BEHAVIOR:
-// - Inside UM Matina:  HTTP 200, { allowed: true }
-// - Outside UM Matina: HTTP 200, { allowed: false, reason: "..." }
-// - Missing lat/lon:   HTTP 400, { error: "...", details: "..." }
-// - Invalid numbers:   HTTP 400, { error: "...", details: "..." }
-// Note: Geofence rejection (allowed: false) returns HTTP 200, NOT an error.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { canRunnerBeAvailable } from "../_shared/geofence.logic.ts";
 
-// 🧪 TEMPORARY TESTING FLAG - Set to false to restore geofence validation
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const supabase = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+);
+
+// 🧪 TEMPORARY TESTING FLAG
 const DISABLE_GEOFENCING_FOR_TESTING = true;
 
 const corsHeaders = {
@@ -39,16 +22,13 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // 📥 Debug: Log function invocation
   console.log("📥 validate-availability invoked");
 
   try {
-    // Only allow POST
     if (req.method !== "POST") {
       return new Response(
         JSON.stringify({ error: "Method not allowed. Use POST." }),
@@ -56,14 +36,11 @@ serve(async (req) => {
       );
     }
 
-    // Parse request body
     const body = await req.json();
     const { runner_id, latitude, longitude } = body;
 
-    // 📦 Debug: Log request body
     console.log("📦 Request body:", body);
 
-    // Validate required fields
     if (!runner_id) {
       return new Response(
         JSON.stringify({ error: "runner_id is required" }),
@@ -71,39 +48,66 @@ serve(async (req) => {
       );
     }
 
-    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+    if (
+      latitude === null ||
+      latitude === undefined ||
+      longitude === null ||
+      longitude === undefined
+    ) {
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: "Invalid GPS coordinates",
-          details: "latitude and longitude are required and cannot be null or undefined"
+          details:
+            "latitude and longitude are required and cannot be null or undefined",
         }),
         { status: 400, headers: corsHeaders }
       );
     }
 
-    // Validate latitude and longitude are numbers
-    const lat = typeof latitude === 'number' ? latitude : parseFloat(String(latitude));
-    const lon = typeof longitude === 'number' ? longitude : parseFloat(String(longitude));
+    const lat =
+      typeof latitude === "number" ? latitude : parseFloat(String(latitude));
+    const lon =
+      typeof longitude === "number" ? longitude : parseFloat(String(longitude));
 
     if (isNaN(lat) || isNaN(lon)) {
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: "Invalid GPS coordinates",
-          details: "latitude and longitude must be valid numbers"
+          details: "latitude and longitude must be valid numbers",
         }),
         { status: 400, headers: corsHeaders }
       );
     }
-
-    // 📍 Debug: Log coordinates before validation
+    // Checks the academic calendar
     console.log("📍 Coordinates received:", { lat, lon });
 
-    // 🧪 TEMPORARY TESTING: Bypass geofence validation if flag is enabled
-    if (DISABLE_GEOFENCING_FOR_TESTING) {
-      console.log("⚠️ GEOFENCING BYPASSED FOR TESTING - Returning allowed: true");
+    const utcNow = new Date();
+    const phNow = new Date(utcNow.getTime() + 8 * 60 * 60 * 1000);
+    const today = phNow.toISOString().split("T")[0];
+
+    const { data: calendar, error: calendarError } = await supabase
+      .from("academic_calendar")
+      .select("semester, term")
+      .lte("start_date", today)
+      .gte("end_date", today)
+      .limit(1)
+      .single();
+
+    if (calendarError) {
+      console.log("⚠️ Academic calendar fetch error:", calendarError);
+    }
+
+    const currentSemester = calendar?.semester;
+    const currentTerm = calendar?.term;
+
+    console.log("📅 Current semester:", currentSemester);
+    console.log("📅 Current term:", currentTerm);
+
+    if (!currentSemester) {
       return new Response(
         JSON.stringify({
-          allowed: true,
+          allowed: false,
+          reason: "No active academic semester.",
         }),
         {
           status: 200,
@@ -112,34 +116,181 @@ serve(async (req) => {
       );
     }
 
-    // Validate geofence using polygon check (authoritative)
-    // IMPORTANT: Geofence validation is a BUSINESS DECISION, not an error
-    // Both allowed=true and allowed=false MUST return HTTP 200
+    console.log("📚 Checking runner schedule...");
+    // Checks the runner's schedule
+    const { data: userData } = await supabase
+      .from("users")
+      .select("student_id_number")
+      .eq("id", runner_id)
+      .single();
+
+    if (userData?.student_id_number) {
+      const studentId = userData.student_id_number;
+
+      const { data: studentData } = await supabase
+        .from("students")
+        .select("semester")
+        .eq("student_id", studentId)
+        .single();
+
+      const studentSemester = studentData?.semester || "";
+
+      const normalizeSemester = (sem: string) => {
+        const s = sem.toLowerCase();
+        if (s.includes("first") || s.includes("1")) return 1;
+        if (s.includes("second") || s.includes("2")) return 2;
+        if (s.includes("third") || s.includes("3")) return 3;
+        return null;
+      };
+
+      const studentSemNumber = normalizeSemester(studentSemester);
+      const currentSemNumber = normalizeSemester(currentSemester || "");
+
+      console.log("📚 Student semester:", studentSemester);
+      console.log("📚 Student semester number:", studentSemNumber);
+      console.log("📚 Current semester:", currentSemester);
+      console.log("📚 Current semester number:", currentSemNumber);
+
+      if (!studentSemNumber || studentSemNumber !== currentSemNumber) {
+        console.log("⛔ Student semester mismatch:", studentSemester);
+
+        return new Response(
+          JSON.stringify({
+            allowed: false,
+            reason:
+              "You cannot go Active because your schedule is not within the current semester.",
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      const { data: schedules } = await supabase
+        .from("student_subjects")
+        .select("day, term, time")
+        .eq("student_id", studentId);
+
+      if (schedules && schedules.length > 0) {
+
+        const now = phNow;
+        const currentDayFull = now.toLocaleString("en-US", { weekday: "short" });
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+        console.log("🕒 Current PH day:", currentDayFull);
+        console.log("🕒 Current PH minutes:", currentMinutes);
+
+        const convertToMinutes = (timeStr: string) => {
+          const letter = timeStr.slice(-1);
+          const number = timeStr.slice(0, -1);
+
+          const hour = parseInt(number.slice(0, number.length - 2));
+          const minute = parseInt(number.slice(-2));
+
+          let h = hour;
+
+          if (letter === "E") h += 12;
+          if (letter === "A" && hour !== 12) h += 12;
+
+          return h * 60 + minute;
+        };
+
+        const dayMap: Record<string,string> = {
+          Mon:"M",
+          Tue:"Tu",
+          Wed:"W",
+          Thu:"Th",
+          Fri:"F",
+          Sat:"Sa",
+          Sun:"Su"
+        };
+
+        const todayCode = dayMap[currentDayFull];
+
+        for (const subject of schedules) {
+          const { day, time, term } = subject;
+
+          if (!(term === currentTerm || term === "Sem")) {
+            console.log("⏭ Skipping subject (term mismatch):", term);
+            continue;
+          }
+
+          if (!time || time === "Consultation") continue;
+
+          console.log("📖 Checking subject schedule:", day, time);
+
+          if (day && day.includes(todayCode)) {
+
+            const [startRaw, endRaw] = time.split("-");
+
+            const startMinutes = convertToMinutes(startRaw);
+            const endMinutes = convertToMinutes(endRaw);
+
+            console.log(
+              "🕒 Class time range:",
+              startMinutes,
+              "to",
+              endMinutes
+            );
+
+            if (
+              currentMinutes >= startMinutes &&
+              currentMinutes <= endMinutes
+            ) {
+              console.log("⛔ Runner has a class right now");
+
+              return new Response(
+                JSON.stringify({
+                  allowed: false,
+                  reason:
+                    "You cannot go Active because you have a scheduled class.",
+                }),
+                {
+                  status: 200,
+                  headers: {
+                    ...corsHeaders,
+                    "Content-Type": "application/json",
+                  },
+                }
+              );
+            }
+          }
+        }
+      }
+    }
+    // change to false para ma on
+    if (DISABLE_GEOFENCING_FOR_TESTING) {
+      console.log("⚠️ GEOFENCING BYPASSED FOR TESTING - Returning allowed: true");
+
+      return new Response(
+        JSON.stringify({ allowed: true }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
     const validation = canRunnerBeAvailable(lat, lon, true);
 
-    // ✅ Debug: Log validation result before returning
     console.log("✅ Validation result:", validation);
 
-    // ALWAYS return HTTP 200 for geofence validation results
-    // This ensures the client can read { allowed: false } without FunctionsHttpError
     if (validation.allowed) {
-      // Runner is inside UM Matina - allowed to go online
       return new Response(
-        JSON.stringify({
-          allowed: true,
-        }),
+        JSON.stringify({ allowed: true }),
         {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
     } else {
-      // Runner is outside UM Matina - NOT an error, just a business rule
-      // Return HTTP 200 so client can read allowed: false
       return new Response(
         JSON.stringify({
           allowed: false,
-          reason: validation.reason || "You must be inside UM Matina campus to go online.",
+          reason:
+            validation.reason ||
+            "You must be inside UM Matina campus to go online.",
         }),
         {
           status: 200,
@@ -147,6 +298,7 @@ serve(async (req) => {
         }
       );
     }
+
   } catch (e) {
     return new Response(
       JSON.stringify({

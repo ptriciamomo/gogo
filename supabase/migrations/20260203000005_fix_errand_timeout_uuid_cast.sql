@@ -82,10 +82,10 @@ BEGIN
       AND runner_id IS NULL
       AND notified_runner_id IS NOT NULL
       AND notified_expires_at IS NOT NULL
-      AND notified_expires_at <= NOW()  -- ONLY place expiry is checked
+      AND notified_expires_at <= NOW()  
     ORDER BY notified_expires_at ASC
     LIMIT 50
-    FOR UPDATE SKIP LOCKED  -- Lock row to prevent concurrent modification
+    FOR UPDATE SKIP LOCKED  
   LOOP
     BEGIN
       errands_processed := errands_processed + 1;

@@ -715,7 +715,7 @@ function toUiStatus(s: ErrandRowDB["status"]): UiStatus {
 
 /* ===================== TF-IDF + COSINE SIMILARITY UTILITIES ===================== */
 
-// TF-IDF STEP 1: Calculate Term Frequency (token-based)
+// Calculate Term Frequency (token-based)
 function calculateTF(term: string, document: string[]): number {
     if (document.length === 0) return 0;
     // Count term occurrences in document
@@ -724,7 +724,7 @@ function calculateTF(term: string, document: string[]): number {
     return termCount / document.length;
 }
 
-// TF-IDF STEP 2: Calculate Term Frequency (task-based)
+// Calculate Term Frequency (task-based)
 function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
     if (totalTasks === 0) return 0;
     // Count how many tasks contain this category
@@ -787,9 +787,7 @@ function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTask
     return tfidfMap;
 }
 
-// TF-IDF STEP 12: Calculate dot product for cosine similarity
-// TF-IDF STEP 13: Calculate vector magnitudes for cosine similarity
-// TF-IDF STEP 14: Calculate final cosine similarity score
+
 function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
     const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
     
@@ -797,23 +795,23 @@ function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, num
     let magnitude1 = 0;
     let magnitude2 = 0;
     
-    // STEP 12 & 13: Calculate dot product and vector magnitudes
+    
     allTerms.forEach(term => {
         const val1 = vector1.get(term) || 0;
         const val2 = vector2.get(term) || 0;
         
-        dotProduct += val1 * val2;        // STEP 12: Dot product
-        magnitude1 += val1 * val1;        // STEP 13: Sum of squares for vector 1
-        magnitude2 += val2 * val2;        // STEP 13: Sum of squares for vector 2
+        dotProduct += val1 * val2;        
+        magnitude1 += val1 * val1;
+        magnitude2 += val2 * val2;        
     });
     
-    // STEP 13: Calculate Euclidean magnitudes
+    
     const denominator = Math.sqrt(magnitude1) * Math.sqrt(magnitude2);
     
     // Prevent division by zero
     if (denominator === 0) return 0;
     
-    // STEP 14: Final cosine similarity: (v1 · v2) / (||v1|| × ||v2||)
+    //  Final cosine similarity: (v1 · v2) / (||v1|| × ||v2||)
     return dotProduct / denominator;
 }
 
@@ -878,7 +876,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         console.log(`[TFIDF] Total completed tasks: ${runnerTotalTasks}`);
     }
     
-    // TF-IDF STEP 12: Build document corpus (2 documents: query + runner)
+    //  Build document corpus (2 documents: query + runner)
     const allDocuments = [queryDoc, runnerDoc];
     
     // Calculate TF, IDF, and TF-IDF for logging
@@ -895,12 +893,12 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         let denominator: number;
         
         if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-            // STEP 2: Use task-based TF calculation (preferred)
+            //  Use task-based TF calculation (preferred)
             tf = calculateTFWithTaskCount(term, runnerTaskCategories, runnerTotalTasks);
             taskCount = runnerCategoryTaskCounts.get(term) || 0;
             denominator = runnerTotalTasks;
         } else {
-            // STEP 1: Use token-based TF calculation (fallback)
+            //  Use token-based TF calculation (fallback)
             tf = calculateTF(term, runnerDoc);
             taskCount = runnerDoc.filter(word => word === term).length;
             denominator = runnerDoc.length;
@@ -934,7 +932,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     console.log(`[TFIDF] TF-IDF weights (Task):`);
     const queryTFIDFMap = new Map<string, number>();
     uniqueQueryTerms.forEach(term => {
-        const tf = calculateTF(term, queryDoc); // STEP 1
+        const tf = calculateTF(term, queryDoc); 
         const idf = idfMap.get(term) || 0;
         const tfidf = tf * idf;
         queryTFIDFMap.set(term, tfidf);
@@ -942,19 +940,19 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
         console.log(`[TFIDF] - ${term}: ${termCount} / ${queryDoc.length} × ${idf.toFixed(4)} = ${tfidf.toFixed(4)}`);
     });
     
-    // TF-IDF STEP 8: Construct TF-IDF vector for query document
+    // Construct TF-IDF vector for query document
     const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
     
     let runnerVector: Map<string, number>;
     if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
-        // TF-IDF STEP 9: Construct TF-IDF vector for runner document using task-based TF (preferred)
+        // Construct TF-IDF vector for runner document using task-based TF (preferred)
         runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
     } else {
-        // TF-IDF STEP 10: Construct TF-IDF vector for runner document using token-based TF (fallback)
+        //  Construct TF-IDF vector for runner document using token-based TF (fallback)
         runnerVector = calculateTFIDFVectorAdjusted(runnerDoc, allDocuments);
     }
     
-    // TF-IDF STEP 12 & 13: Calculate dot product and vector magnitudes (for logging)
+    //  Calculate dot product and vector magnitudes (for logging)
     const allTerms = Array.from(new Set([...queryVector.keys(), ...runnerVector.keys()]));
     let dotProduct = 0;
     let magnitude1 = 0;
@@ -963,9 +961,9 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     allTerms.forEach(term => {
         const val1 = queryVector.get(term) || 0;
         const val2 = runnerVector.get(term) || 0;
-        dotProduct += val1 * val2;        // STEP 12: Dot product
-        magnitude1 += val1 * val1;        // STEP 13: Sum of squares for vector 1
-        magnitude2 += val2 * val2;        // STEP 13: Sum of squares for vector 2
+        dotProduct += val1 * val2;        // Dot product
+        magnitude1 += val1 * val1;        //  Sum of squares for vector 1
+        magnitude2 += val2 * val2;        //  Sum of squares for vector 2
     });
     
     const taskMagnitude = Math.sqrt(magnitude1);
@@ -977,7 +975,7 @@ function calculateTFIDFCosineSimilarity(commissionCategories: string[], runnerHi
     console.log(`[TFIDF] - Task magnitude: ${taskMagnitude.toFixed(4)}`);
     console.log(`[TFIDF] - Runner magnitude: ${runnerMagnitude.toFixed(4)}`);
     
-    // TF-IDF STEP 14: Calculate final cosine similarity score
+    //  final cosine similarity score
     const similarity = cosineSimilarity(queryVector, runnerVector);
     
     // 9️⃣ Final TF-IDF similarity score
@@ -1336,7 +1334,7 @@ function useAvailableErrands(options?: { availableMode?: boolean }) {
                 return false;
             };
 
-            // STEP 10: Apply ranking filter to determine visibility
+            // Apply ranking filter to determine visibility
             // Purpose: For each distance-filtered errand, run the ranking logic (shouldShowErrand) to determine if current runner should see it. Only errands assigned to current runner (or unassigned errands where current runner is top-ranked) are shown.
             const rankingFilteredErrands: ErrandRowDB[] = [];
             for (const errand of filteredErrands) {
@@ -2333,12 +2331,11 @@ function HomeWeb() {
     const router = useRouter();
     const { width } = useWindowDimensions();
     
-    // Responsive sidebar: hide completely on small screens (< 1024px), show on larger screens
+
     const isSmallScreen = width < 1024;
     const [open, setOpen] = useState(!isSmallScreen);
     
-    // On small screens, start with sidebar closed (hidden)
-    // On larger screens, start with sidebar open
+    
     React.useEffect(() => {
         if (isSmallScreen) {
             setOpen(false);
@@ -2384,25 +2381,24 @@ function HomeWeb() {
 
             console.log(`🔄 Toggling availability for user ${user.id} to:`, newStatus);
 
-            // PRE-VALIDATION FLOW: When turning ON, validate BEFORE updating state or database
-            // UI must remain OFF until validation succeeds
+
             if (newStatus) {
-                // PRE-VALIDATION STEP 1: Fetch GPS location (one-time fetch, not tracking)
-                // Location can be fetched even while status is OFF - this is the pre-validation check
+                //  Fetch GPS location (one-time fetch, not tracking)
+                
                 let locationResult = null;
                 
                 try {
-                    // GPS Warm-up / Retry: Attempt to get GPS up to 3 times within ~3-5 seconds
+                    
                     const maxRetries = 3;
-                    const retryDelayMs = 1000; // 1 second between retries
+                    const retryDelayMs = 1000; 
                     
                     for (let attempt = 1; attempt <= maxRetries; attempt++) {
                         if (attempt > 1) {
-                            // Wait before retry (except first attempt)
+                            
                             await new Promise(resolve => setTimeout(resolve, retryDelayMs));
                         }
                         
-                        // Wrap each GPS attempt in try/catch to prevent exceptions from bypassing retry logic
+
                         try {
                             locationResult = await LocationService.getCurrentLocation();
                             
@@ -2414,7 +2410,7 @@ function HomeWeb() {
                                 console.log(`🔄 GPS attempt ${attempt}/${maxRetries} failed, retrying...`);
                             }
                         } catch (gpsError) {
-                            // GPS attempt threw an exception - catch it and continue retrying
+                         
                             if (__DEV__) {
                                 console.log(`🔄 GPS attempt ${attempt}/${maxRetries} threw exception:`, gpsError);
                             }
@@ -2429,29 +2425,29 @@ function HomeWeb() {
                     // PRE-VALIDATION STEP 2: Check GPS availability
                     // If GPS is still not available after retries
                     if (!locationResult || !locationResult.success || !locationResult.location) {
-                        // Status remains OFF, show modal, return early
+                       
                         setWaitingForLocationVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
                     const { latitude, longitude } = locationResult.location;
 
-                    // PRE-VALIDATION STEP 3: Validate GPS coordinates
-                    // Client-side guard: Validate GPS coordinates before calling Edge Function
+                
+                    
                     if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
-                        // Status remains OFF, show modal, return early
+                        
                         setWaitingForLocationVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
                     if (isNaN(latitude) || isNaN(longitude)) {
-                        // Status remains OFF, show modal, return early
+                      
                         setWaitingForLocationVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
-                    // PRE-VALIDATION STEP 4: Geofence validation (authoritative backend check)
-                    // Call backend Edge Function for authoritative geofence validation
+                    
+                   // Get the availability and location of the runner for validation
                     const { data: validationResult, error: validationError } = await supabase.functions.invoke(
                         'validate-availability',
                         {
@@ -2463,19 +2459,19 @@ function HomeWeb() {
                         }
                     );
 
-                    // PRE-VALIDATION STEP 5: Handle geofence validation result
+                    
                     if (validationError) {
-                        // Network/server error - status remains OFF
+                        
                         console.error('❌ Geofence validation error:', validationError);
                         Alert.alert(
                             'Validation Error',
                             'Unable to validate location. Please try again.'
                         );
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
                     if (!validationResult?.allowed) {
-                        // Validation failed - status remains OFF, show modal with reason
+                       
                         const reason = validationResult?.reason || "You cannot go Active right now.";
                         
                         setValidationErrorReason(reason);
@@ -2489,43 +2485,38 @@ function HomeWeb() {
                         }
                         
                         setGeofenceErrorVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
-                    // ✅ PRE-VALIDATION PASSED: Runner is inside UM Matina
-                    // Now we can proceed with updating availability
+                    
                     console.log('✅ Geofence validation passed - proceeding with availability update');
                     
                 } catch (geofenceError) {
-                    // Outer catch: Only for network errors or unexpected errors (not GPS availability)
-                    // Status remains OFF on error
+                   
                     console.error('❌ Error during geofence validation:', geofenceError);
                     Alert.alert(
                         'Validation Error',
                         'An error occurred while validating your location. Please try again.'
                     );
-                    return; // Early return - UI and database remain OFF
+                    return; 
                 }
                 
-                // ✅ VALIDATION SUCCEEDED: Only reach here if geofence validation passed
-                // Now update UI state and database - this is the ONLY place status changes to ON
+              
             }
 
-            // POST-VALIDATION: Update state and database
-            // This only executes if:
-            // - Turning OFF (no validation needed), OR
-            // - Turning ON AND validation succeeded (all early returns avoided)
+            
+            // After passing the validation, set the availability to ON
             setAvailableMode(newStatus);
 
-            // Prepare update data
+            
             const updateData: any = { is_available: newStatus };
             
-            // If turning ON, refresh presence to ensure immediate eligibility
+            
             if (newStatus) {
                 updateData.last_seen_at = new Date().toISOString();
             }
             
-            // If turning OFF, clear location data
+            
             if (!newStatus) {
                 updateData.latitude = null;
                 updateData.longitude = null;
@@ -2533,7 +2524,7 @@ function HomeWeb() {
                 if (__DEV__) console.log('🗑️ [Web] Clearing location data (going offline)');
             }
 
-            // Save to database - try to update is_available field
+            
             const { error } = await supabase
                 .from('users')
                 .update(updateData)
@@ -2542,7 +2533,7 @@ function HomeWeb() {
             if (error) {
                 console.error('❌ Could not update is_available field:', error.message);
                 console.error('Full error:', error);
-                // If the field doesn't exist, we'll just keep the local state
+                
             } else {
                 if (__DEV__) console.log('✅ Successfully updated is_available to:', newStatus);
                 if (!newStatus) {
@@ -4159,7 +4150,7 @@ function HomeMobile() {
                 );
             };
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        
     }, [width]);
 
 
@@ -4174,37 +4165,35 @@ function HomeMobile() {
 
             console.log(`🔄 Toggling availability for user ${user.id} to:`, newStatus);
 
-            // PRE-VALIDATION FLOW: When turning ON, validate BEFORE updating state or database
-            // UI must remain OFF until validation succeeds
+            
             if (newStatus) {
-                // PRE-VALIDATION STEP 1: Fetch GPS location (one-time fetch, not tracking)
-                // Location can be fetched even while status is OFF - this is the pre-validation check
+                
                 let locationResult = null;
                 
                 try {
-                    // GPS Warm-up / Retry: Attempt to get GPS up to 3 times within ~3-5 seconds
+                   
                     const maxRetries = 3;
-                    const retryDelayMs = 1000; // 1 second between retries
+                    const retryDelayMs = 1000; 
                     
                     for (let attempt = 1; attempt <= maxRetries; attempt++) {
                         if (attempt > 1) {
-                            // Wait before retry (except first attempt)
+                           
                             await new Promise(resolve => setTimeout(resolve, retryDelayMs));
                         }
                         
-                        // Wrap each GPS attempt in try/catch to prevent exceptions from bypassing retry logic
+                        // STEP1: GPS location fetch
                         try {
                             locationResult = await LocationService.getCurrentLocation();
                             
                             if (locationResult.success && locationResult.location) {
-                                break; // GPS acquired successfully
+                                break; 
                             }
                             
                             if (__DEV__) {
                                 console.log(`🔄 GPS attempt ${attempt}/${maxRetries} failed, retrying...`);
                             }
                         } catch (gpsError) {
-                            // GPS attempt threw an exception - catch it and continue retrying
+                           
                             if (__DEV__) {
                                 console.log(`🔄 GPS attempt ${attempt}/${maxRetries} threw exception:`, gpsError);
                             }
@@ -4212,36 +4201,33 @@ function HomeMobile() {
                                 success: false,
                                 error: gpsError instanceof Error ? gpsError.message : 'GPS acquisition failed'
                             };
-                            // Continue to next retry attempt
+                           
                         }
                     }
                     
-                    // PRE-VALIDATION STEP 2: Check GPS availability
-                    // If GPS is still not available after retries
+                   
                     if (!locationResult || !locationResult.success || !locationResult.location) {
-                        // Status remains OFF, show modal, return early
+                        
                         setWaitingForLocationVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
                     const { latitude, longitude } = locationResult.location;
 
-                    // PRE-VALIDATION STEP 3: Validate GPS coordinates
-                    // Client-side guard: Validate GPS coordinates before calling Edge Function
+                   
                     if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
-                        // Status remains OFF, show modal, return early
+                      
                         setWaitingForLocationVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
                     if (isNaN(latitude) || isNaN(longitude)) {
-                        // Status remains OFF, show modal, return early
+                      
                         setWaitingForLocationVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
-                    // PRE-VALIDATION STEP 4: Geofence validation (authoritative backend check)
-                    // Call backend Edge Function for authoritative geofence validation
+                    // STEP2: Backend Validation
                     const { data: validationResult, error: validationError } = await supabase.functions.invoke(
                         'validate-availability',
                         {
@@ -4253,19 +4239,19 @@ function HomeMobile() {
                         }
                     );
 
-                    // PRE-VALIDATION STEP 5: Handle geofence validation result
+                    //  Handle geofence validation result
                     if (validationError) {
-                        // Network/server error - status remains OFF
+                        
                         console.error('❌ Geofence validation error:', validationError);
                         Alert.alert(
                             'Validation Error',
                             'Unable to validate location. Please try again.'
                         );
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
-
+                    // STEP3: Validation Result Handling
                     if (!validationResult?.allowed) {
-                        // Validation failed - status remains OFF, show modal with reason
+                       
                         const reason = validationResult?.reason || "You cannot go Active right now.";
                         
                         setValidationErrorReason(reason);
@@ -4279,43 +4265,37 @@ function HomeMobile() {
                         }
                         
                         setGeofenceErrorVisible(true);
-                        return; // Early return - UI and database remain OFF
+                        return; 
                     }
 
-                    // ✅ PRE-VALIDATION PASSED: Runner is inside UM Matina
-                    // Now we can proceed with updating availability
+                    
                     console.log('✅ Geofence validation passed - proceeding with availability update');
                     
                 } catch (geofenceError) {
-                    // Outer catch: Only for network errors or unexpected errors (not GPS availability)
-                    // Status remains OFF on error
+                 
                     console.error('❌ Error during geofence validation:', geofenceError);
                     Alert.alert(
                         'Validation Error',
                         'An error occurred while validating your location. Please try again.'
                     );
-                    return; // Early return - UI and database remain OFF
+                    return; 
                 }
                 
-                // ✅ VALIDATION SUCCEEDED: Only reach here if geofence validation passed
-                // Now update UI state and database - this is the ONLY place status changes to ON
+               
             }
 
-            // POST-VALIDATION: Update state and database
-            // This only executes if:
-            // - Turning OFF (no validation needed), OR
-            // - Turning ON AND validation succeeded (all early returns avoided)
+           //Step4: Update Runner Availability Status
             setAvailableMode(newStatus);
 
-            // Prepare update data
+
             const updateData: any = { is_available: newStatus };
             
-            // If turning ON, refresh presence to ensure immediate eligibility
+           
             if (newStatus) {
                 updateData.last_seen_at = new Date().toISOString();
             }
             
-            // If turning OFF, clear location data
+           
             if (!newStatus) {
                 updateData.latitude = null;
                 updateData.longitude = null;
@@ -4323,7 +4303,7 @@ function HomeMobile() {
                 if (__DEV__) console.log('🗑️ [Mobile] Clearing location data (going offline)');
             }
 
-            // Save to database - try to update is_available field
+           
             const { error } = await supabase
                 .from('users')
                 .update(updateData)

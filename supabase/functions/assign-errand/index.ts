@@ -317,8 +317,13 @@ serve(async (req) => {
         : [];
 
     
+<<<<<<< HEAD
     console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id} (priority >= 3.5 first)`);
     const rankedRunners = await rankRunnersWithRatingPriority(
+=======
+    console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id}`);
+    const rankedRunners = await rankRunners(
+>>>>>>> bf3bc09b (save current progress before pulling)
       filteredRunners as RunnerForRanking[],
       errandCategories,
       callerLat,

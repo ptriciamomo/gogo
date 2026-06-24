@@ -1,3 +1,7 @@
 {
-  "urlRandomness": "OgCn_NM"
+  "urlRandomness": "OgCn_NM",
+  "hostType": "lan",
+  "lanType": "ip",
+  "dev": true,
+  "minify": false
 }

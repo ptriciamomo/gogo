@@ -235,6 +235,12 @@ const MONTHS = [
     'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+const RUNNER_RATING_OPTIONS = [
+    'Any rating',
+    '3.5 and above',
+    '3.0 stars and below',
+] as const;
+
 /* ───────── page ───────── */
 const PostCommission: React.FC = () => {
     const router = useRouter();
@@ -303,6 +309,9 @@ const PostCommission: React.FC = () => {
 
     const [showMonthPicker, setShowMonthPicker] = useState(false);
     const [showYearPicker, setShowYearPicker] = useState(false);
+
+    const [preferredRunnerRating, setPreferredRunnerRating] = useState('Any rating');
+    const [showRunnerRatingDropdown, setShowRunnerRatingDropdown] = useState(false);
 
     const [showTerms, setShowTerms] = useState(false);
     const [agree, setAgree] = useState(false);
@@ -1322,6 +1331,71 @@ const PostCommission: React.FC = () => {
                                 )}
                             </View>
 
+                            {/* Preferred Runner Rating */}
+                            <View style={[styles.formGroup, { paddingHorizontal: isSmallScreen ? 12 : 16 }]}>
+                                <View style={styles.labelRow}>
+                                    <Text style={[styles.label, { marginBottom: 0, fontSize: isSmallScreen ? 12 : 14 }]}>
+                                        Preferred Runner Rating (minimum):
+                                    </Text>
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            if (Platform.OS === 'web') return;
+                                            notify('', 'Runners with at least this rating will be prioritized.');
+                                        }}
+                                        accessibilityLabel="More information about preferred runner rating"
+                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                        {...(Platform.OS === 'web'
+                                            ? ({ title: 'Runners with at least this rating will be prioritized.' } as any)
+                                            : {})}
+                                    >
+                                        <Ionicons name="information-circle-outline" size={16} color="#999" />
+                                    </TouchableOpacity>
+                                </View>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.commissionTypeDropdown,
+                                        { height: isSmallScreen ? 40 : 44 },
+                                    ]}
+                                    onPress={() => setShowRunnerRatingDropdown((v) => !v)}
+                                >
+                                    <View style={styles.ratingSelectContent}>
+                                        <Ionicons name="star" size={16} color="#F5A623" />
+                                        <Text style={[styles.dropdownText, { fontSize: isSmallScreen ? 13 : 14 }]}>
+                                            {preferredRunnerRating}
+                                        </Text>
+                                    </View>
+                                    <Ionicons
+                                        name={showRunnerRatingDropdown ? 'chevron-up' : 'chevron-down'}
+                                        size={isSmallScreen ? 14 : 16}
+                                        color="#8B2323"
+                                    />
+                                </TouchableOpacity>
+                                {showRunnerRatingDropdown && (
+                                    <View style={styles.runnerRatingOptionsContainer}>
+                                        {RUNNER_RATING_OPTIONS.map((opt, idx) => (
+                                            <TouchableOpacity
+                                                key={opt}
+                                                style={[
+                                                    styles.runnerRatingOption,
+                                                    idx % 2 === 1 && styles.runnerRatingOptionAlt,
+                                                ]}
+                                                onPress={() => {
+                                                    setPreferredRunnerRating(opt);
+                                                    setShowRunnerRatingDropdown(false);
+                                                }}
+                                            >
+                                                <Text style={[styles.dropdownText, { fontSize: isSmallScreen ? 13 : 14 }]}>
+                                                    {opt}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                )}
+                                <Text style={[styles.ratingHelperText, { fontSize: isSmallScreen ? 11 : 12 }]}>
+                                    Runners with at least this rating will be prioritized.
+                                </Text>
+                            </View>
+
                             {/* Meetup */}
                             <View style={[styles.formGroup, { paddingHorizontal: isSmallScreen ? 12 : 16 }]}>
                                 <Text style={[styles.label, { fontSize: isSmallScreen ? 12 : 14 }]}>Scheduled Meet-up</Text>
@@ -1427,6 +1501,17 @@ const PostCommission: React.FC = () => {
 const styles = StyleSheet.create({
     formGroup: { paddingVertical: 8, gap: 6 },
     label: { fontWeight: '500', color: '#333', marginBottom: 4 },
+    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    ratingSelectContent: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+    ratingHelperText: { color: '#666', fontSize: 12, marginTop: 4 },
+    runnerRatingOptionsContainer: {
+        borderWidth: 1, borderColor: '#8B2323', borderRadius: 4,
+        backgroundColor: 'white', marginTop: 8, overflow: 'hidden',
+    },
+    runnerRatingOption: {
+        paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white',
+    },
+    runnerRatingOptionAlt: { backgroundColor: '#F7F1F0' },
     textInput: {
         paddingHorizontal: 12, paddingVertical: 10,
         borderWidth: 1, borderColor: '#8B2323', borderRadius: 4,

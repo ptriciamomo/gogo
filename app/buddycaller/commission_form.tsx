@@ -92,13 +92,13 @@ async function createCommission(input: {
 
   if (error) throw error;
 
-  // Call Edge Function to assign top runner and notify
+  // 
   if (data?.id) {
     let assignmentSuccess = false;
     let lastError: any = null;
     let cancelledStatus: string | null = null;
 
-    // First attempt
+    // BudyCaller Creates Task and Start Assignment
     try {
       const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-and-notify-commission', {
         body: { commission_id: data.id },
@@ -112,7 +112,7 @@ async function createCommission(input: {
         if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
           assignmentSuccess = true;
         } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
-          // Commission was cancelled due to no runners - store status to show modal
+          
           cancelledStatus = assignData.status;
           assignmentSuccess = true;
         } else {
@@ -211,6 +211,12 @@ const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+const RUNNER_RATING_OPTIONS = [
+  'Any rating',
+  '3.5 and above',
+  '3.0 stars and below',
+] as const;
 
 /* ─────────────────────── Component ─────────────────────── */
 const PostCommission: React.FC = () => {
@@ -335,6 +341,9 @@ const PostCommission: React.FC = () => {
 
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
+
+  const [preferredRunnerRating, setPreferredRunnerRating] = useState('Any rating');
+  const [showRunnerRatingDropdown, setShowRunnerRatingDropdown] = useState(false);
 
   const [categories, setCategories] = useState<Category[]>([]);
 
@@ -869,6 +878,49 @@ const PostCommission: React.FC = () => {
             )}
           </View>
 
+          {/* Preferred Runner Rating */}
+          <View style={styles.formGroup}>
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { marginBottom: 0 }]}>Preferred Runner Rating (minimum):</Text>
+              <TouchableOpacity
+                onPress={() => Alert.alert('', 'Runners with at least this rating will be prioritized.')}
+                accessibilityLabel="More information about preferred runner rating"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="information-circle-outline" size={16} color="#999" />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.commissionTypeDropdown}
+              onPress={() => setShowRunnerRatingDropdown(v => !v)}
+            >
+              <View style={styles.ratingSelectContent}>
+                <Ionicons name="star" size={16} color="#F5A623" />
+                <Text style={styles.dropdownText}>{preferredRunnerRating}</Text>
+              </View>
+              <Ionicons name={showRunnerRatingDropdown ? 'chevron-up' : 'chevron-down'} size={16} color="#8B2323" />
+            </TouchableOpacity>
+            {showRunnerRatingDropdown && (
+              <View style={styles.runnerRatingOptionsContainer}>
+                {RUNNER_RATING_OPTIONS.map((opt, idx) => (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[styles.runnerRatingOption, idx % 2 === 1 && styles.runnerRatingOptionAlt]}
+                    onPress={() => {
+                      setPreferredRunnerRating(opt);
+                      setShowRunnerRatingDropdown(false);
+                    }}
+                  >
+                    <Text style={styles.dropdownText}>{opt}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.ratingHelperText}>
+              Runners with at least this rating will be prioritized.
+            </Text>
+          </View>
+
           {/* Meet-up */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Scheduled Meet-up</Text>
@@ -923,6 +975,17 @@ const styles = StyleSheet.create({
 
   formGroup: { paddingHorizontal: rp(16), paddingVertical: rp(8), gap: rp(6) },
   label: { fontSize: rf(14), fontWeight: '500', color: '#333', marginBottom: rp(4) },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: rp(6) },
+  ratingSelectContent: { flexDirection: 'row', alignItems: 'center', gap: rp(8), flex: 1 },
+  ratingHelperText: { color: '#666', fontSize: rf(12), marginTop: rp(4) },
+  runnerRatingOptionsContainer: {
+    borderWidth: 1, borderColor: '#8B2323', borderRadius: rb(4),
+    backgroundColor: 'white', marginTop: rp(8), overflow: 'hidden',
+  },
+  runnerRatingOption: {
+    paddingHorizontal: rp(12), paddingVertical: rp(10), backgroundColor: 'white',
+  },
+  runnerRatingOptionAlt: { backgroundColor: '#F7F1F0' },
   textInput: {
     paddingHorizontal: rp(12), paddingVertical: rp(10),
     borderWidth: 1, borderColor: '#8B2323', borderRadius: rb(4),

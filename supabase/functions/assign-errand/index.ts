@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { rankRunners, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking.ts";
+import { rankRunnersWithRatingPriority, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking.ts";
 
 // CORS headers for browser compatibility
 const corsHeaders = {
@@ -319,6 +319,7 @@ serve(async (req) => {
     
     console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id}`);
     const rankedRunners = await rankRunners(
+>>>>>>> bf3bc09b (save current progress before pulling)
       filteredRunners as RunnerForRanking[],
       errandCategories,
       callerLat,

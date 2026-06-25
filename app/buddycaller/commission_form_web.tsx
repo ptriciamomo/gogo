@@ -372,6 +372,9 @@ const PostCommission: React.FC = () => {
     const [showMonthPicker, setShowMonthPicker] = useState(false);
     const [showYearPicker, setShowYearPicker] = useState(false);
 
+    const [preferredRunnerRating, setPreferredRunnerRating] = useState('Any rating');
+    const [showRunnerRatingDropdown, setShowRunnerRatingDropdown] = useState(false);
+
     const [showTerms, setShowTerms] = useState(false);
     const [agree, setAgree] = useState(false);
 
@@ -1498,6 +1501,17 @@ const PostCommission: React.FC = () => {
 const styles = StyleSheet.create({
     formGroup: { paddingVertical: 8, gap: 6 },
     label: { fontWeight: '500', color: '#333', marginBottom: 4 },
+    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    ratingSelectContent: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+    ratingHelperText: { color: '#666', fontSize: 12, marginTop: 4 },
+    runnerRatingOptionsContainer: {
+        borderWidth: 1, borderColor: '#8B2323', borderRadius: 4,
+        backgroundColor: 'white', marginTop: 8, overflow: 'hidden',
+    },
+    runnerRatingOption: {
+        paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white',
+    },
+    runnerRatingOptionAlt: { backgroundColor: '#F7F1F0' },
     textInput: {
         paddingHorizontal: 12, paddingVertical: 10,
         borderWidth: 1, borderColor: '#8B2323', borderRadius: 4,

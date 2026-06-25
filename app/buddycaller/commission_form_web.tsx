@@ -1501,17 +1501,27 @@ const PostCommission: React.FC = () => {
 const styles = StyleSheet.create({
     formGroup: { paddingVertical: 8, gap: 6 },
     label: { fontWeight: '500', color: '#333', marginBottom: 4 },
-    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    ratingSelectContent: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-    ratingHelperText: { color: '#666', fontSize: 12, marginTop: 4 },
+    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+    runnerRatingLabelText: { marginBottom: 0 },
+    runnerRatingSelectContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        flex: 1,
+    },
+    runnerRatingHelper: {
+        color: '#666',
+        marginTop: 4,
+        lineHeight: 16,
+    },
     runnerRatingOptionsContainer: {
         borderWidth: 1, borderColor: '#8B2323', borderRadius: 4,
         backgroundColor: 'white', marginTop: 8, overflow: 'hidden',
     },
     runnerRatingOption: {
-        paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'white',
+        paddingHorizontal: 12, paddingVertical: 10,
     },
-    runnerRatingOptionAlt: { backgroundColor: '#F7F1F0' },
+    runnerRatingOptionSelected: { backgroundColor: '#F7F1F0' },
     textInput: {
         paddingHorizontal: 12, paddingVertical: 10,
         borderWidth: 1, borderColor: '#8B2323', borderRadius: 4,
@@ -1601,38 +1611,6 @@ const styles = StyleSheet.create({
     timeSaveButtonText: { color: '#8B2323', fontSize: 16, fontWeight: '600' },
 
     meetupContainer: { borderWidth: 1, borderColor: '#8B2323', borderRadius: 4, backgroundColor: 'white', padding: 12, gap: 12 },
-
-    labelRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        marginBottom: 4,
-    },
-    runnerRatingLabelText: { marginBottom: 0 },
-    runnerRatingSelectContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        flex: 1,
-    },
-    runnerRatingOptionsContainer: {
-        borderWidth: 1,
-        borderColor: '#8B2323',
-        borderRadius: 4,
-        backgroundColor: 'white',
-        marginTop: 8,
-        overflow: 'hidden',
-    },
-    runnerRatingOption: {
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-    },
-    runnerRatingOptionSelected: { backgroundColor: '#F7F1F0' },
-    runnerRatingHelper: {
-        color: '#666',
-        marginTop: 4,
-        lineHeight: 16,
-    },
 
     // Validation Modal Styles (matching Incomplete Errand Details modal)
     validationModalOverlay: {

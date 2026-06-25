@@ -1007,17 +1007,28 @@ const styles = StyleSheet.create({
 
   formGroup: { paddingHorizontal: rp(16), paddingVertical: rp(8), gap: rp(6) },
   label: { fontSize: rf(14), fontWeight: '500', color: '#333', marginBottom: rp(4) },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: rp(6) },
-  ratingSelectContent: { flexDirection: 'row', alignItems: 'center', gap: rp(8), flex: 1 },
-  ratingHelperText: { color: '#666', fontSize: rf(12), marginTop: rp(4) },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: rp(6), marginBottom: rp(4) },
+  runnerRatingLabelText: { marginBottom: 0 },
+  runnerRatingSelectContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rp(6),
+    flex: 1,
+  },
+  runnerRatingHelper: {
+    color: '#666',
+    fontSize: rf(12),
+    marginTop: rp(4),
+    lineHeight: rf(16),
+  },
   runnerRatingOptionsContainer: {
     borderWidth: 1, borderColor: '#8B2323', borderRadius: rb(4),
     backgroundColor: 'white', marginTop: rp(8), overflow: 'hidden',
   },
   runnerRatingOption: {
-    paddingHorizontal: rp(12), paddingVertical: rp(10), backgroundColor: 'white',
+    paddingHorizontal: rp(12), paddingVertical: rp(10),
   },
-  runnerRatingOptionAlt: { backgroundColor: '#F7F1F0' },
+  runnerRatingOptionSelected: { backgroundColor: '#F7F1F0' },
   textInput: {
     paddingHorizontal: rp(12), paddingVertical: rp(10),
     borderWidth: 1, borderColor: '#8B2323', borderRadius: rb(4),
@@ -1112,39 +1123,6 @@ const styles = StyleSheet.create({
   timeSaveButtonText: { color: '#8B2323', fontSize: rf(16), fontWeight: '600' },
 
   meetupContainer: { borderWidth: 1, borderColor: '#8B2323', borderRadius: rb(4), backgroundColor: 'white', padding: rp(12), gap: rp(12) },
-
-  labelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: rp(6),
-    marginBottom: rp(4),
-  },
-  runnerRatingLabelText: { marginBottom: 0 },
-  runnerRatingSelectContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: rp(6),
-    flex: 1,
-  },
-  runnerRatingOptionsContainer: {
-    borderWidth: 1,
-    borderColor: '#8B2323',
-    borderRadius: rb(4),
-    backgroundColor: 'white',
-    marginTop: rp(8),
-    overflow: 'hidden',
-  },
-  runnerRatingOption: {
-    paddingHorizontal: rp(12),
-    paddingVertical: rp(10),
-  },
-  runnerRatingOptionSelected: { backgroundColor: '#F7F1F0' },
-  runnerRatingHelper: {
-    color: '#666',
-    fontSize: rf(12),
-    marginTop: rp(4),
-    lineHeight: rf(16),
-  },
 
   buttonSection: { backgroundColor: '#8B2323', padding: rp(16) },
   confirmButton: {

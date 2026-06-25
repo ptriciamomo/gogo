@@ -237,8 +237,11 @@ const MONTHS = [
 
 const RUNNER_RATING_OPTIONS = [
     'Any rating',
+    '4.5 stars and above',
+    '4.0 stars and above',
     '3.5 stars and above',
-    '3.0 stars and below',
+    '3.0 stars and above',
+    
 ] as const;
 
 function RunnerRatingInfoIcon() {

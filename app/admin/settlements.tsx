@@ -843,23 +843,21 @@ export default function AdminSettlements() {
                     if (price > 0) {
                         const errandId = String(errand.id);
                         
-                        // CRITICAL: Skip if this errand is already tracked in an existing settlement
-                        // This prevents duplicate errand IDs across settlements
+                        
                         if (trackedErrandIds.has(errandId)) {
                             console.log('⚠️ Skipping errand already tracked in existing settlement:', {
                                 errand_id: errandId,
                                 runner_id: errand.runner_id
                             });
-                            return; // Skip this errand - it's already in a settlement
+                            return; 
                         }
                         
-                        // Extract date from timestamp
+                       
                         const dateStr = errand.created_at.split('T')[0].split(' ')[0];
                         const [year, month, day] = dateStr.split('-').map(Number);
                         const transactionDate = new Date(Date.UTC(year, month - 1, day));
                         
-                        // Check if runner has any active (pending/overdue) settlements
-                        // If yes, transaction must fall within an active settlement period, or we skip it
+                        
                         let existingSettlementForPeriod: any = null;
                         let hasActiveSettlements = false;
                         

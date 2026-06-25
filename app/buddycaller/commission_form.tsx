@@ -92,13 +92,13 @@ async function createCommission(input: {
 
   if (error) throw error;
 
-  // Call Edge Function to assign top runner and notify
+  // 
   if (data?.id) {
     let assignmentSuccess = false;
     let lastError: any = null;
     let cancelledStatus: string | null = null;
 
-    // First attempt
+    // BudyCaller Creates Task and Start Assignment
     try {
       const { data: assignData, error: assignError } = await supabase.functions.invoke('assign-and-notify-commission', {
         body: { commission_id: data.id },
@@ -112,7 +112,7 @@ async function createCommission(input: {
         if (assignData.status === 'assigned' || assignData.status === 'already_assigned') {
           assignmentSuccess = true;
         } else if (assignData.status === 'no_eligible_runners' || assignData.status === 'no_runners_within_distance' || assignData.status === 'no_runner_to_assign') {
-          // Commission was cancelled due to no runners - store status to show modal
+          
           cancelledStatus = assignData.status;
           assignmentSuccess = true;
         } else {
@@ -211,6 +211,84 @@ const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+
+const RUNNER_RATING_OPTIONS = [
+  'Any rating',
+  '3.5 stars and above',
+  '3.0 stars and below',
+] as const;
+
+function RunnerRatingInfoIcon() {
+  const showTooltip = () => {
+    Alert.alert(
+      'Preferred Runner Rating',
+      'Runners with at least this rating will be prioritized when your commission is matched.'
+    );
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={showTooltip}
+      accessibilityRole="button"
+      accessibilityLabel="Preferred runner rating information"
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      {...(Platform.OS === 'web'
+        ? ({ title: 'Runners with at least this rating will be prioritized.' } as any)
+        : {})}
+    >
+      <Ionicons name="information-circle-outline" size={16} color="#8B2323" />
+    </TouchableOpacity>
+  );
+}
+
+function RunnerRatingField() {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<string>(RUNNER_RATING_OPTIONS[0]);
+
+  return (
+    <View style={styles.formGroup}>
+      <View style={styles.labelRow}>
+        <Text style={[styles.label, styles.runnerRatingLabelText]}>
+          Preferred Runner Rating (minimum):
+        </Text>
+        <RunnerRatingInfoIcon />
+      </View>
+      <TouchableOpacity
+        style={styles.commissionTypeDropdown}
+        onPress={() => setOpen((v) => !v)}
+      >
+        <View style={styles.runnerRatingSelectContent}>
+          <Ionicons name="star" size={14} color="#E8B923" />
+          <Text style={styles.dropdownText}>{value}</Text>
+        </View>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color="#8B2323" />
+      </TouchableOpacity>
+      {open && (
+        <View style={styles.runnerRatingOptionsContainer}>
+          {RUNNER_RATING_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt}
+              onPress={() => {
+                setValue(opt);
+                setOpen(false);
+              }}
+              style={[
+                styles.runnerRatingOption,
+                opt === value && styles.runnerRatingOptionSelected,
+              ]}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.dropdownText}>{opt}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+      <Text style={styles.runnerRatingHelper}>
+        Runners with at least this rating will be prioritized.
+      </Text>
+    </View>
+  );
+}
 
 /* ─────────────────────── Component ─────────────────────── */
 const PostCommission: React.FC = () => {
@@ -869,6 +947,9 @@ const PostCommission: React.FC = () => {
             )}
           </View>
 
+          {/* Preferred Runner Rating */}
+          <RunnerRatingField />
+
           {/* Meet-up */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Scheduled Meet-up</Text>
@@ -1017,6 +1098,39 @@ const styles = StyleSheet.create({
   timeSaveButtonText: { color: '#8B2323', fontSize: rf(16), fontWeight: '600' },
 
   meetupContainer: { borderWidth: 1, borderColor: '#8B2323', borderRadius: rb(4), backgroundColor: 'white', padding: rp(12), gap: rp(12) },
+
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rp(6),
+    marginBottom: rp(4),
+  },
+  runnerRatingLabelText: { marginBottom: 0 },
+  runnerRatingSelectContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rp(6),
+    flex: 1,
+  },
+  runnerRatingOptionsContainer: {
+    borderWidth: 1,
+    borderColor: '#8B2323',
+    borderRadius: rb(4),
+    backgroundColor: 'white',
+    marginTop: rp(8),
+    overflow: 'hidden',
+  },
+  runnerRatingOption: {
+    paddingHorizontal: rp(12),
+    paddingVertical: rp(10),
+  },
+  runnerRatingOptionSelected: { backgroundColor: '#F7F1F0' },
+  runnerRatingHelper: {
+    color: '#666',
+    fontSize: rf(12),
+    marginTop: rp(4),
+    lineHeight: rf(16),
+  },
 
   buttonSection: { backgroundColor: '#8B2323', padding: rp(16) },
   confirmButton: {

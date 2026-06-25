@@ -8,7 +8,7 @@ export function calculateDistanceKm(
   lat2: number,
   lon2: number
 ): number {
-  const R = 6371; // Earth radius in km
+  const R = 6371; 
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
@@ -22,13 +22,13 @@ export function calculateDistanceKm(
   return R * c;
 }
 
-// Step 1: Calculate Term Frequency (Task)
+// Step3: Calculate Term Frequency (Task)
 function calculateTF(term: string, document: string[]): number {
   if (document.length === 0) return 0;
   const termCount = document.filter(word => word === term).length;
   return termCount / document.length;
 }
-// Step 2: TF Calculation (Runner)
+// Step4: TF Calculation (Runner)
 function calculateTFWithTaskCount(term: string, taskCategories: string[][], totalTasks: number): number {
   if (totalTasks === 0) return 0;
   const tasksWithCategory = taskCategories.filter(taskCats => 
@@ -37,15 +37,14 @@ function calculateTFWithTaskCount(term: string, taskCategories: string[][], tota
   return tasksWithCategory / totalTasks;
 }
 
-// Step 3 & 4: Calculate Document Frequency & Inverse Document Frequency
+// Step5: Calculate Document Frequency & Inverse Document Frequency
 function calculateIDFAdjusted(term: string, allDocuments: string[][]): number {
   const documentsContainingTerm = allDocuments.filter(doc => doc.includes(term)).length;
   if (documentsContainingTerm === 0) return 0;
   if (documentsContainingTerm === allDocuments.length) return 0.1; 
   return Math.log(allDocuments.length / documentsContainingTerm); // Step 4: IDF
 }
-//  Step 6: Construct TF-IDF Vector for Query Document 
-// Build query vector
+// Step7: Calculate TF-IDF Vector Query
 function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[][]): Map<string, number> {
   const uniqueTerms = Array.from(new Set(document));
   const tfidfMap = new Map<string, number>();
@@ -56,8 +55,8 @@ function calculateTFIDFVectorAdjusted(document: string[], allDocuments: string[]
   });
   return tfidfMap;
 }
-// Step 7: Construct TF-IDF Vector for Runner Document
-// Build runner vector (prefers task-based TF)
+
+
 function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTasks: number, allDocuments: string[][]): Map<string, number> {
   const allTerms = new Set<string>();
   taskCategories.forEach(taskCats => {
@@ -71,7 +70,7 @@ function calculateTFIDFVectorWithTaskCount(taskCategories: string[][], totalTask
   });
   return tfidfMap;
 }
-// Step 8: Calculate Cosine Similarity
+// Step9: Calculate Cosine Similarity
 function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
   const allTerms = Array.from(new Set([...vector1.keys(), ...vector2.keys()]));
   let dotProduct = 0;
@@ -88,7 +87,7 @@ function cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, num
   if (denominator === 0) return 0;
   return dotProduct / denominator;
 }
-// Step 9: // Main TF-IDF calculation function
+// // Main TF-IDF calculation function
 function calculateTFIDFCosineSimilarity(
   taskCategories: string[],
   runnerHistory: string[],
@@ -98,16 +97,16 @@ function calculateTFIDFCosineSimilarity(
   if (taskCategories.length === 0 || runnerHistory.length === 0) {
     return 0;
   }
-  // Collect Task Category
+  // Step1: Collect Task Category
   const queryDoc = taskCategories.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
   const runnerDoc = runnerHistory.map(cat => cat.toLowerCase().trim()).filter(cat => cat.length > 0);
   if (queryDoc.length === 0 || runnerDoc.length === 0) {
     return 0;
   }
-  // Step 5: Build Document Corpus
+  //Step6: Build Document Corpus
   const allDocuments = [queryDoc, runnerDoc];
   const queryVector = calculateTFIDFVectorAdjusted(queryDoc, allDocuments);
-  // Step 7: Choose vector calculation method
+  // Step8: Construct TF-IDF Vector for Runner Document
   let runnerVector: Map<string, number>;
   if (runnerTaskCategories.length > 0 && runnerTotalTasks > 0) {
     runnerVector = calculateTFIDFVectorWithTaskCount(runnerTaskCategories, runnerTotalTasks, allDocuments);
@@ -118,12 +117,42 @@ function calculateTFIDFCosineSimilarity(
   return isNaN(similarity) ? 0 : similarity;
 }
 
-// Runner interface for ranking
+// Runners rated >= this threshold are notified before lower-rated runners.
+export const RATING_PRIORITY_THRESHOLD = 3.5; 
+
+
 export interface RunnerForRanking {
   id: string;
   latitude: number | null;
   longitude: number | null;
   average_rating: number | null;
+}
+
+export function isPriorityRatedRunner(runner: RunnerForRanking): boolean {
+  if (runner.average_rating == null) return false;
+  const rating =
+    typeof runner.average_rating === "number"
+      ? runner.average_rating
+      : parseFloat(String(runner.average_rating));
+  return !isNaN(rating) && rating >= RATING_PRIORITY_THRESHOLD;
+}
+
+export function splitRunnersByRatingPriority(runners: RunnerForRanking[]): {
+  priorityRunners: RunnerForRanking[];
+  fallbackRunners: RunnerForRanking[];
+} {
+  const priorityRunners: RunnerForRanking[] = [];
+  const fallbackRunners: RunnerForRanking[] = [];
+
+  for (const runner of runners) {
+    if (isPriorityRatedRunner(runner)) {
+      priorityRunners.push(runner);
+    } else {
+      fallbackRunners.push(runner);
+    }
+  }
+
+  return { priorityRunners, fallbackRunners };
 }
 
 // Ranked runner result
@@ -136,8 +165,7 @@ export interface RankedRunner {
   finalScore: number;
 }
 
-// Main ranking function
-// Returns array of runner IDs in ranked order (highest score first)
+
 export async function rankRunners(
   eligibleRunners: RunnerForRanking[],
   taskCategories: string[],
@@ -165,8 +193,7 @@ export async function rankRunners(
     // Rating score (35% weight)
     const ratingScore = (runner.average_rating || 0) / 5;
  
-    // Step 10: TF-IDF score used in ranking
-    // TF-IDF score (25% weight)
+    // Step2: Runners Task History
     let tfidfScore = 0;
     if (taskCategories.length > 0) {
       const historyData = await fetchRunnerHistory(runner.id);
@@ -187,7 +214,7 @@ export async function rankRunners(
       }
     }
 
-    // Step 10: Final weighted score
+    //Step10: Integration into Runner Ranking
     const finalScore = (distanceScore * 0.40) + (ratingScore * 0.35) + (tfidfScore * 0.25);
 
     rankedRunners.push({
@@ -207,4 +234,23 @@ export async function rankRunners(
   });
 
   return rankedRunners;
+}
+
+// Rank priority-rated runners (>= 3.5) first, then fallback runners (< 3.5 or unrated).
+// Each group uses the same distance/rating/TF-IDF scoring; results are concatenated for queue order.
+export async function rankRunnersWithRatingPriority(
+  eligibleRunners: RunnerForRanking[],
+  taskCategories: string[],
+  callerLat: number,
+  callerLon: number,
+  fetchRunnerHistory: (runnerId: string) => Promise<{ category: string | null }[]>
+): Promise<RankedRunner[]> {
+  const { priorityRunners, fallbackRunners } = splitRunnersByRatingPriority(eligibleRunners);
+
+  const [priorityRanked, fallbackRanked] = await Promise.all([
+    rankRunners(priorityRunners, taskCategories, callerLat, callerLon, fetchRunnerHistory),
+    rankRunners(fallbackRunners, taskCategories, callerLat, callerLon, fetchRunnerHistory),
+  ]);
+
+  return [...priorityRanked, ...fallbackRanked];
 }

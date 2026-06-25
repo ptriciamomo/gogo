@@ -235,6 +235,74 @@ const MONTHS = [
     'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+const RUNNER_RATING_OPTIONS = [
+    'Any rating',
+    '3.5 stars and above',
+    '3.0 stars and below',
+] as const;
+
+function RunnerRatingInfoIcon() {
+    return (
+        <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Preferred runner rating information"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            {...({ title: 'Runners with at least this rating will be prioritized.' } as any)}
+        >
+            <Ionicons name="information-circle-outline" size={16} color="#8B2323" />
+        </TouchableOpacity>
+    );
+}
+
+function RunnerRatingField({ isSmallScreen }: { isSmallScreen: boolean }) {
+    const [open, setOpen] = useState(false);
+    const [value, setValue] = useState<string>(RUNNER_RATING_OPTIONS[0]);
+
+    return (
+        <View style={[styles.formGroup, { paddingHorizontal: isSmallScreen ? 12 : 16 }]}>
+            <View style={styles.labelRow}>
+                <Text style={[styles.label, styles.runnerRatingLabelText, { fontSize: isSmallScreen ? 12 : 14 }]}>
+                    Preferred Runner Rating (minimum):
+                </Text>
+                <RunnerRatingInfoIcon />
+            </View>
+            <TouchableOpacity
+                style={[styles.commissionTypeDropdown, { height: isSmallScreen ? 40 : 44 }]}
+                onPress={() => setOpen((v) => !v)}
+            >
+                <View style={styles.runnerRatingSelectContent}>
+                    <Ionicons name="star" size={14} color="#E8B923" />
+                    <Text style={[styles.dropdownText, { fontSize: isSmallScreen ? 13 : 14 }]}>{value}</Text>
+                </View>
+                <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={isSmallScreen ? 14 : 16} color="#8B2323" />
+            </TouchableOpacity>
+            {open && (
+                <View style={styles.runnerRatingOptionsContainer}>
+                    {RUNNER_RATING_OPTIONS.map((opt) => (
+                        <TouchableOpacity
+                            key={opt}
+                            onPress={() => {
+                                setValue(opt);
+                                setOpen(false);
+                            }}
+                            style={[
+                                styles.runnerRatingOption,
+                                opt === value && styles.runnerRatingOptionSelected,
+                            ]}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[styles.dropdownText, { fontSize: isSmallScreen ? 13 : 14 }]}>{opt}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+            )}
+            <Text style={[styles.runnerRatingHelper, { fontSize: isSmallScreen ? 11 : 12 }]}>
+                Runners with at least this rating will be prioritized.
+            </Text>
+        </View>
+    );
+}
+
 /* ───────── page ───────── */
 const PostCommission: React.FC = () => {
     const router = useRouter();
@@ -1322,6 +1390,9 @@ const PostCommission: React.FC = () => {
                                 )}
                             </View>
 
+                            {/* Preferred Runner Rating */}
+                            <RunnerRatingField isSmallScreen={isSmallScreen} />
+
                             {/* Meetup */}
                             <View style={[styles.formGroup, { paddingHorizontal: isSmallScreen ? 12 : 16 }]}>
                                 <Text style={[styles.label, { fontSize: isSmallScreen ? 12 : 14 }]}>Scheduled Meet-up</Text>
@@ -1516,6 +1587,38 @@ const styles = StyleSheet.create({
     timeSaveButtonText: { color: '#8B2323', fontSize: 16, fontWeight: '600' },
 
     meetupContainer: { borderWidth: 1, borderColor: '#8B2323', borderRadius: 4, backgroundColor: 'white', padding: 12, gap: 12 },
+
+    labelRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 4,
+    },
+    runnerRatingLabelText: { marginBottom: 0 },
+    runnerRatingSelectContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        flex: 1,
+    },
+    runnerRatingOptionsContainer: {
+        borderWidth: 1,
+        borderColor: '#8B2323',
+        borderRadius: 4,
+        backgroundColor: 'white',
+        marginTop: 8,
+        overflow: 'hidden',
+    },
+    runnerRatingOption: {
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+    },
+    runnerRatingOptionSelected: { backgroundColor: '#F7F1F0' },
+    runnerRatingHelper: {
+        color: '#666',
+        marginTop: 4,
+        lineHeight: 16,
+    },
 
     // Validation Modal Styles (matching Incomplete Errand Details modal)
     validationModalOverlay: {

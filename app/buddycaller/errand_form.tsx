@@ -238,6 +238,154 @@ function Dropdown({
     );
 }
 
+const RUNNER_RATING_OPTIONS = [
+    "Any rating",
+    "3.5 stars and above",
+    "3.0 stars and below",
+] as const;
+
+function RunnerRatingInfoIcon() {
+    const showTooltip = () => {
+        Alert.alert(
+            "Preferred Runner Rating",
+            "Runners with at least this rating will be prioritized when your errand is matched."
+        );
+    };
+
+    return (
+        <TouchableOpacity
+            onPress={showTooltip}
+            accessibilityRole="button"
+            accessibilityLabel="Preferred runner rating information"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            {...(Platform.OS === "web"
+                ? ({ title: "Runners with at least this rating will be prioritized." } as any)
+                : {})}
+        >
+            <Ionicons name="information-circle-outline" size={16} color={colors.maroon} />
+        </TouchableOpacity>
+    );
+}
+
+function RunnerRatingDropdown() {
+    const [open, setOpen] = useState(false);
+    const [value, setValue] = useState<string>(RUNNER_RATING_OPTIONS[0]);
+    const isWeb = Platform.OS === "web";
+    const controlRef = useRef<View | null>(null);
+    const [anchor, setAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+    const openDropdown = () => {
+        if (isWeb) {
+            setOpen((v) => !v);
+            return;
+        }
+        controlRef.current?.measureInWindow((x, y, w, h) => {
+            setAnchor({ x, y, w, h });
+            setOpen(true);
+        });
+    };
+    const closeDropdown = () => setOpen(false);
+
+    return (
+        <>
+            <View ref={controlRef} style={s.selectRow}>
+                <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={openDropdown}
+                    accessibilityRole="button"
+                    style={[s.input as any, s.selectInput as any, s.runnerRatingSelectInput as any]}
+                >
+                    <View style={s.runnerRatingSelectContent}>
+                        <Ionicons name="star" size={14} color="#E8B923" />
+                        <Text style={s.runnerRatingSelectText}>{value}</Text>
+                    </View>
+                </TouchableOpacity>
+
+                <View pointerEvents="none" style={s.caretWrap}>
+                    <Ionicons name={open ? "chevron-up" : "chevron-down"} size={18} color={colors.maroon} />
+                </View>
+
+                {isWeb && open && (
+                    <View style={s.dropdownPanel}>
+                        <ScrollView style={{ maxHeight: 220, backgroundColor: "transparent" }}>
+                            {RUNNER_RATING_OPTIONS.map((opt) => (
+                                <TouchableOpacity
+                                    key={opt}
+                                    onPress={() => {
+                                        setValue(opt);
+                                        closeDropdown();
+                                    }}
+                                    style={[
+                                        s.dropdownItem,
+                                        { backgroundColor: opt === value ? colors.faint : colors.white },
+                                    ]}
+                                    activeOpacity={0.8}
+                                >
+                                    <Text style={s.dropdownItemText}>{opt}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+            </View>
+
+            {!isWeb && open && (
+                <Modal transparent animationType="fade" onRequestClose={closeDropdown}>
+                    <TouchableWithoutFeedback onPress={closeDropdown}>
+                        <View style={s.modalBackdrop} />
+                    </TouchableWithoutFeedback>
+
+                    <View
+                        pointerEvents="box-none"
+                        style={[
+                            s.modalRoot,
+                            anchor ? { top: anchor.y + anchor.h, left: anchor.x, width: anchor.w } : { top: 0, left: 0, right: 0 },
+                        ]}
+                    >
+                        <View style={s.dropdownPanelNative}>
+                            <ScrollView style={{ maxHeight: 260 }}>
+                                {RUNNER_RATING_OPTIONS.map((opt) => (
+                                    <TouchableOpacity
+                                        key={opt}
+                                        onPress={() => {
+                                            setValue(opt);
+                                            closeDropdown();
+                                        }}
+                                        style={[
+                                            s.dropdownItem,
+                                            { backgroundColor: opt === value ? colors.faint : colors.white },
+                                        ]}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={s.dropdownItemText}>{opt}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        </View>
+                    </View>
+                </Modal>
+            )}
+        </>
+    );
+}
+
+function RunnerRatingField({ isWebLayout }: { isWebLayout: boolean }) {
+    return (
+        <View style={isWebLayout ? s.webFormGroup : s.formGroup}>
+            <View style={isWebLayout ? s.webLabelRow : s.labelRow}>
+                <Text style={[isWebLayout ? s.webLabel : s.label, s.runnerRatingLabelText]}>
+                    Preferred Runner Rating (minimum):
+                </Text>
+                <RunnerRatingInfoIcon />
+            </View>
+            <RunnerRatingDropdown />
+            <Text style={isWebLayout ? s.webRunnerRatingHelper : s.runnerRatingHelper}>
+                Runners with at least this rating will be prioritized.
+            </Text>
+        </View>
+    );
+}
+
 /* ---------- Category Dropdown with Printing submenu ---------- */
 function CategoryDropdown({
     value,
@@ -1402,7 +1550,7 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
             addOnPerExtra = 5; // ₱5 per extra item
         } else if (category === "School Materials") {
             baseFlatFee = 10; // Base flat fee
-            addOnPerExtra = 5; // ₱5 per extra item
+            addOnPerExtra = 5; // ₱5 per extra item 
         } else if (category === "Printing") {
             baseFlatFee = 5; // Base flat fee
             addOnPerExtra = 2; // ₱2 per extra page
@@ -2653,6 +2801,9 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                                 </View>
                             </View>
 
+                            {/* ⭐ PREFERRED RUNNER RATING SECTION */}
+                            <RunnerRatingField isWebLayout />
+
                             
                             {/* 💰 ESTIMATED PRICE SECTION */}
                             <View style={s.webFormGroup}>
@@ -2905,6 +3056,9 @@ export default function ErrandForm({ onClose, disableModal = false }: ErrandForm
                             )}
                         </View>
                     </View>
+
+                    {/* ⭐ PREFERRED RUNNER RATING SECTION */}
+                    <RunnerRatingField isWebLayout={false} />
 
                     
                     {/* 💰 PRICE BREAKDOWN SECTION */}
@@ -3859,6 +4013,49 @@ const s = StyleSheet.create({
         opacity: 0.7,
         marginTop: rp(2),
         fontSize: rf(12),
+    },
+    labelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: rp(6),
+        marginBottom: rp(4),
+    },
+    webLabelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        marginBottom: 8,
+    },
+    runnerRatingLabelText: {
+        marginBottom: 0,
+    },
+    runnerRatingHelper: {
+        color: "#666",
+        fontSize: rf(12),
+        marginTop: rp(4),
+        lineHeight: rf(16),
+    },
+    webRunnerRatingHelper: {
+        color: "#666",
+        fontSize: 13,
+        marginTop: 6,
+        lineHeight: 18,
+    },
+    runnerRatingSelectInput: {
+        justifyContent: "center",
+    },
+    runnerRatingSelectContent: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: rp(6),
+        flex: 1,
+        ...(Platform.OS === "web" ? { gap: 6 } : {}),
+    },
+    runnerRatingSelectText: {
+        color: colors.text,
+        fontSize: rf(14),
+        flex: 1,
+        ...(Platform.OS === "web" ? { fontSize: 12 } : {}),
     },
     // Price Breakdown styles
     priceBreakdownContainer: {

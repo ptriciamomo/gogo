@@ -240,7 +240,7 @@ export default function ViewMapWeb() {
 
 			// Dynamically import leaflet only on web
 			import("leaflet").then((L) => {
-				// Import leaflet CSS (only add once)
+				// 
 				if (typeof document !== 'undefined' && !document.querySelector('link[href*="leaflet"]')) {
 					const link = document.createElement('link');
 					link.rel = 'stylesheet';
@@ -250,11 +250,11 @@ export default function ViewMapWeb() {
 					document.head.appendChild(link);
 				}
 
-				// Default center (Davao City, Philippines - approximate center from images)
+				// 
 				const defaultCenter: [number, number] = [7.0736, 125.6128];
 				const defaultZoom = 15;
 
-				// Initialize map (rotation is enabled by default on touch devices)
+				//
 				const map = L.default.map(mapRef.current!, {
 					center: defaultCenter,
 					zoom: defaultZoom,

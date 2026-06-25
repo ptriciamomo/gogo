@@ -177,6 +177,122 @@ function Dropdown({ value, placeholder, onSelect, options }: {
     );
 }
 
+const RUNNER_RATING_OPTIONS = [
+    "Any rating",
+    "3.5 stars and above",
+    "3.0 stars and below",
+] as const;
+
+function RunnerRatingInfoIcon() {
+    return (
+        <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Preferred runner rating information"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            {...({ title: "Runners with at least this rating will be prioritized." } as any)}
+        >
+            <Ionicons name="information-circle-outline" size={16} color={colors.maroon} />
+        </TouchableOpacity>
+    );
+}
+
+function RunnerRatingDropdown() {
+    const [open, setOpen] = useState(false);
+    const [value, setValue] = useState<string>(RUNNER_RATING_OPTIONS[0]);
+    const controlRef = useRef<View | null>(null);
+    const { anchor, panelMaxH, measure } = useAnchoredPanel(controlRef, open);
+
+    const openDropdown = () => {
+        setOpen((prev) => !prev);
+        requestAnimationFrame(measure);
+    };
+    const closeDropdown = () => setOpen(false);
+
+    useEffect(() => {
+        if (!open) return;
+        const onKey = (e: any) => e.key === "Escape" && closeDropdown();
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [open]);
+
+    return (
+        <>
+            <View ref={controlRef} style={s.selectRow}>
+                <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={openDropdown}
+                    accessibilityRole="button"
+                    style={[s.input as any, s.selectInput as any, s.runnerRatingSelectInput as any]}
+                >
+                    <View style={s.runnerRatingSelectContent}>
+                        <Ionicons name="star" size={14} color="#E8B923" />
+                        <Text style={s.runnerRatingSelectText}>{value}</Text>
+                    </View>
+                </TouchableOpacity>
+                <View pointerEvents="none" style={s.caretWrap}>
+                    <Ionicons name={open ? "chevron-up" : "chevron-down"} size={18} color={colors.maroon} />
+                </View>
+            </View>
+
+            {open && anchor && (
+                <Modal transparent animationType="fade" onRequestClose={closeDropdown} visible>
+                    <TouchableWithoutFeedback onPress={closeDropdown}>
+                        <View style={s.modalBackdrop} />
+                    </TouchableWithoutFeedback>
+                    <View
+                        pointerEvents="box-none"
+                        style={[s.modalRootWeb, { top: anchor.y + anchor.h, left: anchor.x, width: anchor.w }]}
+                    >
+                        <View style={[s.dropdownPanelElevated, { maxHeight: panelMaxH }]}>
+                            <ScrollView
+                                style={{ maxHeight: panelMaxH }}
+                                showsVerticalScrollIndicator
+                                keyboardShouldPersistTaps="handled"
+                                nestedScrollEnabled
+                                scrollEnabled
+                            >
+                                {RUNNER_RATING_OPTIONS.map((opt) => (
+                                    <TouchableOpacity
+                                        key={opt}
+                                        onPress={() => {
+                                            setValue(opt);
+                                            closeDropdown();
+                                        }}
+                                        style={[
+                                            s.dropdownItem,
+                                            { backgroundColor: opt === value ? colors.faint : colors.white },
+                                        ]}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={s.dropdownItemText}>{opt}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        </View>
+                    </View>
+                </Modal>
+            )}
+        </>
+    );
+}
+
+function RunnerRatingField() {
+    return (
+        <View style={s.formGroup}>
+            <View style={s.labelRow}>
+                <Text style={[s.label, s.runnerRatingLabelText]}>
+                    Preferred Runner Rating (minimum):
+                </Text>
+                <RunnerRatingInfoIcon />
+            </View>
+            <RunnerRatingDropdown />
+            <Text style={s.runnerRatingHelper}>
+                Runners with at least this rating will be prioritized.
+            </Text>
+        </View>
+    );
+}
+
 /* ------------------------------------------------------------------ */
 /* Category Dropdown with Printing submenu                            */
 /* ------------------------------------------------------------------ */
@@ -2557,6 +2673,9 @@ export default function ErrandForm() {
                         </View>
                     </View>
 
+                    {/* ⭐ PREFERRED RUNNER RATING SECTION */}
+                    <RunnerRatingField />
+
                     {/* 💰 PRICE BREAKDOWN SECTION */}
                     <View style={s.formGroup}>
                         <Text style={s.label}>Price Breakdown</Text>
@@ -2921,6 +3040,35 @@ const s = StyleSheet.create({
     dropdownItemText: { color: "#333", fontSize: 14 },
     subLabel: { color: "#333", fontWeight: "600", fontSize: 14 },
     subNote: { color: "#333", opacity: 0.7, marginTop: 2, fontSize: 12 },
+    labelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        marginBottom: 4,
+    },
+    runnerRatingLabelText: {
+        marginBottom: 0,
+    },
+    runnerRatingHelper: {
+        color: "#666",
+        fontSize: 12,
+        marginTop: 4,
+        lineHeight: 16,
+    },
+    runnerRatingSelectInput: {
+        justifyContent: "center",
+    },
+    runnerRatingSelectContent: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        flex: 1,
+    },
+    runnerRatingSelectText: {
+        color: colors.text,
+        fontSize: 14,
+        flex: 1,
+    },
     // Price Breakdown styles
     priceBreakdownContainer: {
         borderWidth: 1,

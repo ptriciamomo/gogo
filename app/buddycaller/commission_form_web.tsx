@@ -69,6 +69,7 @@ async function createCommission(input: {
     completionTime: string;
     isMeetup: boolean;
     meetupLocation: string;
+    preferredRunnerRatingMin: number | null;
 }) {
     const { data: auth, error: authErr } = await supabase.auth.getUser();
     if (authErr || !auth?.user) throw new Error(authErr?.message || 'Not authenticated');
@@ -110,6 +111,7 @@ async function createCommission(input: {
             due_at,
             scheduled_meetup: !!input.isMeetup,
             meetup_location: input.isMeetup ? (input.meetupLocation?.trim() || null) : null,
+            preferred_runner_rating_min: input.preferredRunnerRatingMin,
         })
         .select()
         .single();
@@ -244,6 +246,21 @@ const RUNNER_RATING_OPTIONS = [
     
 ] as const;
 
+function mapPreferredRunnerRatingToMin(label: string): number | null {
+    switch (label) {
+        case '4.5 stars and above':
+            return 4.5;
+        case '4.0 stars and above':
+            return 4.0;
+        case '3.5 stars and above':
+            return 3.5;
+        case '3.0 stars and above':
+            return 3.0;
+        default:
+            return null;
+    }
+}
+
 function RunnerRatingInfoIcon() {
     return (
         <TouchableOpacity
@@ -257,9 +274,16 @@ function RunnerRatingInfoIcon() {
     );
 }
 
-function RunnerRatingField({ isSmallScreen }: { isSmallScreen: boolean }) {
+function RunnerRatingField({
+    isSmallScreen,
+    value,
+    onChange,
+}: {
+    isSmallScreen: boolean;
+    value: string;
+    onChange: (value: string) => void;
+}) {
     const [open, setOpen] = useState(false);
-    const [value, setValue] = useState<string>(RUNNER_RATING_OPTIONS[0]);
 
     return (
         <View style={[styles.formGroup, { paddingHorizontal: isSmallScreen ? 12 : 16 }]}>
@@ -285,7 +309,7 @@ function RunnerRatingField({ isSmallScreen }: { isSmallScreen: boolean }) {
                         <TouchableOpacity
                             key={opt}
                             onPress={() => {
-                                setValue(opt);
+                                onChange(opt);
                                 setOpen(false);
                             }}
                             style={[
@@ -375,8 +399,7 @@ const PostCommission: React.FC = () => {
     const [showMonthPicker, setShowMonthPicker] = useState(false);
     const [showYearPicker, setShowYearPicker] = useState(false);
 
-    const [preferredRunnerRating, setPreferredRunnerRating] = useState('Any rating');
-    const [showRunnerRatingDropdown, setShowRunnerRatingDropdown] = useState(false);
+    const [preferredRunnerRating, setPreferredRunnerRating] = useState<string>(RUNNER_RATING_OPTIONS[0]);
 
     const [showTerms, setShowTerms] = useState(false);
     const [agree, setAgree] = useState(false);
@@ -671,7 +694,10 @@ const PostCommission: React.FC = () => {
             console.log('✅ [Web Caller] Location refreshed successfully, proceeding with commission posting');
             
             // Location is updated, proceed with confirmation
-            const result = await createCommission(formData);
+            const result = await createCommission({
+                ...formData,
+                preferredRunnerRatingMin: mapPreferredRunnerRatingToMin(preferredRunnerRating),
+            });
             // Store cancellation state to show modal after Success modal
             if (result && (result as any)._cancelled === true) {
                 console.log('[CALLER] No eligible runners — will show modal after Success modal');
@@ -1397,7 +1423,11 @@ const PostCommission: React.FC = () => {
                             </View>
 
                             {/* Preferred Runner Rating */}
-                            <RunnerRatingField isSmallScreen={isSmallScreen} />
+                            <RunnerRatingField
+                                isSmallScreen={isSmallScreen}
+                                value={preferredRunnerRating}
+                                onChange={setPreferredRunnerRating}
+                            />
 
                             {/* Meetup */}
                             <View style={[styles.formGroup, { paddingHorizontal: isSmallScreen ? 12 : 16 }]}>

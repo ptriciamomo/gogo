@@ -45,6 +45,7 @@ async function createCommission(input: {
   completionTime: string;
   isMeetup: boolean;
   meetupLocation: string;
+  preferredRunnerRatingMin: number | null;
 }) {
   const { data: auth, error: authErr } = await supabase.auth.getUser();
   if (authErr || !auth?.user) throw new Error(authErr?.message || 'Not authenticated');
@@ -86,6 +87,7 @@ async function createCommission(input: {
       due_at,
       scheduled_meetup: !!input.isMeetup,
       meetup_location: input.isMeetup ? (input.meetupLocation?.trim() || null) : null,
+      preferred_runner_rating_min: input.preferredRunnerRatingMin,
     })
     .select()
     .single();
@@ -220,6 +222,21 @@ const RUNNER_RATING_OPTIONS = [
   '3.0 stars and above',
 ] as const;
 
+function mapPreferredRunnerRatingToMin(label: string): number | null {
+  switch (label) {
+    case '4.5 stars and above':
+      return 4.5;
+    case '4.0 stars and above':
+      return 4.0;
+    case '3.5 stars and above':
+      return 3.5;
+    case '3.0 stars and above':
+      return 3.0;
+    default:
+      return null;
+  }
+}
+
 function RunnerRatingInfoIcon() {
   const showTooltip = () => {
     Alert.alert(
@@ -243,9 +260,14 @@ function RunnerRatingInfoIcon() {
   );
 }
 
-function RunnerRatingField() {
+function RunnerRatingField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState<string>(RUNNER_RATING_OPTIONS[0]);
 
   return (
     <View style={styles.formGroup}>
@@ -271,7 +293,7 @@ function RunnerRatingField() {
             <TouchableOpacity
               key={opt}
               onPress={() => {
-                setValue(opt);
+                onChange(opt);
                 setOpen(false);
               }}
               style={[
@@ -416,8 +438,7 @@ const PostCommission: React.FC = () => {
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
 
-  const [preferredRunnerRating, setPreferredRunnerRating] = useState('Any rating');
-  const [showRunnerRatingDropdown, setShowRunnerRatingDropdown] = useState(false);
+  const [preferredRunnerRating, setPreferredRunnerRating] = useState<string>(RUNNER_RATING_OPTIONS[0]);
 
   const [categories, setCategories] = useState<Category[]>([]);
 
@@ -603,7 +624,10 @@ const PostCommission: React.FC = () => {
 
   const handleConfirm = async () => {
     try {
-      const result = await createCommission(formData);
+      const result = await createCommission({
+        ...formData,
+        preferredRunnerRatingMin: mapPreferredRunnerRatingToMin(preferredRunnerRating),
+      });
       // Store cancellation state to show modal after Success modal
       if (result && (result as any)._cancelled === true) {
         console.log('[CALLER] No eligible runners — will show modal after Success modal');
@@ -953,7 +977,10 @@ const PostCommission: React.FC = () => {
           </View>
 
           {/* Preferred Runner Rating */}
-          <RunnerRatingField />
+          <RunnerRatingField
+            value={preferredRunnerRating}
+            onChange={setPreferredRunnerRating}
+          />
 
           {/* Meet-up */}
           <View style={styles.formGroup}>

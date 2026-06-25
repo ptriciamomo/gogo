@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { rankRunnersWithRatingPriority, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking.ts";
+import { rankRunnersWithRatingPriority, parsePreferredRunnerRatingMin, calculateDistanceKm, type RunnerForRanking } from "../_shared/runner-ranking.ts";
 
 // CORS headers for browser compatibility
 const corsHeaders = {
@@ -317,9 +317,10 @@ serve(async (req) => {
         : [];
 
     
-    console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id}`);
-    const rankedRunners = await rankRunners(
->>>>>>> bf3bc09b (save current progress before pulling)
+    const preferredRunnerRatingMin = parsePreferredRunnerRatingMin(errand.preferred_runner_rating_min);
+
+    console.log(`[ASSIGN-ERRAND] Ranking ${filteredRunners.length} runners for errand ${errand.id} (preferred_runner_rating_min=${preferredRunnerRatingMin ?? "any"})`);
+    const rankedRunners = await rankRunnersWithRatingPriority(
       filteredRunners as RunnerForRanking[],
       errandCategories,
       callerLat,
@@ -332,7 +333,8 @@ serve(async (req) => {
           .eq("runner_id", runnerId)
           .eq("status", "completed");
         return historyData || [];
-      }
+      },
+      preferredRunnerRatingMin,
     );
 
     console.log(`[ASSIGN-ERRAND] Ranked ${rankedRunners.length} runners for errand ${errand.id}`);

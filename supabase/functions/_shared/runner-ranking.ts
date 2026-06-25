@@ -117,9 +117,12 @@ function calculateTFIDFCosineSimilarity(
   return isNaN(similarity) ? 0 : similarity;
 }
 
-// Runners rated >= this threshold are notified before lower-rated runners.
-export const RATING_PRIORITY_THRESHOLD = 3.5; 
-
+// Caller-selected minimum; runners at or above this rating form the priority tier.
+export function parsePreferredRunnerRatingMin(value: unknown): number | null {
+  if (value == null) return null;
+  const rating = typeof value === "number" ? value : parseFloat(String(value));
+  return !isNaN(rating) ? rating : null;
+}
 
 export interface RunnerForRanking {
   id: string;
@@ -128,16 +131,19 @@ export interface RunnerForRanking {
   average_rating: number | null;
 }
 
-export function isPriorityRatedRunner(runner: RunnerForRanking): boolean {
+export function isPriorityRatedRunner(runner: RunnerForRanking, minRating: number): boolean {
   if (runner.average_rating == null) return false;
   const rating =
     typeof runner.average_rating === "number"
       ? runner.average_rating
       : parseFloat(String(runner.average_rating));
-  return !isNaN(rating) && rating >= RATING_PRIORITY_THRESHOLD;
+  return !isNaN(rating) && rating >= minRating;
 }
 
-export function splitRunnersByRatingPriority(runners: RunnerForRanking[]): {
+export function splitRunnersByRatingPriority(
+  runners: RunnerForRanking[],
+  minRating: number,
+): {
   priorityRunners: RunnerForRanking[];
   fallbackRunners: RunnerForRanking[];
 } {
@@ -145,7 +151,7 @@ export function splitRunnersByRatingPriority(runners: RunnerForRanking[]): {
   const fallbackRunners: RunnerForRanking[] = [];
 
   for (const runner of runners) {
-    if (isPriorityRatedRunner(runner)) {
+    if (isPriorityRatedRunner(runner, minRating)) {
       priorityRunners.push(runner);
     } else {
       fallbackRunners.push(runner);
@@ -236,16 +242,30 @@ export async function rankRunners(
   return rankedRunners;
 }
 
-// Rank priority-rated runners (>= 3.5) first, then fallback runners (< 3.5 or unrated).
+// Rank caller-preferred runners first when a minimum is set; otherwise use flat ranking.
 // Each group uses the same distance/rating/TF-IDF scoring; results are concatenated for queue order.
 export async function rankRunnersWithRatingPriority(
   eligibleRunners: RunnerForRanking[],
   taskCategories: string[],
   callerLat: number,
   callerLon: number,
-  fetchRunnerHistory: (runnerId: string) => Promise<{ category: string | null }[]>
+  fetchRunnerHistory: (runnerId: string) => Promise<{ category: string | null }[]>,
+  preferredRunnerRatingMin: number | null = null,
 ): Promise<RankedRunner[]> {
-  const { priorityRunners, fallbackRunners } = splitRunnersByRatingPriority(eligibleRunners);
+  if (preferredRunnerRatingMin == null) {
+    return rankRunners(
+      eligibleRunners,
+      taskCategories,
+      callerLat,
+      callerLon,
+      fetchRunnerHistory,
+    );
+  }
+
+  const { priorityRunners, fallbackRunners } = splitRunnersByRatingPriority(
+    eligibleRunners,
+    preferredRunnerRatingMin,
+  );
 
   const [priorityRanked, fallbackRanked] = await Promise.all([
     rankRunners(priorityRunners, taskCategories, callerLat, callerLon, fetchRunnerHistory),

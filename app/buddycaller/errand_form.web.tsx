@@ -186,6 +186,21 @@ const RUNNER_RATING_OPTIONS = [
     "3.0 stars and above",
 ] as const;
 
+function mapPreferredRunnerRatingToMin(label: string): number | null {
+    switch (label) {
+        case "4.5 stars and above":
+            return 4.5;
+        case "4.0 stars and above":
+            return 4.0;
+        case "3.5 stars and above":
+            return 3.5;
+        case "3.0 stars and above":
+            return 3.0;
+        default:
+            return null;
+    }
+}
+
 function RunnerRatingInfoIcon() {
     return (
         <TouchableOpacity
@@ -199,9 +214,14 @@ function RunnerRatingInfoIcon() {
     );
 }
 
-function RunnerRatingDropdown() {
+function RunnerRatingDropdown({
+    value,
+    onChange,
+}: {
+    value: string;
+    onChange: (value: string) => void;
+}) {
     const [open, setOpen] = useState(false);
-    const [value, setValue] = useState<string>(RUNNER_RATING_OPTIONS[0]);
     const controlRef = useRef<View | null>(null);
     const { anchor, panelMaxH, measure } = useAnchoredPanel(controlRef, open);
 
@@ -258,7 +278,7 @@ function RunnerRatingDropdown() {
                                     <TouchableOpacity
                                         key={opt}
                                         onPress={() => {
-                                            setValue(opt);
+                                            onChange(opt);
                                             closeDropdown();
                                         }}
                                         style={[
@@ -279,7 +299,13 @@ function RunnerRatingDropdown() {
     );
 }
 
-function RunnerRatingField() {
+function RunnerRatingField({
+    value,
+    onChange,
+}: {
+    value: string;
+    onChange: (value: string) => void;
+}) {
     return (
         <View style={s.formGroup}>
             <View style={s.labelRow}>
@@ -288,7 +314,7 @@ function RunnerRatingField() {
                 </Text>
                 <RunnerRatingInfoIcon />
             </View>
-            <RunnerRatingDropdown />
+            <RunnerRatingDropdown value={value} onChange={onChange} />
             <Text style={s.runnerRatingHelper}>
                 Runners with at least this rating will be prioritized.
             </Text>
@@ -1282,6 +1308,7 @@ export default function ErrandForm() {
     const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
     const [categoriesLoading, setCategoriesLoading] = useState(true);
     const [deliveryLocationName, setDeliveryLocationName] = useState<string>("");
+    const [preferredRunnerRating, setPreferredRunnerRating] = useState<string>(RUNNER_RATING_OPTIONS[0]);
 
     const [isScheduled, setIsScheduled] = useState(false);
     const [scheduledTime, setScheduledTime] = useState("00:00");
@@ -1863,6 +1890,7 @@ export default function ErrandForm() {
                 is_scheduled: isScheduled,
                 scheduled_time: isScheduled ? (timePicked ? scheduledTime : "00:00") : null,
                 scheduled_date: isScheduled ? new Date().toISOString().split("T")[0] : null,
+                preferred_runner_rating_min: mapPreferredRunnerRatingToMin(preferredRunnerRating),
             };
 
             // Set pickup_status based on category
@@ -2681,7 +2709,10 @@ export default function ErrandForm() {
                     </View>
 
                     {/* ⭐ PREFERRED RUNNER RATING SECTION */}
-                    <RunnerRatingField />
+                    <RunnerRatingField
+                        value={preferredRunnerRating}
+                        onChange={setPreferredRunnerRating}
+                    />
 
                     {/* 💰 PRICE BREAKDOWN SECTION */}
                     <View style={s.formGroup}>
